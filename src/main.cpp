@@ -9,6 +9,7 @@
 #include <cassert>
 #include <iomanip>
 #include <chrono>
+#include <random>
 #ifdef _WIN32
 #include <io.h>
 #else
@@ -132,6 +133,23 @@ void show_progress_until_done(std::vector<int>& worker_done, std::vector<Alignme
     }
 }
 
+
+int totalCPUs;
+void setThreadAffinity(int cpu_id) {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(cpu_id, &cpuset);
+
+    pthread_t current_thread = pthread_self();
+    if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+        std::cerr << "Error setting thread affinity for CPU " << cpu_id << std::endl;
+    }
+}
+
+void readIndexOnCPU(StrobemerIndex& index, const std::string& sti_path, int cpu_id) {
+    setThreadAffinity(cpu_id);
+    index.read(sti_path);
+}
 int run_strobealign(int argc, char **argv) {
     auto opt = parse_command_line_arguments(argc, argv);
 
@@ -200,13 +218,23 @@ int run_strobealign(int argc, char **argv) {
     }
 
     StrobemerIndex index(references, index_parameters, opt.bits);
+    StrobemerIndex index2(references, index_parameters, opt.bits);
     if (opt.use_index) {
         // Read the index from a file
         assert(!opt.only_gen_index);
         Timer read_index_timer;
         std::string sti_path = opt.ref_filename + index_parameters.filename_extension();
         logger.info() << "Reading index from " << sti_path << '\n';
-        index.read(sti_path);
+        totalCPUs = std::thread::hardware_concurrency();
+    
+		fprintf(stderr, "read index1\n");
+        std::thread thread1(readIndexOnCPU, std::ref(index), sti_path, 0);
+        thread1.join();
+
+		fprintf(stderr, "read index2\n");
+        std::thread thread2(readIndexOnCPU, std::ref(index2), sti_path, totalCPUs / 2);
+        thread2.join();
+
         logger.debug() << "Bits used to index buckets: " << index.get_bits() << "\n";
         logger.info() << "Total time reading index: " << read_index_timer.elapsed() << " s\n";
     } else {
@@ -214,6 +242,7 @@ int run_strobealign(int argc, char **argv) {
         logger.info() << "Indexing ...\n";
         Timer index_timer;
         index.populate(opt.f, opt.n_threads);
+        //index.populate_fast(opt.f, opt.n_threads);
         
         logger.info() << "  Time counting seeds: " << index.stats.elapsed_counting_hashes.count() << " s" <<  std::endl;
         logger.info() << "  Time generating seeds: " << index.stats.elapsed_generating_seeds.count() << " s" <<  std::endl;
@@ -291,11 +320,19 @@ int run_strobealign(int argc, char **argv) {
 
     std::vector<std::thread> workers;
     std::vector<int> worker_done(opt.n_threads);  // each thread sets its entry to 1 when it’s done
-    for (int i = 0; i < opt.n_threads; ++i) {
+
+    for (int i = 0; i < opt.n_threads / 2; ++i) {
         std::thread consumer(perform_task, std::ref(input_buffer), std::ref(output_buffer),
             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
             std::ref(map_param), std::ref(index_parameters), std::ref(references),
-            std::ref(index), std::ref(opt.read_group_id));
+            std::ref(index), std::ref(opt.read_group_id), i);
+        workers.push_back(std::move(consumer));
+    }
+    for (int i = opt.n_threads / 2; i < opt.n_threads; ++i) {
+        std::thread consumer(perform_task, std::ref(input_buffer), std::ref(output_buffer),
+            std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+            std::ref(map_param), std::ref(index_parameters), std::ref(references),
+            std::ref(index2), std::ref(opt.read_group_id), totalCPUs / 2 + i - opt.n_threads / 2);
         workers.push_back(std::move(consumer));
     }
     if (opt.show_progress && isatty(2)) {

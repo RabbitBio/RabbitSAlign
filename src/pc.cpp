@@ -9,6 +9,7 @@
 #include <iostream>
 #include <chrono>
 #include <queue>
+#include <pthread.h>
 
 #include "timer.hpp"
 #include "robin_hood.h"
@@ -139,8 +140,18 @@ void perform_task(
     const IndexParameters& index_parameters,
     const References& references,
     const StrobemerIndex& index,
-    const std::string& read_group_id
+    const std::string& read_group_id,
+    const int thread_id 
 ) {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(thread_id, &cpuset);
+
+    pthread_t current_thread = pthread_self();
+    if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+        std::cerr << "Error setting thread affinity" << std::endl;
+    }
+
     bool eof = false;
     Aligner aligner{aln_params};
     std::minstd_rand random_engine;

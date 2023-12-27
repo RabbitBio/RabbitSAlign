@@ -1,4 +1,13 @@
 #include "nam.hpp"
+#include <thread>
+#include <sstream>
+
+#include <sys/time.h>
+inline double GetTime() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (double) tv.tv_sec + (double) tv.tv_usec / 1000000;
+}
 
 namespace {
 
@@ -159,23 +168,52 @@ std::pair<float, std::vector<Nam>> find_nams(
     const QueryRandstrobeVector &query_randstrobes,
     const StrobemerIndex& index
 ) {
+    static thread_local double tot_time = 0;
+    static thread_local double find_time = 0;
+    static thread_local double filter_time = 0;
+    static thread_local double add_time = 0;
+    static thread_local double merge_time = 0;
+    static thread_local int cnt = 0;
+    double t0;
+    double tt0 = GetTime();
     std::array<robin_hood::unordered_map<unsigned int, std::vector<Hit>>, 2> hits_per_ref;
     hits_per_ref[0].reserve(100);
     hits_per_ref[1].reserve(100);
     int nr_good_hits = 0, total_hits = 0;
     for (const auto &q : query_randstrobes) {
+        t0 = GetTime();
         size_t position = index.find(q.hash);
+        find_time += GetTime() - t0;
         if (position != index.end()){
             total_hits++;
-            if (index.is_filtered(position)) {
+            t0 = GetTime();
+            auto res = index.is_filtered(position);
+            filter_time += GetTime() - t0;
+            if (res) {
                 continue;
             }
             nr_good_hits++;
+            t0 = GetTime();
             add_to_hits_per_ref(hits_per_ref[q.is_reverse], q.start, q.end, index, position);
+            add_time += GetTime() - t0;
         }
     }
+    t0 = GetTime();
     float nonrepetitive_fraction = total_hits > 0 ? ((float) nr_good_hits) / ((float) total_hits) : 1.0;
     auto nams = merge_hits_into_nams_forward_and_reverse(hits_per_ref, index.k(), false);
+    merge_time += GetTime() - t0;
+
+    tot_time += GetTime() - tt0;
+
+    cnt++;
+
+    if(cnt % 100000 == 0) {
+        std::thread::id mainthreadid = std::this_thread::get_id();
+        std::ostringstream ss;
+        ss << mainthreadid;
+        unsigned long mainthreadidvalue = std::stoul(ss.str());
+        fprintf(stderr, "find_nams [%lld] tot_time:%lf find_time:%lf filter_time:%lf add_time:%lf merge_time:%lf\n", mainthreadidvalue, tot_time, find_time, filter_time, add_time, merge_time);
+    }
     return make_pair(nonrepetitive_fraction, nams);
 }
 
