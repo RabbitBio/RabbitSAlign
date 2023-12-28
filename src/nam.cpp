@@ -180,6 +180,147 @@ std::pair<float, std::vector<Nam>> find_nams(
     hits_per_ref[0].reserve(100);
     hits_per_ref[1].reserve(100);
     int nr_good_hits = 0, total_hits = 0;
+#define unROLL
+#ifdef unROLL
+    int i = 0;
+    for (; i + 4 <= query_randstrobes.size(); i += 4) {
+        t0 = GetTime();
+        auto q0 = query_randstrobes[i + 0].hash;
+        auto q1 = query_randstrobes[i + 1].hash;
+        auto q2 = query_randstrobes[i + 2].hash;
+        auto q3 = query_randstrobes[i + 3].hash;
+        constexpr int MAX_LINEAR_SEARCH = 4;
+        const unsigned int top_N0 = q0 >> (64 - index.bits);
+        const unsigned int top_N1 = q1 >> (64 - index.bits);
+        const unsigned int top_N2 = q2 >> (64 - index.bits);
+        const unsigned int top_N3 = q3 >> (64 - index.bits);
+        uint64_t position_start0 = index.randstrobe_start_indices[top_N0];
+        uint64_t position_start1 = index.randstrobe_start_indices[top_N1];
+        uint64_t position_start2 = index.randstrobe_start_indices[top_N2];
+        uint64_t position_start3 = index.randstrobe_start_indices[top_N3];
+        uint64_t position_end0 = index.randstrobe_start_indices[top_N0 + 1];
+        uint64_t position_end1 = index.randstrobe_start_indices[top_N1 + 1];
+        uint64_t position_end2 = index.randstrobe_start_indices[top_N2 + 1];
+        uint64_t position_end3 = index.randstrobe_start_indices[top_N3 + 1];
+        int positions[4];
+        positions[0] = -1;
+        positions[1] = -1;
+        positions[2] = -1;
+        positions[3] = -1;
+
+        auto cmp = [](const RefRandstrobe lhs, const RefRandstrobe rhs) {return lhs.hash < rhs.hash; };
+
+        if (position_start0 == position_end0) {
+            positions[0] = -1;
+        } else if (position_end0 - position_start0 < MAX_LINEAR_SEARCH) {
+            for ( ; position_start0 < position_end0; ++position_start0) {
+                if (index.randstrobes[position_start0].hash == q0) {
+                    positions[0] = position_start0;
+                    break;
+                }
+                if (index.randstrobes[position_start0].hash > q0) {
+                    positions[0] = -1;
+                    break;
+                }
+            }
+        } else {
+            auto pos0 = std::lower_bound(index.randstrobes.begin() + position_start0, index.randstrobes.begin() + position_end0, RefRandstrobe{q0, 0, 0}, cmp);
+            if (pos0->hash == q0) positions[0] = pos0 - index.randstrobes.begin();
+        }
+
+        if (position_start1 == position_end1) {
+            positions[1] = -1;
+        } else if (position_end1 - position_start1 < MAX_LINEAR_SEARCH) {
+            for ( ; position_start1 < position_end1; ++position_start1) {
+                if (index.randstrobes[position_start1].hash == q1) {
+                    positions[1] = position_start1;
+                    break;
+                }
+                if (index.randstrobes[position_start1].hash > q1) {
+                    positions[1] = -1;
+                    break;
+                }
+            }
+        } else {
+            auto pos1 = std::lower_bound(index.randstrobes.begin() + position_start1, index.randstrobes.begin() + position_end1, RefRandstrobe{q1, 0, 0}, cmp);
+            if (pos1->hash == q1) positions[1] = pos1 - index.randstrobes.begin();
+        }
+
+        if (position_start2 == position_end2) {
+            positions[2] = -1;
+        } else if (position_end2 - position_start2 < MAX_LINEAR_SEARCH) {
+            for ( ; position_start2 < position_end2; ++position_start2) {
+                if (index.randstrobes[position_start2].hash == q2) {
+                    positions[2] = position_start2;
+                    break;
+                }
+                if (index.randstrobes[position_start2].hash > q2) {
+                    positions[2] = -1;
+                    break;
+                }
+            }
+        } else {
+            auto pos2 = std::lower_bound(index.randstrobes.begin() + position_start2, index.randstrobes.begin() + position_end2, RefRandstrobe{q2, 0, 0}, cmp);
+            if (pos2->hash == q2) positions[2] = pos2 - index.randstrobes.begin();
+        }
+
+        if (position_start3 == position_end3) {
+            positions[3] = -1;
+        } else if (position_end3 - position_start3 < MAX_LINEAR_SEARCH) {
+            for ( ; position_start3 < position_end3; ++position_start3) {
+                if (index.randstrobes[position_start3].hash == q3) {
+                    positions[3] = position_start3;
+                    break;
+                }
+                if (index.randstrobes[position_start3].hash > q3) {
+                    positions[3] = -1;
+                    break;
+                }
+            }
+        } else {
+            auto pos3 = std::lower_bound(index.randstrobes.begin() + position_start3, index.randstrobes.begin() + position_end3, RefRandstrobe{q3, 0, 0}, cmp);
+            if (pos3->hash == q3) positions[3] = pos3 - index.randstrobes.begin();
+        }
+        find_time += GetTime() - t0;
+
+        for(int j = 0; j < 4; j++) {
+            auto q = query_randstrobes[i + j];
+            if (positions[j] != index.end()){
+                total_hits++;
+                t0 = GetTime();
+                auto res = index.is_filtered(positions[j]);
+                filter_time += GetTime() - t0;
+                if (res) {
+                    continue;
+                }
+                nr_good_hits++;
+                t0 = GetTime();
+                add_to_hits_per_ref(hits_per_ref[q.is_reverse], q.start, q.end, index, positions[j]);
+                add_time += GetTime() - t0;
+            }
+
+        }
+    }
+    for (; i < query_randstrobes.size(); i++) {
+        auto q = query_randstrobes[i];
+        t0 = GetTime();
+        size_t position = index.find(q.hash);
+        find_time += GetTime() - t0;
+        if (position != index.end()){
+            total_hits++;
+            t0 = GetTime();
+            auto res = index.is_filtered(position);
+            filter_time += GetTime() - t0;
+            if (res) {
+                continue;
+            }
+            nr_good_hits++;
+            t0 = GetTime();
+            add_to_hits_per_ref(hits_per_ref[q.is_reverse], q.start, q.end, index, position);
+            add_time += GetTime() - t0;
+        }
+    }
+#else
     for (const auto &q : query_randstrobes) {
         t0 = GetTime();
         size_t position = index.find(q.hash);
@@ -198,6 +339,7 @@ std::pair<float, std::vector<Nam>> find_nams(
             add_time += GetTime() - t0;
         }
     }
+#endif
     t0 = GetTime();
     float nonrepetitive_fraction = total_hits > 0 ? ((float) nr_good_hits) / ((float) total_hits) : 1.0;
     auto nams = merge_hits_into_nams_forward_and_reverse(hits_per_ref, index.k(), false);
