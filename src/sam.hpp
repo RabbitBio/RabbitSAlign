@@ -6,6 +6,7 @@
 #include "kseq++/kseq++.hpp"
 #include "refs.hpp"
 #include "cigar.hpp"
+#include "nam.hpp"
 
 
 struct Alignment {
@@ -21,6 +22,25 @@ struct Alignment {
     // Whether a gapped alignment function was used to obtain this alignment
     // (even if true, the alignment can still be without gaps)
     bool gapped{false};
+};
+
+struct AlignTmpRes {
+    int type;
+    // type 0 : size1 == 0 size2 == 0, unmapped_pair
+    // type 1 : size1 == 0, rescue read1
+    // type 2 : size2 == 0, rescue read2
+    // type 3 : good pair
+    // type 4 : for loop
+    int mapq1;
+    int mapq2;
+    int type4_loop_size;
+    std::vector<bool> is_extend_seed;
+    std::vector<bool> is_read1;
+    std::vector<Nam> type4_nams;
+    std::vector<Nam> todo_nams;
+    std::vector<bool> done_align;
+    // if done_align, align_res is the alignment results
+    std::vector<Alignment> align_res;
 };
 
 enum SamFlags {

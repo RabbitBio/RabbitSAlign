@@ -1,15 +1,14 @@
 #ifndef STROBEALIGN_ALN_HPP
 #define STROBEALIGN_ALN_HPP
 
+#include <random>
 #include <string>
 #include <vector>
-#include <random>
-#include "kseq++/kseq++.hpp"
+#include "aligner.hpp"
 #include "index.hpp"
+#include "kseq++/kseq++.hpp"
 #include "refs.hpp"
 #include "sam.hpp"
-#include "aligner.hpp"
-
 
 struct AlignmentStatistics {
     std::chrono::duration<double> tot_read_file{0};
@@ -57,15 +56,15 @@ struct AlignmentStatistics {
 };
 
 struct MappingParameters {
-    int r { 150 };
-    int max_secondary { 0 };
-    float dropoff_threshold { 0.5 };
-    int rescue_level { 2 };
-    int max_tries { 20 };
+    int r{150};
+    int max_secondary{0};
+    float dropoff_threshold{0.5};
+    int rescue_level{2};
+    int max_tries{20};
     int rescue_cutoff;
-    bool is_sam_out { true };
+    bool is_sam_out{true};
     CigarOps cigar_ops{CigarOps::M};
-    bool output_unmapped { true };
+    bool output_unmapped{true};
     bool details{false};
 
     void verify() const {
@@ -78,7 +77,7 @@ struct MappingParameters {
 /* Estimator for a normal distribution, used for insert sizes.
  */
 class InsertSizeDistribution {
-public:
+   public:
     float sample_size = 1;
     float mu = 300;
     float sigma = 100;
@@ -88,6 +87,35 @@ public:
     // Add a new observation
     void update(int dist);
 };
+
+void align_PE_read_last(
+    AlignTmpRes& align_tmp_res,
+    const klibpp::KSeq& record1,
+    const klibpp::KSeq& record2,
+    Sam& sam,
+    std::string& outstring,
+    AlignmentStatistics& statistics,
+    InsertSizeDistribution& isize_est,
+    const Aligner& aligner,
+    const MappingParameters& map_param,
+    const IndexParameters& index_parameters,
+    const References& references,
+    const StrobemerIndex& index,
+    std::minstd_rand& random_engine
+);
+void align_PE_read_part(
+    AlignTmpRes& align_tmp_res,
+    const klibpp::KSeq& record1,
+    const klibpp::KSeq& record2,
+    AlignmentStatistics& statistics,
+    InsertSizeDistribution& isize_est,
+    const Aligner& aligner,
+    const MappingParameters& map_param,
+    const IndexParameters& index_parameters,
+    const References& references,
+    const StrobemerIndex& index,
+    std::minstd_rand& random_engine
+);
 
 void align_PE_read(
     const klibpp::KSeq& record1,
@@ -121,6 +149,7 @@ void align_SE_read(
 
 bool has_shared_substring(const std::string& read_seq, const std::string& ref_seq, int k);
 
-std::pair<size_t, size_t> highest_scoring_segment(const std::string& query, const std::string& ref, int match, int mismatch);
+std::pair<size_t, size_t>
+highest_scoring_segment(const std::string& query, const std::string& ref, int match, int mismatch);
 
 #endif
