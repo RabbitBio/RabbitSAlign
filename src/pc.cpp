@@ -191,6 +191,7 @@ inline void part2_rescue_mate(AlignTmpRes &align_tmp_res, int j, Read read1, Rea
     std::string ref_segm = references.sequences[nam.ref_id].substr(ref_start, ref_end - ref_start);
 
     auto info = aligner.align(r_tmp, ref_segm);
+//    fprintf(stderr, "align %s\n%s\n", r_tmp.c_str(), ref_segm.c_str());
 
     Alignment &alignment = align_tmp_res.align_res[j];
 
@@ -300,6 +301,7 @@ void perform_task_sync(
     bool eof = false;
     Aligner aligner{aln_params};
     std::minstd_rand random_engine;
+    std::minstd_rand pre_random_engine;
     std::vector<klibpp::KSeq> records1;
     std::vector<klibpp::KSeq> records2;
     std::vector<klibpp::KSeq> records3;
@@ -329,16 +331,18 @@ void perform_task_sync(
 
     InsertSizeDistribution isize_est;
     // Use chunk index as random seed for reproducibility
-    random_engine.seed(pre_chunk_index);
+//    fprintf(stderr, "seed %zu\n", pre_chunk_index);
+    pre_random_engine.seed(pre_chunk_index);
     for (size_t i = 0; i < pre_records1.size(); ++i) {
         auto record1 = pre_records1[i];
         auto record2 = pre_records2[i];
         to_uppercase(record1.seq);
         to_uppercase(record2.seq);
         AlignTmpRes align_tmp_res;
+        // call xx_part func, find seeds and filter them, but reserve extend step
         align_PE_read_part(
             align_tmp_res, record1, record2, statistics, isize_est, aligner, map_param, index_parameters,
-            references, index, random_engine
+            references, index, pre_random_engine
         );
         pre_align_tmp_results.push_back(align_tmp_res);
         statistics.n_reads += 2;
@@ -351,6 +355,7 @@ void perform_task_sync(
         //chunk0_part2
         //process todo_nams
         t0 = GetTime();
+        Timer extend_timer1;
         for (size_t i = 0; i < pre_records1.size(); i++) {
             auto record1 = pre_records1[i];
             auto record2 = pre_records2[i];
@@ -378,6 +383,8 @@ void perform_task_sync(
                         // solve extend_seed for good read1
                         part2_extend_seed(align_tmp_res, j, read1, read2, references, aligner);
                     }
+//                    fprintf(stderr, "a1 score %d\n", align_tmp_res.align_res[j].score);
+
                     assert(!align_tmp_res.is_extend_seed[j + 1]);
                     if(align_tmp_res.type == 1) assert(!align_tmp_res.is_read1[j + 1]);
                     else assert(align_tmp_res.is_read1[j + 1]);
@@ -385,6 +392,7 @@ void perform_task_sync(
                         // solve rescue_mate for bad read2
                         part2_rescue_mate(align_tmp_res, j + 1, read1, read2, references, aligner, mu, sigma);
                     }
+//                    fprintf(stderr, "a2 score %d\n", align_tmp_res.align_res[j + 1].score);
                 }
             } else if(align_tmp_res.type == 3) {
                 assert(todo_size == 2);
@@ -418,13 +426,14 @@ void perform_task_sync(
                 }
             }
         }
-        time2 = GetTime() - t0;
+        statistics.tot_extend += extend_timer1.duration();
+        time2 += GetTime() - t0;
 
 
         t0 = GetTime();
         //chunk1_part2
         Timer timer;
-        auto chunk_index = input_buffer.read_records(records1, records2, records3);
+        chunk_index = input_buffer.read_records(records1, records2, records3);
         statistics.tot_read_file += timer.duration();
         assert(records1.size() == records2.size());
         if (records1.empty() && records3.empty() && input_buffer.finished_reading) {
@@ -435,6 +444,8 @@ void perform_task_sync(
         InsertSizeDistribution isize_est;
         // Use chunk index as random seed for reproducibility
         random_engine.seed(chunk_index);
+//        fprintf(stderr, "seed %zu\n", chunk_index);
+        assert(align_tmp_results.size() == 0);
         for (size_t i = 0; i < records1.size(); ++i) {
             auto record1 = records1[i];
             auto record2 = records2[i];
@@ -451,8 +462,9 @@ void perform_task_sync(
         time1 += GetTime() - t0;
 
         //chunk0_part3
-
+//        fprintf(stderr, "part3\n\n");
         t0 = GetTime();
+        Timer extend_timer2;
         std::string sam_out;
         sam_out.reserve(7 * map_param.r * (pre_records1.size() + pre_records3.size()));
         Sam sam{sam_out, references, map_param.cigar_ops, read_group_id, map_param.output_unmapped, map_param.details};
@@ -463,13 +475,14 @@ void perform_task_sync(
             to_uppercase(record2.seq);
             align_PE_read_last(
                 pre_align_tmp_results[i], record1, record2, sam, sam_out, statistics, isize_est, aligner,
-                map_param, index_parameters, references, index, random_engine
+                map_param, index_parameters, references, index, pre_random_engine
             );
 //            fprintf(stderr, "last %zu\n", i);
 
         }
 
         output_buffer.output_records(std::move(sam_out), pre_chunk_index);
+        statistics.tot_extend += extend_timer2.duration();
         time3 += GetTime() - t0;
         //assert(sam_out == "");
 
@@ -479,6 +492,7 @@ void perform_task_sync(
         pre_records2 = std::move(records2);
         pre_records3 = std::move(records3);
         pre_chunk_index = chunk_index;
+        pre_random_engine = random_engine;
     }
     statistics.tot_aligner_calls += aligner.calls_count();
     done = true;
