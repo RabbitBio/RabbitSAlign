@@ -134,7 +134,14 @@ void OutputBuffer::output_records(std::string chunk, size_t chunk_index) {
     unique_lock.unlock();
 }
 
-inline void part2_extend_seed(AlignTmpRes &align_tmp_res, int j, Read read1, Read read2, const References& references, const Aligner& aligner) {
+inline void part2_extend_seed(
+    AlignTmpRes& align_tmp_res,
+    int j,
+    Read read1,
+    Read read2,
+    const References& references,
+    const Aligner& aligner
+) {
     Nam nam = align_tmp_res.todo_nams[j];
     Read read = align_tmp_res.is_read1[j] ? read1 : read2;
     AlignmentInfo info;
@@ -154,7 +161,7 @@ inline void part2_extend_seed(AlignTmpRes &align_tmp_res, int j, Read read1, Rea
     info = aligner.align(query, ref_segm);
     result_ref_start = ref_start + info.ref_start;
     int softclipped = info.query_start + (query.size() - info.query_end);
-    Alignment &alignment = align_tmp_res.align_res[j];
+    Alignment& alignment = align_tmp_res.align_res[j];
     alignment.cigar = std::move(info.cigar);
     alignment.edit_distance = info.edit_distance;
     alignment.global_ed = info.edit_distance + softclipped;
@@ -167,7 +174,83 @@ inline void part2_extend_seed(AlignTmpRes &align_tmp_res, int j, Read read1, Rea
     alignment.gapped = true;
 }
 
-inline void part2_rescue_mate(AlignTmpRes &align_tmp_res, int j, Read read1, Read read2, const References& references, const Aligner& aligner, float mu, float sigma) {
+inline void part2_extend_seed_store_res(
+    AlignTmpRes& align_tmp_res,
+    int j,
+    Read read1,
+    Read read2,
+    const References& references,
+    const AlignmentInfo info
+) {
+    Nam nam = align_tmp_res.todo_nams[j];
+    Read read = align_tmp_res.is_read1[j] ? read1 : read2;
+    int result_ref_start;
+    const std::string query = nam.is_rc ? read.rc : read.seq;
+    const std::string& ref = references.sequences[nam.ref_id];
+
+    const auto projected_ref_start = std::max(0, nam.ref_start - nam.query_start);
+    const auto projected_ref_end = std::min(nam.ref_end + query.size() - nam.query_end, ref.size());
+
+    const int diff = std::abs(nam.ref_span() - nam.query_span());
+    const int ext_left = std::min(50, projected_ref_start);
+    const int ref_start = projected_ref_start - ext_left;
+    const int ext_right = std::min(std::size_t(50), ref.size() - nam.ref_end);
+    const auto ref_segm_size = read.size() + diff + ext_left + ext_right;
+    result_ref_start = ref_start + info.ref_start;
+    int softclipped = info.query_start + (query.size() - info.query_end);
+    Alignment& alignment = align_tmp_res.align_res[j];
+    alignment.cigar = std::move(info.cigar);
+    alignment.edit_distance = info.edit_distance;
+    alignment.global_ed = info.edit_distance + softclipped;
+    alignment.score = info.sw_score;
+    alignment.ref_start = result_ref_start;
+    alignment.length = info.ref_span();
+    alignment.is_rc = nam.is_rc;
+    alignment.is_unaligned = false;
+    alignment.ref_id = nam.ref_id;
+    alignment.gapped = true;
+}
+
+inline void part2_extend_seed_get_str(
+    std::vector<std::string>& todo_querys,
+    std::vector<std::string>& todo_refs,
+    AlignTmpRes& align_tmp_res,
+    int j,
+    Read read1,
+    Read read2,
+    const References& references,
+    const Aligner& aligner
+) {
+    Nam nam = align_tmp_res.todo_nams[j];
+    Read read = align_tmp_res.is_read1[j] ? read1 : read2;
+    AlignmentInfo info;
+    int result_ref_start;
+    const std::string query = nam.is_rc ? read.rc : read.seq;
+    const std::string& ref = references.sequences[nam.ref_id];
+
+    const auto projected_ref_start = std::max(0, nam.ref_start - nam.query_start);
+    const auto projected_ref_end = std::min(nam.ref_end + query.size() - nam.query_end, ref.size());
+
+    const int diff = std::abs(nam.ref_span() - nam.query_span());
+    const int ext_left = std::min(50, projected_ref_start);
+    const int ref_start = projected_ref_start - ext_left;
+    const int ext_right = std::min(std::size_t(50), ref.size() - nam.ref_end);
+    const auto ref_segm_size = read.size() + diff + ext_left + ext_right;
+    const auto ref_segm = ref.substr(ref_start, ref_segm_size);
+    todo_querys.push_back(query);
+    todo_refs.push_back(ref_segm);
+}
+
+inline void part2_rescue_mate(
+    AlignTmpRes& align_tmp_res,
+    int j,
+    Read read1,
+    Read read2,
+    const References& references,
+    const Aligner& aligner,
+    float mu,
+    float sigma
+) {
     Nam nam = align_tmp_res.todo_nams[j];
     Read read = align_tmp_res.is_read1[j] ? read1 : read2;
     int a, b;
@@ -191,9 +274,9 @@ inline void part2_rescue_mate(AlignTmpRes &align_tmp_res, int j, Read read1, Rea
     std::string ref_segm = references.sequences[nam.ref_id].substr(ref_start, ref_end - ref_start);
 
     auto info = aligner.align(r_tmp, ref_segm);
-//    fprintf(stderr, "align %s\n%s\n", r_tmp.c_str(), ref_segm.c_str());
+    //    fprintf(stderr, "align %s\n%s\n", r_tmp.c_str(), ref_segm.c_str());
 
-    Alignment &alignment = align_tmp_res.align_res[j];
+    Alignment& alignment = align_tmp_res.align_res[j];
 
     alignment.cigar = info.cigar;
     alignment.edit_distance = info.edit_distance;
@@ -205,13 +288,92 @@ inline void part2_rescue_mate(AlignTmpRes &align_tmp_res, int j, Read read1, Rea
     alignment.length = info.ref_span();
 }
 
+inline void part2_rescue_mate_store_res(
+    AlignTmpRes& align_tmp_res,
+    int j,
+    Read read1,
+    Read read2,
+    const References& references,
+    const AlignmentInfo& info,
+    float mu,
+    float sigma
+) {
+    Nam nam = align_tmp_res.todo_nams[j];
+    Read read = align_tmp_res.is_read1[j] ? read1 : read2;
+    int a, b;
+    std::string r_tmp;
+    auto read_len = read.size();
+
+    if (nam.is_rc) {
+        r_tmp = read.seq;
+        a = nam.ref_start - nam.query_start - (mu + 5 * sigma);
+        b = nam.ref_start - nam.query_start + read_len / 2;  // at most half read overlap
+    } else {
+        r_tmp = read.rc;                                              // mate is rc since fr orientation
+        a = nam.ref_end + (read_len - nam.query_end) - read_len / 2;  // at most half read overlap
+        b = nam.ref_end + (read_len - nam.query_end) + (mu + 5 * sigma);
+    }
+
+    auto ref_len = static_cast<int>(references.lengths[nam.ref_id]);
+    auto ref_start = std::max(0, std::min(a, ref_len));
+    auto ref_end = std::min(ref_len, std::max(0, b));
+
+    Alignment& alignment = align_tmp_res.align_res[j];
+
+    alignment.cigar = info.cigar;
+    alignment.edit_distance = info.edit_distance;
+    alignment.score = info.sw_score;
+    alignment.ref_start = ref_start + info.ref_start;
+    alignment.is_rc = !nam.is_rc;
+    alignment.ref_id = nam.ref_id;
+    alignment.is_unaligned = info.cigar.empty();
+    alignment.length = info.ref_span();
+}
+
+inline void part2_rescue_mate_get_str(
+    std::vector<std::string>& todo_querys,
+    std::vector<std::string>& todo_refs,
+    AlignTmpRes& align_tmp_res,
+    int j,
+    Read read1,
+    Read read2,
+    const References& references,
+    const Aligner& aligner,
+    float mu,
+    float sigma
+) {
+    Nam nam = align_tmp_res.todo_nams[j];
+    Read read = align_tmp_res.is_read1[j] ? read1 : read2;
+    int a, b;
+    std::string r_tmp;
+    auto read_len = read.size();
+
+    if (nam.is_rc) {
+        r_tmp = read.seq;
+        a = nam.ref_start - nam.query_start - (mu + 5 * sigma);
+        b = nam.ref_start - nam.query_start + read_len / 2;  // at most half read overlap
+    } else {
+        r_tmp = read.rc;                                              // mate is rc since fr orientation
+        a = nam.ref_end + (read_len - nam.query_end) - read_len / 2;  // at most half read overlap
+        b = nam.ref_end + (read_len - nam.query_end) + (mu + 5 * sigma);
+    }
+
+    auto ref_len = static_cast<int>(references.lengths[nam.ref_id]);
+    auto ref_start = std::max(0, std::min(a, ref_len));
+    auto ref_end = std::min(ref_len, std::max(0, b));
+
+    std::string ref_segm = references.sequences[nam.ref_id].substr(ref_start, ref_end - ref_start);
+    todo_querys.push_back(r_tmp);
+    todo_refs.push_back(ref_segm);
+}
+
 void perform_task(
-    InputBuffer &input_buffer,
-    OutputBuffer &output_buffer,
+    InputBuffer& input_buffer,
+    OutputBuffer& output_buffer,
     AlignmentStatistics& statistics,
     int& done,
-    const AlignmentParameters &aln_params,
-    const MappingParameters &map_param,
+    const AlignmentParameters& aln_params,
+    const MappingParameters& map_param,
     const IndexParameters& index_parameters,
     const References& references,
     const StrobemerIndex& index,
@@ -238,15 +400,14 @@ void perform_task(
         auto chunk_index = input_buffer.read_records(records1, records2, records3);
         statistics.tot_read_file += timer.duration();
         assert(records1.size() == records2.size());
-        if (records1.empty()
-            && records3.empty()
-            && input_buffer.finished_reading){
+        if (records1.empty() && records3.empty() && input_buffer.finished_reading) {
             break;
         }
 
         std::string sam_out;
-        sam_out.reserve(7*map_param.r * (records1.size() + records3.size()));
-        Sam sam{sam_out, references, map_param.cigar_ops, read_group_id, map_param.output_unmapped, map_param.details};
+        sam_out.reserve(7 * map_param.r * (records1.size() + records3.size()));
+        Sam sam{sam_out,          references, map_param.cigar_ops, read_group_id, map_param.output_unmapped,
+                map_param.details};
         InsertSizeDistribution isize_est;
         // Use chunk index as random seed for reproducibility
         random_engine.seed(chunk_index);
@@ -255,13 +416,18 @@ void perform_task(
             auto record2 = records2[i];
             to_uppercase(record1.seq);
             to_uppercase(record2.seq);
-            align_PE_read(record1, record2, sam, sam_out, statistics, isize_est, aligner,
-                          map_param, index_parameters, references, index, random_engine);
+            align_PE_read(
+                record1, record2, sam, sam_out, statistics, isize_est, aligner, map_param, index_parameters,
+                references, index, random_engine
+            );
             statistics.n_reads += 2;
         }
         for (size_t i = 0; i < records3.size(); ++i) {
             auto record = records3[i];
-            align_SE_read(record, sam, sam_out, statistics, aligner, map_param, index_parameters, references, index, random_engine);
+            align_SE_read(
+                record, sam, sam_out, statistics, aligner, map_param, index_parameters, references, index,
+                random_engine
+            );
             statistics.n_reads++;
         }
         output_buffer.output_records(std::move(sam_out), chunk_index);
@@ -270,12 +436,22 @@ void perform_task(
     statistics.tot_aligner_calls += aligner.calls_count();
     done = true;
 }
+
 #include <sys/time.h>
 inline double GetTime() {
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return (double) tv.tv_sec + (double) tv.tv_usec / 1000000;
 }
+
+#define use_gpu_ssw
+
+#ifdef use_gpu_ssw
+#include "gasal2_ssw.h"
+#endif
+
+std::mutex mtx_gpu;
+
 void perform_task_sync(
     InputBuffer& input_buffer,
     OutputBuffer& output_buffer,
@@ -314,6 +490,9 @@ void perform_task_sync(
     std::vector<AlignTmpRes> pre_align_tmp_results;
     thread_local double time0 = 0;
     thread_local double time1 = 0;
+    thread_local double time2_1 = 0;
+    thread_local double time2_2 = 0;
+    thread_local double time2_3 = 0;
     thread_local double time2 = 0;
     thread_local double time3 = 0;
 
@@ -331,7 +510,7 @@ void perform_task_sync(
 
     InsertSizeDistribution isize_est;
     // Use chunk index as random seed for reproducibility
-//    fprintf(stderr, "seed %zu\n", pre_chunk_index);
+    //    fprintf(stderr, "seed %zu\n", pre_chunk_index);
     pre_random_engine.seed(pre_chunk_index);
     for (size_t i = 0; i < pre_records1.size(); ++i) {
         auto record1 = pre_records1[i];
@@ -346,9 +525,8 @@ void perform_task_sync(
         );
         pre_align_tmp_results.push_back(align_tmp_res);
         statistics.n_reads += 2;
-//        fprintf(stderr, "ii %d %d %zu %d\n", i, align_tmp_res.type, align_tmp_res.todo_nams.size(), align_tmp_res.type4_loop_size);
+        //        fprintf(stderr, "ii %d %d %zu %d\n", i, align_tmp_res.type, align_tmp_res.todo_nams.size(), align_tmp_res.type4_loop_size);
     }
-//    fprintf(stderr, "111\n");
     time1 += GetTime() - t0;
 
     while (!eof) {
@@ -356,6 +534,11 @@ void perform_task_sync(
         //process todo_nams
         t0 = GetTime();
         Timer extend_timer1;
+
+#ifdef use_gpu_ssw
+        double t1 = GetTime();
+        std::vector<std::string> todo_querys;
+        std::vector<std::string> todo_refs;
         for (size_t i = 0; i < pre_records1.size(); i++) {
             auto record1 = pre_records1[i];
             auto record2 = pre_records2[i];
@@ -369,55 +552,222 @@ void perform_task_sync(
             size_t todo_size = align_tmp_res.todo_nams.size();
             assert(todo_size == align_tmp_res.done_align.size());
             assert(todo_size == align_tmp_res.align_res.size());
-//            fprintf(stderr, "type %d\n", align_tmp_res.type);
-//            fprintf(stderr, "size1 %zu\n", todo_size);
-//            fprintf(stderr, "size2 %d\n", align_tmp_res.type4_loop_size);
-
-            if(align_tmp_res.type == 1 || align_tmp_res.type == 2) {
+            if (align_tmp_res.type == 1 || align_tmp_res.type == 2) {
                 assert(todo_size % 2 == 0);
-                for(size_t j = 0; j < todo_size; j += 2) {
+                for (size_t j = 0; j < todo_size; j += 2) {
                     assert(align_tmp_res.is_extend_seed[j]);
-                    if(align_tmp_res.type == 1) assert(align_tmp_res.is_read1[j]);
-                    else assert(!align_tmp_res.is_read1[j]);
-                    if(!align_tmp_res.done_align[j]) {
+                    if (align_tmp_res.type == 1)
+                        assert(align_tmp_res.is_read1[j]);
+                    else
+                        assert(!align_tmp_res.is_read1[j]);
+                    if (!align_tmp_res.done_align[j]) {
                         // solve extend_seed for good read1
-                        part2_extend_seed(align_tmp_res, j, read1, read2, references, aligner);
+                        part2_extend_seed_get_str(
+                            todo_querys, todo_refs, align_tmp_res, j, read1, read2, references, aligner
+                        );
                     }
-//                    fprintf(stderr, "a1 score %d\n", align_tmp_res.align_res[j].score);
 
                     assert(!align_tmp_res.is_extend_seed[j + 1]);
-                    if(align_tmp_res.type == 1) assert(!align_tmp_res.is_read1[j + 1]);
-                    else assert(align_tmp_res.is_read1[j + 1]);
-                    if(!align_tmp_res.done_align[j + 1]) {
+                    if (align_tmp_res.type == 1)
+                        assert(!align_tmp_res.is_read1[j + 1]);
+                    else
+                        assert(align_tmp_res.is_read1[j + 1]);
+                    if (!align_tmp_res.done_align[j + 1]) {
                         // solve rescue_mate for bad read2
-                        part2_rescue_mate(align_tmp_res, j + 1, read1, read2, references, aligner, mu, sigma);
+                        part2_rescue_mate_get_str(
+                            todo_querys, todo_refs, align_tmp_res, j + 1, read1, read2, references, aligner,
+                            mu, sigma
+                        );
                     }
-//                    fprintf(stderr, "a2 score %d\n", align_tmp_res.align_res[j + 1].score);
                 }
-            } else if(align_tmp_res.type == 3) {
+            } else if (align_tmp_res.type == 3) {
                 assert(todo_size == 2);
                 assert(align_tmp_res.is_extend_seed[0]);
                 assert(align_tmp_res.is_read1[0]);
-                if(!align_tmp_res.done_align[0]) {
+                if (!align_tmp_res.done_align[0]) {
+                    // solve extend_seed for read1
+                    part2_extend_seed_get_str(
+                        todo_querys, todo_refs, align_tmp_res, 0, read1, read2, references, aligner
+                    );
+                }
+                assert(align_tmp_res.is_extend_seed[1]);
+                assert(!align_tmp_res.is_read1[1]);
+                if (!align_tmp_res.done_align[1]) {
+                    // solve extend_seed for read2
+                    part2_extend_seed_get_str(
+                        todo_querys, todo_refs, align_tmp_res, 1, read1, read2, references, aligner
+                    );
+                }
+                //TODO
+                //                bool is_proper = is_proper_pair(align_tmp_res.align_res[0], align_tmp_res.align_res[1], mu, sigma);
+                //                if ((isize_est.sample_size < 400) && (align_tmp_res.align_res[0].edit_distance + align_tmp_res.align_res[1].edit_distance < 3) && is_proper) {
+                //                    isize_est.update(std::abs(align_tmp_res.align_res[0].ref_start - align_tmp_res.align_res[1].ref_start));
+                //                }
+            } else if (align_tmp_res.type == 4) {
+                for (size_t j = 0; j < todo_size; j++) {
+                    if (!align_tmp_res.done_align[j]) {
+                        if (align_tmp_res.is_extend_seed[j]) {
+                            part2_extend_seed_get_str(
+                                todo_querys, todo_refs, align_tmp_res, j, read1, read2, references, aligner
+                            );
+                        } else {
+                            part2_rescue_mate_get_str(
+                                todo_querys, todo_refs, align_tmp_res, j, read1, read2, references, aligner,
+                                mu, sigma
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        time2_1 += GetTime() - t1;
+
+        t1 = GetTime();
+        std::vector<AlignmentInfo> info_results;
+        std::vector<gasal_tmp_res> gasal_results;
+        assert(todo_refs.size() == todo_querys.size());
+        assert(pre_align_tmp_results.size() == pre_records1.size());
+
+//        std::unique_lock<std::mutex> unique_lock(mtx_gpu);
+        solve_ssw_on_gpu(
+            gasal_results, todo_querys, todo_refs, aln_params.match, aln_params.mismatch, aln_params.gap_open,
+            aln_params.gap_extend
+        );
+//        unique_lock.unlock();
+
+        for(size_t i = 0; i < todo_querys.size(); i++) {
+            auto info = aligner.align(todo_querys[i], todo_refs[i]);
+            info.sw_score = gasal_results[i].score;
+            info_results.push_back(info);
+        }
+        time2_2 += GetTime() - t1;
+
+        t1 = GetTime();
+        int pos = 0;
+        for (size_t i = 0; i < pre_align_tmp_results.size(); i++) {
+            auto record1 = pre_records1[i];
+            auto record2 = pre_records2[i];
+            to_uppercase(record1.seq);
+            to_uppercase(record2.seq);
+            Read read1(record1.seq);
+            Read read2(record2.seq);
+            const auto mu = isize_est.mu;
+            const auto sigma = isize_est.sigma;
+            auto& align_tmp_res = pre_align_tmp_results[i];
+            size_t todo_size = align_tmp_res.todo_nams.size();
+            if (align_tmp_res.type == 1 || align_tmp_res.type == 2) {
+                for (size_t j = 0; j < todo_size; j += 2) {
+                    if (!align_tmp_res.done_align[j]) {
+                        // solve extend_seed for good read1
+                        part2_extend_seed_store_res(
+                            align_tmp_res, j, read1, read2, references, info_results[pos++]
+                        );
+                    }
+                    if (!align_tmp_res.done_align[j + 1]) {
+                        // solve rescue_mate for bad read2
+                        part2_rescue_mate_store_res(
+                            align_tmp_res, j + 1, read1, read2, references, info_results[pos++], mu, sigma
+                        );
+                    }
+                }
+            } else if (align_tmp_res.type == 3) {
+                if (!align_tmp_res.done_align[0]) {
+                    // solve extend_seed for read1
+                    part2_extend_seed_store_res(
+                        align_tmp_res, 0, read1, read2, references, info_results[pos++]
+                    );
+                }
+                if (!align_tmp_res.done_align[1]) {
+                    // solve extend_seed for read2
+                    part2_extend_seed_store_res(
+                        align_tmp_res, 1, read1, read2, references, info_results[pos++]
+                    );
+                }
+            } else if (align_tmp_res.type == 4) {
+                for (size_t j = 0; j < todo_size; j++) {
+                    if (!align_tmp_res.done_align[j]) {
+                        if (align_tmp_res.is_extend_seed[j]) {
+                            part2_extend_seed_store_res(
+                                align_tmp_res, j, read1, read2, references, info_results[pos++]
+                            );
+                        } else {
+                            part2_rescue_mate_store_res(
+                                align_tmp_res, j, read1, read2, references, info_results[pos++], mu, sigma
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        time2_3 += GetTime() - t1;
+
+#else
+        for (size_t i = 0; i < pre_records1.size(); i++) {
+            auto record1 = pre_records1[i];
+            auto record2 = pre_records2[i];
+            to_uppercase(record1.seq);
+            to_uppercase(record2.seq);
+            Read read1(record1.seq);
+            Read read2(record2.seq);
+            const auto mu = isize_est.mu;
+            const auto sigma = isize_est.sigma;
+            auto& align_tmp_res = pre_align_tmp_results[i];
+            size_t todo_size = align_tmp_res.todo_nams.size();
+            assert(todo_size == align_tmp_res.done_align.size());
+            assert(todo_size == align_tmp_res.align_res.size());
+            //            fprintf(stderr, "type %d\n", align_tmp_res.type);
+            //            fprintf(stderr, "size1 %zu\n", todo_size);
+            //            fprintf(stderr, "size2 %d\n", align_tmp_res.type4_loop_size);
+
+            if (align_tmp_res.type == 1 || align_tmp_res.type == 2) {
+                assert(todo_size % 2 == 0);
+                for (size_t j = 0; j < todo_size; j += 2) {
+                    assert(align_tmp_res.is_extend_seed[j]);
+                    if (align_tmp_res.type == 1)
+                        assert(align_tmp_res.is_read1[j]);
+                    else
+                        assert(!align_tmp_res.is_read1[j]);
+                    if (!align_tmp_res.done_align[j]) {
+                        // solve extend_seed for good read1
+                        part2_extend_seed(align_tmp_res, j, read1, read2, references, aligner);
+                    }
+                    //                    fprintf(stderr, "a1 score %d\n", align_tmp_res.align_res[j].score);
+
+                    assert(!align_tmp_res.is_extend_seed[j + 1]);
+                    if (align_tmp_res.type == 1)
+                        assert(!align_tmp_res.is_read1[j + 1]);
+                    else
+                        assert(align_tmp_res.is_read1[j + 1]);
+                    if (!align_tmp_res.done_align[j + 1]) {
+                        // solve rescue_mate for bad read2
+                        part2_rescue_mate(align_tmp_res, j + 1, read1, read2, references, aligner, mu, sigma);
+                    }
+                    //                    fprintf(stderr, "a2 score %d\n", align_tmp_res.align_res[j + 1].score);
+                }
+            } else if (align_tmp_res.type == 3) {
+                assert(todo_size == 2);
+                assert(align_tmp_res.is_extend_seed[0]);
+                assert(align_tmp_res.is_read1[0]);
+                if (!align_tmp_res.done_align[0]) {
                     // solve extend_seed for read1
                     part2_extend_seed(align_tmp_res, 0, read1, read2, references, aligner);
                 }
                 assert(align_tmp_res.is_extend_seed[1]);
                 assert(!align_tmp_res.is_read1[1]);
-                if(!align_tmp_res.done_align[1]) {
+                if (!align_tmp_res.done_align[1]) {
                     // solve extend_seed for read2
                     part2_extend_seed(align_tmp_res, 1, read1, read2, references, aligner);
                 }
                 //TODO
-//                bool is_proper = is_proper_pair(align_tmp_res.align_res[0], align_tmp_res.align_res[1], mu, sigma);
-//                if ((isize_est.sample_size < 400) && (align_tmp_res.align_res[0].edit_distance + align_tmp_res.align_res[1].edit_distance < 3) &&
-//                    is_proper) {
-//                    isize_est.update(std::abs(align_tmp_res.align_res[0].ref_start - align_tmp_res.align_res[1].ref_start));
-//                }
-            } else if(align_tmp_res.type == 4) {
-                for(size_t j = 0; j < todo_size; j++) {
-                    if(!align_tmp_res.done_align[j]) {
-                        if(align_tmp_res.is_extend_seed[j]) {
+                //                bool is_proper = is_proper_pair(align_tmp_res.align_res[0], align_tmp_res.align_res[1], mu, sigma);
+                //                if ((isize_est.sample_size < 400) && (align_tmp_res.align_res[0].edit_distance + align_tmp_res.align_res[1].edit_distance < 3) &&
+                //                    is_proper) {
+                //                    isize_est.update(std::abs(align_tmp_res.align_res[0].ref_start - align_tmp_res.align_res[1].ref_start));
+                //                }
+            } else if (align_tmp_res.type == 4) {
+                for (size_t j = 0; j < todo_size; j++) {
+                    if (!align_tmp_res.done_align[j]) {
+                        if (align_tmp_res.is_extend_seed[j]) {
                             part2_extend_seed(align_tmp_res, j, read1, read2, references, aligner);
                         } else {
                             part2_rescue_mate(align_tmp_res, j, read1, read2, references, aligner, mu, sigma);
@@ -426,9 +776,9 @@ void perform_task_sync(
                 }
             }
         }
+#endif
         statistics.tot_extend += extend_timer1.duration();
         time2 += GetTime() - t0;
-
 
         t0 = GetTime();
         //chunk1_part2
@@ -439,12 +789,12 @@ void perform_task_sync(
         if (records1.empty() && records3.empty() && input_buffer.finished_reading) {
             eof = true;
         }
-//        fprintf(stderr, "eof %d\n", eof);
+        //        fprintf(stderr, "eof %d\n", eof);
 
         InsertSizeDistribution isize_est;
         // Use chunk index as random seed for reproducibility
         random_engine.seed(chunk_index);
-//        fprintf(stderr, "seed %zu\n", chunk_index);
+        //        fprintf(stderr, "seed %zu\n", chunk_index);
         assert(align_tmp_results.size() == 0);
         for (size_t i = 0; i < records1.size(); ++i) {
             auto record1 = records1[i];
@@ -462,12 +812,13 @@ void perform_task_sync(
         time1 += GetTime() - t0;
 
         //chunk0_part3
-//        fprintf(stderr, "part3\n\n");
+        //        fprintf(stderr, "part3\n\n");
         t0 = GetTime();
         Timer extend_timer2;
         std::string sam_out;
         sam_out.reserve(7 * map_param.r * (pre_records1.size() + pre_records3.size()));
-        Sam sam{sam_out, references, map_param.cigar_ops, read_group_id, map_param.output_unmapped, map_param.details};
+        Sam sam{sam_out,          references, map_param.cigar_ops, read_group_id, map_param.output_unmapped,
+                map_param.details};
         for (size_t i = 0; i < pre_records1.size(); ++i) {
             auto record1 = pre_records1[i];
             auto record2 = pre_records2[i];
@@ -477,8 +828,7 @@ void perform_task_sync(
                 pre_align_tmp_results[i], record1, record2, sam, sam_out, statistics, isize_est, aligner,
                 map_param, index_parameters, references, index, pre_random_engine
             );
-//            fprintf(stderr, "last %zu\n", i);
-
+            //            fprintf(stderr, "last %zu\n", i);
         }
 
         output_buffer.output_records(std::move(sam_out), pre_chunk_index);
@@ -496,5 +846,8 @@ void perform_task_sync(
     }
     statistics.tot_aligner_calls += aligner.calls_count();
     done = true;
-    fprintf(stderr, "cost time1:%.2f time2:%.2f time3:%.2f, tot time:%.2f\n", time1, time2, time3, GetTime() - t00);
+    fprintf(
+        stderr, "cost time1:%.2f time2:%.2f (%.2f %.2f %.2f) time3:%.2f, tot time:%.2f\n", time1, time2,
+        time2_1, time2_2, time2_3, time3, GetTime() - t00
+    );
 }
