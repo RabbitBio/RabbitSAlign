@@ -209,6 +209,44 @@ int CalculateNumberMismatch(
   return mismatch_length;
 }
 
+int CalculateNumberMismatchOnly(
+    StripedSmithWaterman::Alignment* al,
+    const int& query_len) {
+
+    int mismatch_length = 0;
+
+
+    std::vector<uint32_t> new_cigar;
+    std::ostringstream new_cigar_string;
+
+
+    for (unsigned int i = 0; i < al->cigar.size(); ++i) {
+        char op = cigar_int_to_op(al->cigar[i]);
+        uint32_t length = cigar_int_to_len(al->cigar[i]);
+        if (op == 'M') {
+            uint32_t match = to_cigar_int(length, '=');
+            new_cigar.push_back(match);
+            new_cigar_string << length << '=';
+        } else if (op == 'S' || op == 'X' || op == 'I' || op == 'D') {
+            uint32_t match = to_cigar_int(length, op);
+            new_cigar.push_back(match);
+            new_cigar_string << length << op;
+            if(op != 'S') mismatch_length += length;
+        } else {
+            fprintf(stderr, "GGGGGGGGGGGGGG");
+            exit(0);
+        }
+    }
+
+    al->cigar_string.clear();
+    al->cigar.clear();
+    al->cigar_string = new_cigar_string.str();
+    al->cigar = new_cigar;
+
+    return mismatch_length;
+}
+
+
 void SetFlag(const StripedSmithWaterman::Filter& filter, uint8_t* flag) {
   if (filter.report_begin_position) *flag |= 0x08;
   if (filter.report_cigar) *flag |= 0x0f;
@@ -355,45 +393,81 @@ uint16_t Aligner::Align(const char* query, const Filter& filter,
 }
 
 
-uint16_t Aligner::Align(const char* query, const char* ref, const int& ref_len,
-                    const Filter& filter, Alignment* alignment, const int32_t maskLen) const
+uint16_t Aligner::Align_gpu(gasal_tmp_res &gasal_res, const char* query, const char* ref, const int& ref_len,
+                        const Filter& filter, Alignment* alignment, const int32_t maskLen) const
 {
-  if (!translation_matrix_) return false;
+    if (!translation_matrix_) return false;
 
-  int query_len = strlen(query);
-  if (query_len == 0) return false;
-  int8_t* translated_query = new int8_t[query_len];
-  TranslateBase(query, query_len, translated_query);
+    int query_len = strlen(query);
+    if (query_len == 0) return false;
+    int8_t* translated_query = NULL;
 
-  // calculate the valid length
-  int valid_ref_len = ref_len;
-  int8_t* translated_ref = new int8_t[valid_ref_len];
-  TranslateBase(ref, valid_ref_len, translated_ref);
+    // calculate the valid length
+    int valid_ref_len = ref_len;
+    int8_t* translated_ref = NULL;
 
 
-  const int8_t score_size = 2;
-  s_profile* profile = ssw_init(translated_query, query_len, score_matrix_,
-                                score_matrix_size_, score_size);
+    s_profile* profile = NULL;
 
-  uint8_t flag = 0;
-  SetFlag(filter, &flag);
-  s_align* s_al = ssw_align(profile, translated_ref, valid_ref_len,
-                                 static_cast<int>(gap_opening_penalty_),
-				 static_cast<int>(gap_extending_penalty_),
-				 flag, filter.score_filter, filter.distance_filter, maskLen);
+    uint8_t flag = 0;
+    SetFlag(filter, &flag);
+    s_align* s_al = my_ssw_align(profile, translated_ref, valid_ref_len,
+                              static_cast<int>(gap_opening_penalty_),
+                              static_cast<int>(gap_extending_penalty_),
+                                 flag, filter.score_filter, filter.distance_filter, maskLen,
+                                 gasal_res.score, gasal_res.query_start, gasal_res.ref_start,
+                                 gasal_res.query_end, gasal_res.ref_end, gasal_res.cigar_str.c_str());
 
-  alignment->Clear();
-  ConvertAlignment(*s_al, query_len, alignment);
-  alignment->mismatches = CalculateNumberMismatch(&*alignment, translated_ref, translated_query, query_len);
-  uint16_t align_flag = s_al->flag;
+    alignment->Clear();
+    ConvertAlignment(*s_al, query_len, alignment);
+    alignment->mismatches = CalculateNumberMismatchOnly(&*alignment, query_len);
+    uint16_t align_flag = s_al->flag;
 
-  // Free memory
-  delete [] translated_query;
-  delete [] translated_ref;
-  align_destroy(s_al);
-  init_destroy(profile);
+    align_destroy(s_al);
 
-  return align_flag;
+    return align_flag;
+}
+
+
+uint16_t Aligner::Align(const char* query, const char* ref, const int& ref_len,
+                        const Filter& filter, Alignment* alignment, const int32_t maskLen) const
+{
+    if (!translation_matrix_) return false;
+
+    int query_len = strlen(query);
+    if (query_len == 0) return false;
+    int8_t* translated_query = new int8_t[query_len];
+    TranslateBase(query, query_len, translated_query);
+
+    // calculate the valid length
+    int valid_ref_len = ref_len;
+    int8_t* translated_ref = new int8_t[valid_ref_len];
+    TranslateBase(ref, valid_ref_len, translated_ref);
+
+
+    const int8_t score_size = 2;
+    s_profile* profile = ssw_init(translated_query, query_len, score_matrix_,
+                                  score_matrix_size_, score_size);
+
+    uint8_t flag = 0;
+    SetFlag(filter, &flag);
+    s_align* s_al = ssw_align(profile, translated_ref, valid_ref_len,
+                              static_cast<int>(gap_opening_penalty_),
+                              static_cast<int>(gap_extending_penalty_),
+                              flag, filter.score_filter, filter.distance_filter, maskLen);
+
+    alignment->Clear();
+    ConvertAlignment(*s_al, query_len, alignment);
+    alignment->mismatches = CalculateNumberMismatch(&*alignment, translated_ref, translated_query, query_len);
+    uint16_t align_flag = s_al->flag;
+
+    // Free memory
+    delete [] translated_query;
+    delete [] translated_ref;
+    align_destroy(s_al);
+    init_destroy(profile);
+
+    return align_flag;
 }
 
 void Aligner::Clear(void) {

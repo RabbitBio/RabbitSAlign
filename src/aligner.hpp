@@ -5,6 +5,7 @@
 #include <tuple>
 #include "ssw/ssw_cpp.h"
 #include "cigar.hpp"
+#include "gasal2_ssw.h"
 
 
 struct AlignmentParameters {
@@ -36,6 +37,7 @@ public:
     { }
 
     AlignmentInfo align(const std::string &query, const std::string &ref) const;
+    AlignmentInfo align_gpu(const std::string &query, const std::string &ref, gasal_tmp_res &gasal_res) const;
 
     AlignmentParameters parameters;
 

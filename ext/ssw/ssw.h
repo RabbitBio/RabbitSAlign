@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <ctype.h>
 
 #ifdef __ARM_NEON // (M1)
 #include "sse2neon.h"
@@ -132,6 +133,17 @@ s_align* ssw_align (const s_profile* prof,
 					const uint16_t filters,
 					const int32_t filterd,
 					const int32_t maskLen);
+
+s_align* my_ssw_align (const s_profile* prof,
+                      const int8_t* ref,
+                      int32_t refLen,
+                      const uint8_t weight_gapO,
+                      const uint8_t weight_gapE,
+                      const uint8_t flag,
+                      const uint16_t filters,
+                      const int32_t filterd,
+                      const int32_t maskLen, int v1, int v2, int v3, int v4, int v5, const char* v6);
+
 
 /*!	@function	Release the memory allocated by function ssw_align.
 	@param	a	pointer to the alignment result structure

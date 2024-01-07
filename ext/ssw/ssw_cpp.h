@@ -8,6 +8,8 @@
 #include <stdint.h>
 #include <string>
 #include <vector>
+#include "../../src/gasal2_ssw.h"
+
 
 namespace StripedSmithWaterman {
 
@@ -154,7 +156,10 @@ class Aligner {
   // @return   If the alignment path is accurate (or has missing part). 0: accurate; 1: banded_sw is totally failed; 2: banded_sw returned path has missing part
   // =========
   uint16_t Align(const char* query, const char* ref, const int& ref_len,
-             const Filter& filter, Alignment* alignment, const int32_t maskLen) const;
+                 const Filter& filter, Alignment* alignment, const int32_t maskLen) const;
+
+  uint16_t Align_gpu(gasal_tmp_res &gasal_res, const char* query, const char* ref, const int& ref_len,
+                 const Filter& filter, Alignment* alignment, const int32_t maskLen) const;
 
   // @function Clear up all containers and thus the aligner is disabled.
   //             To rebuild the aligner please use Build functions.

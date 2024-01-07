@@ -921,6 +921,77 @@ end:
 	return r;
 }
 
+
+cigar* parse_cigar_string(const char* cigar_str) {
+    int count = 0;
+    for (int i = 0; cigar_str[i] != '\0'; ++i) {
+        if (isalpha(cigar_str[i])) {
+            count++;
+        }
+    }
+
+    cigar* result = malloc(sizeof(cigar));
+    result->seq = malloc(count * sizeof(uint32_t));
+    result->length = count;
+
+    int index = 0;
+    int length = 0;
+    for (int i = 0; cigar_str[i] != '\0'; ++i) {
+        if (isdigit(cigar_str[i])) {
+            length = length * 10 + (cigar_str[i] - '0');
+        } else if (isalpha(cigar_str[i])) {
+            result->seq[index++] = to_cigar_int(length, cigar_str[i]);
+            length = 0;
+        }
+    }
+
+    return result;
+}
+
+s_align* my_ssw_align (const s_profile* prof,
+                      const int8_t* ref,
+                      int32_t refLen,
+                      const uint8_t weight_gapO,
+                      const uint8_t weight_gapE,
+                      const uint8_t flag,	//  (from high to low) bit 5: return the best alignment beginning position; 6: if (ref_end1 - ref_begin1 <= filterd) && (read_end1 - read_begin1 <= filterd), return cigar; 7: if max score >= filters, return cigar; 8: always return cigar; if 6 & 7 are both setted, only return cigar when both filter fulfilled
+                      const uint16_t filters,
+                      const int32_t filterd,
+                      const int32_t maskLen, int v1, int v2, int v3, int v4, int v5, const char* v6) {
+
+    cigar* path;
+    s_align* r = (s_align*)calloc(1, sizeof(s_align));
+    r->ref_begin1 = -1;
+    r->read_begin1 = -1;
+    r->cigar = 0;
+    r->cigarLen = 0;
+    r->flag = 0;
+    if (maskLen < 15) {
+        fprintf(stderr, "When maskLen < 15, the function ssw_align doesn't return 2nd best alignment information.\n");
+    }
+
+    r->score1 = v1;
+    r->ref_end1 = v5;
+    r->read_end1 = v4;
+
+    r->ref_begin1 = v3;
+    r->read_begin1 = v2;
+
+    if ((7&flag) == 0 || ((2&flag) != 0 && r->score1 < filters) || ((4&flag) != 0 && (r->ref_end1 - r->ref_begin1 > filterd || r->read_end1 - r->read_begin1 > filterd))) goto end;
+
+    // Generate cigar.
+    path = parse_cigar_string(v6);
+    if (path == 0) r->flag = 1;    // banded_sw is failed.
+    else {
+        r->cigar = path->seq;
+        r->cigarLen = path->length;
+        free(path);
+    }
+
+end:
+    return r;
+}
+
+
 void align_destroy (s_align* a) {
 	free(a->cigar);
 	free(a);
