@@ -322,14 +322,14 @@ int run_strobealign(int argc, char **argv) {
     std::vector<int> worker_done(opt.n_threads);  // each thread sets its entry to 1 when it’s done
 
     for (int i = 0; i < opt.n_threads / 2; ++i) {
-        std::thread consumer(perform_task_sync, std::ref(input_buffer), std::ref(output_buffer),
+        std::thread consumer(perform_task_async, std::ref(input_buffer), std::ref(output_buffer),
             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
             std::ref(map_param), std::ref(index_parameters), std::ref(references),
             std::ref(index), std::ref(opt.read_group_id), i);
         workers.push_back(std::move(consumer));
     }
     for (int i = opt.n_threads / 2; i < opt.n_threads; ++i) {
-        std::thread consumer(perform_task_sync, std::ref(input_buffer), std::ref(output_buffer),
+        std::thread consumer(perform_task_async, std::ref(input_buffer), std::ref(output_buffer),
             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
             std::ref(map_param), std::ref(index_parameters), std::ref(references),
             std::ref(index2), std::ref(opt.read_group_id), totalCPUs / 2 + i - opt.n_threads / 2);

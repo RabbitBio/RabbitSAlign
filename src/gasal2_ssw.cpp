@@ -17,6 +17,7 @@ void writeToFasta(
 }
 
 void solve_ssw_on_gpu(
+    int thread_id,
     std::vector<gasal_tmp_res>& gasal_results,
     std::vector<std::string>& query_seqs,
     std::vector<std::string>& target_seqs,
@@ -25,8 +26,8 @@ void solve_ssw_on_gpu(
     int gap_open_score,
     int gap_extend_score
 ) {
-    thread_local static int cnt = 0;
-    cnt++;
+    static int cnt[THREAD_NUM_MAX] = {0};
+    cnt[thread_id]++;
     assert(query_seqs.size() == target_seqs.size());
     assert(query_seqs.size() <= STREAM_BATCH_SIZE);
     gasal_results.resize(query_seqs.size());
@@ -36,42 +37,36 @@ void solve_ssw_on_gpu(
     int argc = 18;
     const char* argv[] = {"A",  "-r", "1",  "-q",    "11", "-a", "2",  "-b",         "8",
                           "-n", "1",  "-y", "local", "-s", "-p", "-t", "/dev/stdin", "/dev/stdin"};
-    thread_local static Parameters* args;
-    if(cnt == 1) {
-        args = new Parameters(argc, const_cast<char**>(argv));
-        args->parse();
+    static Parameters* args[THREAD_NUM_MAX];
+    if(cnt[thread_id] == 1) {
+        args[thread_id] = new Parameters(argc, const_cast<char**>(argv));
+        args[thread_id]->parse();
     }
-    //    args->print();
 
-    int print_out = args->print_out;
+    int print_out = args[thread_id]->print_out;
 
     //--------------copy substitution scores to GPU--------------------
-    thread_local static gasal_subst_scores sub_scores;
+    static gasal_subst_scores sub_scores[THREAD_NUM_MAX];
 
-    if (cnt == 1) {
-        sub_scores.match = match_score;
-        sub_scores.mismatch = mismatch_score;
-        sub_scores.gap_open = gap_open_score - 1;
-        sub_scores.gap_extend = gap_extend_score;
-        gasal_copy_subst_scores(&sub_scores);
+    if (cnt[thread_id] == 1) {
+        sub_scores[thread_id].match = match_score;
+        sub_scores[thread_id].mismatch = mismatch_score;
+        sub_scores[thread_id].gap_open = gap_open_score - 1;
+        sub_scores[thread_id].gap_extend = gap_extend_score;
+        gasal_copy_subst_scores(&sub_scores[thread_id]);
     }
 
-    //
-    //    sub_scores.match = args->sa;
-    //    sub_scores.mismatch = args->sb;
-    //    sub_scores.gap_open = args->gapo;
-    //    sub_scores.gap_extend = args->gape;
 
     //-------------------------------------------------------------------
 
     int total_seqs = query_seqs.size();
 
-    thread_local static std::vector<std::string> query_headers(total_seqs, ">name");
-    thread_local static std::vector<std::string> target_headers(total_seqs, ">name");
-    thread_local static std::vector<uint8_t> query_seq_mod_vec(total_seqs, 0);
-    thread_local static std::vector<uint8_t> target_seq_mod_vec(total_seqs, 0);
-    thread_local static uint8_t* query_seq_mod = &query_seq_mod_vec[0];
-    thread_local static uint8_t* target_seq_mod = &target_seq_mod_vec[0];
+    static std::vector<std::string> query_headers(total_seqs, ">name");
+    static std::vector<std::string> target_headers(total_seqs, ">name");
+    static std::vector<uint8_t> query_seq_mod_vec(total_seqs, 0);
+    static std::vector<uint8_t> target_seq_mod_vec(total_seqs, 0);
+    static uint8_t* query_seq_mod = &query_seq_mod_vec[0];
+    static uint8_t* target_seq_mod = &target_seq_mod_vec[0];
 
     int maximum_sequence_length_query = 0;
     int maximum_sequence_length_target = 0;
@@ -94,22 +89,22 @@ void solve_ssw_on_gpu(
     assert(maximum_sequence_length_target <= MAX_TARGET_LEN);
 
 
-    thread_local static gasal_gpu_storage_v gpu_storage_vecs;
-    if (cnt == 1) {
-        gpu_storage_vecs = gasal_init_gpu_storage_v(NB_STREAMS);
+    static gasal_gpu_storage_v gpu_storage_vecs[THREAD_NUM_MAX];
+    if (cnt[thread_id] == 1) {
+        gpu_storage_vecs[thread_id] = gasal_init_gpu_storage_v(NB_STREAMS);
         gasal_init_streams(
-            &(gpu_storage_vecs),
+            &(gpu_storage_vecs[thread_id]),
             (MAX_QUERY_LEN + 7),  //TODO: remove maximum_sequence_length_query
             (MAX_TARGET_LEN + 7),
             STREAM_BATCH_SIZE,  //device
-            args
+            args[thread_id]
         );
     }
 
-    gpu_batch gpu_batch_arr[gpu_storage_vecs.n];
+    gpu_batch gpu_batch_arr[gpu_storage_vecs[thread_id].n];
 
-    for (int z = 0; z < gpu_storage_vecs.n; z++) {
-        gpu_batch_arr[z].gpu_storage = &(gpu_storage_vecs.a[z]);
+    for (int z = 0; z < gpu_storage_vecs[thread_id].n; z++) {
+        gpu_batch_arr[z].gpu_storage = &(gpu_storage_vecs[thread_id].a[z]);
     }
 
     uint32_t query_batch_idx = 0;
@@ -123,7 +118,7 @@ void solve_ssw_on_gpu(
             gpu_batch_arr[gpu_batch_arr_idx].gpu_storage->host_max_n_alns) {
             gasal_host_alns_resize(
                 gpu_batch_arr[gpu_batch_arr_idx].gpu_storage,
-                gpu_batch_arr[gpu_batch_arr_idx].gpu_storage->host_max_n_alns * 2, args
+                gpu_batch_arr[gpu_batch_arr_idx].gpu_storage->host_max_n_alns * 2, args[thread_id]
             );
         }
 
@@ -154,7 +149,7 @@ void solve_ssw_on_gpu(
 
     gasal_aln_async(
         gpu_batch_arr[gpu_batch_arr_idx].gpu_storage, query_batch_bytes, target_batch_bytes,
-        gpu_batch_arr[gpu_batch_arr_idx].n_seqs_batch, args
+        gpu_batch_arr[gpu_batch_arr_idx].n_seqs_batch, args[thread_id]
     );
     gpu_batch_arr[gpu_batch_arr_idx].gpu_storage->current_n_alns = 0;
 
@@ -187,7 +182,7 @@ void solve_ssw_on_gpu(
                 for (int j = 0, i = gpu_batch_arr[gpu_batch_arr_idx].batch_start;
                      j < gpu_batch_arr[gpu_batch_arr_idx].n_seqs_batch; i++, j++) {
                     std::ostringstream oss;
-                    if (args->start_pos == WITH_TB) {
+                    if (args[thread_id]->start_pos == WITH_TB) {
                         int u;
                         int offset = (gpu_batch_arr[gpu_batch_arr_idx].gpu_storage)->host_query_batch_offsets[j];
                         int n_cigar_ops = (gpu_batch_arr[gpu_batch_arr_idx].gpu_storage)->host_res->n_cigar_ops[j];
@@ -254,8 +249,8 @@ void solve_ssw_on_gpu(
     }
 
 
-//    gasal_destroy_streams(&(gpu_storage_vecs), args);
-//    gasal_destroy_gpu_storage_v(&(gpu_storage_vecs));
+//    gasal_destroy_streams(&(gpu_storage_vecs[thread_id]), args[thread_id]);
+//    gasal_destroy_gpu_storage_v(&(gpu_storage_vecs[thread_id]));
 //
-//    delete args;  // closes the files
+//    delete args[thread_id];  // closes the files
 }
