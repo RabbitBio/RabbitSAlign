@@ -380,6 +380,8 @@ void perform_task(
     const std::string& read_group_id,
     const int thread_id
 ) {
+#define use_good_numa
+#ifdef use_good_numa
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET(thread_id, &cpuset);
@@ -388,6 +390,7 @@ void perform_task(
     if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
         std::cerr << "Error setting thread affinity" << std::endl;
     }
+#endif
 
     bool eof = false;
     Aligner aligner{aln_params};
@@ -452,8 +455,7 @@ inline double GetTime() {
 
 std::mutex mtx_gpu;
 
-
-int calculate_cigar_length(const char *cigar) {
+int calculate_cigar_length(const char* cigar) {
     int length = 0;
     int current_length = 0;
 
@@ -473,19 +475,19 @@ int calculate_cigar_length(const char *cigar) {
 }
 
 // check if gasal_res is good, include cigar length is valid.
-bool gasal_fail(std::string &query_str, std::string &ref_str, gasal_tmp_res gasal_res) {
+bool gasal_fail(std::string& query_str, std::string& ref_str, gasal_tmp_res gasal_res) {
     bool gg_res = gasal_res.cigar_str.empty() || gasal_res.score == 0 || gasal_res.query_start < 0 ||
-           gasal_res.query_end < 0 || gasal_res.ref_start < 0 || gasal_res.ref_end < 0 ||
-           gasal_res.query_end >= query_str.length() || gasal_res.ref_end >= ref_str.length();
-    if(gg_res) return true;
-    const char *cigar_str = gasal_res.cigar_str.c_str();
+                  gasal_res.query_end < 0 || gasal_res.ref_start < 0 || gasal_res.ref_end < 0 ||
+                  gasal_res.query_end >= query_str.length() || gasal_res.ref_end >= ref_str.length();
+    if (gg_res)
+        return true;
+    const char* cigar_str = gasal_res.cigar_str.c_str();
     int seq_length = calculate_cigar_length(cigar_str);
-    if(seq_length != gasal_res.query_end - gasal_res.query_start + 1) {
+    if (seq_length != gasal_res.query_end - gasal_res.query_start + 1) {
         return true;
     }
     return false;
 }
-
 
 void perform_task_async(
     InputBuffer& input_buffer,
@@ -500,6 +502,8 @@ void perform_task_async(
     const std::string& read_group_id,
     const int thread_id
 ) {
+#define use_good_numa
+#ifdef use_good_numa
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET(thread_id, &cpuset);
@@ -508,7 +512,7 @@ void perform_task_async(
     if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
         std::cerr << "Error setting thread affinity" << std::endl;
     }
-
+#endif
     bool eof = false;
     Aligner aligner{aln_params};
     std::minstd_rand random_engine;
@@ -523,21 +527,19 @@ void perform_task_async(
     size_t pre_chunk_index;
     std::vector<AlignTmpRes> align_tmp_results;
     std::vector<AlignTmpRes> pre_align_tmp_results;
-    thread_local double time0 = 0;
-    thread_local double time1 = 0;
-    thread_local double time2_1 = 0;
-    thread_local double time2_2 = 0;
-    thread_local double time2_2_1 = 0;
-    thread_local double time2_2_2 = 0;
-    thread_local int tot_cnt_2_2_2 = 0;
-    thread_local int gg_cnt_2_2_2 = 0;
-    thread_local double time2_3 = 0;
-    thread_local double time2 = 0;
-    thread_local double time3 = 0;
+    thread_local double time_tot = 0;
+    thread_local double time1 = 0;    //time except extend and output
+    thread_local double time2_1 = 0;  //time to filter nams and get todo_strings
+    thread_local double time2_2 = 0;  //time to do ssw on gpu
+    thread_local double time2_3 = 0;  //time to post-process the gpu results
+    thread_local double time2_4 = 0;  //time to store ssw results
+    thread_local double time3_1 = 0;  //time to construct sam
+    thread_local double time3_2 = 0;  //time to output
+    double t_0, t_1;
 
-    double t00 = GetTime();
-    double t0 = GetTime();
+    t_0 = GetTime();
 
+    t_1 = GetTime();
     //chunk0_part1
     Timer timer;
     pre_chunk_index = input_buffer.read_records(pre_records1, pre_records2, pre_records3);
@@ -564,23 +566,23 @@ void perform_task_async(
         pre_align_tmp_results.push_back(align_tmp_res);
         statistics.n_reads += 2;
     }
-    time1 += GetTime() - t0;
+    time1 += GetTime() - t_1;
 
     while (!eof) {
+        std::vector<std::string> todo_querys;
+        std::vector<std::string> todo_refs;
+        std::vector<AlignmentInfo> info_results;
+        std::vector<gasal_tmp_res> gasal_results_tmp;
+        std::vector<gasal_tmp_res> gasal_results;
 
-
-        std::thread gpu_async_thread([&](){
-
-            //chunk0_part2
-            //process todo_nams
-            t0 = GetTime();
+        std::thread gpu_ssw_async;
+        //chunk0_part2
+        //process todo_nams
+        {
             Timer extend_timer1;
-    
-#ifdef use_gpu_ssw
-            double t1 = GetTime();
-            std::vector<std::string> todo_querys;
-            std::vector<std::string> todo_refs;
+
             // step1 : filter nams and get todo_strings
+            t_1 = GetTime();
             for (size_t i = 0; i < pre_records1.size(); i++) {
                 auto record1 = pre_records1[i];
                 auto record2 = pre_records2[i];
@@ -607,7 +609,7 @@ void perform_task_async(
                                 todo_querys, todo_refs, align_tmp_res, j, read1, read2, references, aligner
                             );
                         }
-    
+
                         assert(!align_tmp_res.is_extend_seed[j + 1]);
                         if (align_tmp_res.type == 1)
                             assert(!align_tmp_res.is_read1[j + 1]);
@@ -615,8 +617,8 @@ void perform_task_async(
                             assert(align_tmp_res.is_read1[j + 1]);
                         if (!align_tmp_res.done_align[j + 1]) {
                             part2_rescue_mate_get_str(
-                                todo_querys, todo_refs, align_tmp_res, j + 1, read1, read2, references, aligner,
-                                mu, sigma
+                                todo_querys, todo_refs, align_tmp_res, j + 1, read1, read2, references,
+                                aligner, mu, sigma
                             );
                         }
                     }
@@ -646,87 +648,119 @@ void perform_task_async(
                         if (!align_tmp_res.done_align[j]) {
                             if (align_tmp_res.is_extend_seed[j]) {
                                 part2_extend_seed_get_str(
-                                    todo_querys, todo_refs, align_tmp_res, j, read1, read2, references, aligner
+                                    todo_querys, todo_refs, align_tmp_res, j, read1, read2, references,
+                                    aligner
                                 );
                             } else {
                                 part2_rescue_mate_get_str(
-                                    todo_querys, todo_refs, align_tmp_res, j, read1, read2, references, aligner,
-                                    mu, sigma
+                                    todo_querys, todo_refs, align_tmp_res, j, read1, read2, references,
+                                    aligner, mu, sigma
                                 );
                             }
                         }
                     }
                 }
             }
-            time2_1 += GetTime() - t1;
-    
-            t1 = GetTime();
-            std::vector<AlignmentInfo> info_results;
-            std::vector<gasal_tmp_res> gasal_results_tmp;
-            std::vector<gasal_tmp_res> gasal_results;
             assert(todo_refs.size() == todo_querys.size());
             assert(pre_align_tmp_results.size() == pre_records1.size());
-    
-            double t2 = GetTime();
-    //        std::unique_lock<std::mutex> unique_lock(mtx_gpu);
-            // step2_1 : solve todo_strings -- do ssw on gpu
-            for (size_t i = 0; i + STREAM_BATCH_SIZE <= todo_querys.size(); i += STREAM_BATCH_SIZE) {
-                auto query_start = todo_querys.begin() + i;
-                auto query_end = query_start + STREAM_BATCH_SIZE;
-                std::vector<std::string> query_batch(query_start, query_end);
-    
-                auto ref_start = todo_refs.begin() + i;
-                auto ref_end = ref_start + STREAM_BATCH_SIZE;
-                std::vector<std::string> ref_batch(ref_start, ref_end);
-    
-                solve_ssw_on_gpu(
-                    thread_id, gasal_results_tmp, query_batch, ref_batch, aln_params.match, aln_params.mismatch,
-                    aln_params.gap_open, aln_params.gap_extend
+            time2_1 += GetTime() - t_1;
+
+            // step2 : solve todo_strings -- do ssw on gpu -- key step, need async
+            t_1 = GetTime();
+            gpu_ssw_async = std::thread([&] (){
+                for (size_t i = 0; i + STREAM_BATCH_SIZE <= todo_querys.size(); i += STREAM_BATCH_SIZE) {
+                    auto query_start = todo_querys.begin() + i;
+                    auto query_end = query_start + STREAM_BATCH_SIZE;
+                    std::vector<std::string> query_batch(query_start, query_end);
+
+                    auto ref_start = todo_refs.begin() + i;
+                    auto ref_end = ref_start + STREAM_BATCH_SIZE;
+                    std::vector<std::string> ref_batch(ref_start, ref_end);
+
+                    solve_ssw_on_gpu(
+                        thread_id, gasal_results_tmp, query_batch, ref_batch, aln_params.match,
+                        aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend
+                    );
+                    gasal_results.insert(gasal_results.end(), gasal_results_tmp.begin(), gasal_results_tmp.end());
+                }
+                size_t remaining = todo_querys.size() % STREAM_BATCH_SIZE;
+                if (remaining > 0) {
+                    auto query_start = todo_querys.end() - remaining;
+                    std::vector<std::string> query_batch(query_start, todo_querys.end());
+
+                    auto ref_start = todo_refs.end() - remaining;
+                    std::vector<std::string> ref_batch(ref_start, todo_refs.end());
+
+                    solve_ssw_on_gpu(
+                        thread_id, gasal_results_tmp, query_batch, ref_batch, aln_params.match,
+                        aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend
+                    );
+                    gasal_results.insert(gasal_results.end(), gasal_results_tmp.begin(), gasal_results_tmp.end());
+                }
+            });
+//            gpu_ssw_async.join();
+
+            time2_2 += GetTime() - t_1;
+
+            statistics.tot_extend += extend_timer1.duration();
+        }
+
+        //chunk1_part2
+        //find next round nams
+        {
+            t_1 = GetTime();
+            Timer timer;
+            chunk_index = input_buffer.read_records(records1, records2, records3);
+            statistics.tot_read_file += timer.duration();
+            assert(records1.size() == records2.size());
+            if (records1.empty() && records3.empty() && input_buffer.finished_reading) {
+                eof = true;
+            }
+            InsertSizeDistribution isize_est;
+            // Use chunk index as random seed for reproducibility
+            random_engine.seed(chunk_index);
+            assert(align_tmp_results.size() == 0);
+            for (size_t i = 0; i < records1.size(); ++i) {
+                auto record1 = records1[i];
+                auto record2 = records2[i];
+                to_uppercase(record1.seq);
+                to_uppercase(record2.seq);
+                AlignTmpRes align_tmp_res;
+                align_PE_read_part(
+                    align_tmp_res, record1, record2, statistics, isize_est, aligner, map_param,
+                    index_parameters, references, index, random_engine
                 );
-                gasal_results.insert(gasal_results.end(), gasal_results_tmp.begin(), gasal_results_tmp.end());
-    
+                align_tmp_results.push_back(align_tmp_res);
+                statistics.n_reads += 2;
             }
-            size_t remaining = todo_querys.size() % STREAM_BATCH_SIZE;
-            if (remaining > 0) {
-                auto query_start = todo_querys.end() - remaining;
-                std::vector<std::string> query_batch(query_start, todo_querys.end());
-    
-                auto ref_start = todo_refs.end() - remaining;
-                std::vector<std::string> ref_batch(ref_start, todo_refs.end());
-    
-                solve_ssw_on_gpu(
-                    thread_id, gasal_results_tmp, query_batch, ref_batch, aln_params.match, aln_params.mismatch,
-                    aln_params.gap_open, aln_params.gap_extend
-                );
-                gasal_results.insert(gasal_results.end(), gasal_results_tmp.begin(), gasal_results_tmp.end());
-    
-            }
-    
-    //        unique_lock.unlock();
-            time2_2_1 += GetTime() - t2;
-            if(gasal_results.size() != todo_querys.size()) {
-                fprintf(stderr, "gasal fail, return size: %zu, need size: %zu\n", gasal_results.size(), todo_querys.size());
-            }
-    
-            t2 = GetTime();
-            // step2_2 : post-process the gpu results, re-ssw for bad results on cpu
+            time1 += GetTime() - t_1;
+        }
+
+        if (gpu_ssw_async.joinable()) {
+            gpu_ssw_async.join();
+        }
+
+
+        //chunk0_part3
+        //post-process ssw results and trans to sam
+        {
+            Timer extend_timer2;
+            // step1 : post-process the gpu results, re-ssw for bad results on cpu
+            t_1 = GetTime();
             for (size_t i = 0; i < todo_querys.size(); i++) {
                 AlignmentInfo info;
-                tot_cnt_2_2_2++;
-                if(gasal_fail(todo_querys[i], todo_refs[i], gasal_results[i])) {
+                if (gasal_fail(todo_querys[i], todo_refs[i], gasal_results[i])) {
                     info = aligner.align(todo_querys[i], todo_refs[i]);
-                    gg_cnt_2_2_2++;
                 } else {
                     info = aligner.align_gpu(todo_querys[i], todo_refs[i], gasal_results[i]);
                 }
                 info_results.push_back(info);
             }
-            time2_2_2 += GetTime() - t2;
-            time2_2 += GetTime() - t1;
-    
-            t1 = GetTime();
+            time2_3 += GetTime() - t_1;
+
+            // step2 : store ssw results
+            t_1 = GetTime();
             int pos = 0;
-            // step3 : use ssw results to construct sam
             for (size_t i = 0; i < pre_align_tmp_results.size(); i++) {
                 auto record1 = pre_records1[i];
                 auto record2 = pre_records2[i];
@@ -778,138 +812,33 @@ void perform_task_async(
                     }
                 }
             }
-            time2_3 += GetTime() - t1;
-    
-#else
-            for (size_t i = 0; i < pre_records1.size(); i++) {
+            time2_4 += GetTime() - t_1;
+
+            // step3 : use ssw results to construct sam
+            t_1 = GetTime();
+            std::string sam_out;
+            sam_out.reserve(7 * map_param.r * (pre_records1.size() + pre_records3.size()));
+            Sam sam{
+                sam_out,          references, map_param.cigar_ops, read_group_id, map_param.output_unmapped,
+                map_param.details
+            };
+            for (size_t i = 0; i < pre_records1.size(); ++i) {
                 auto record1 = pre_records1[i];
                 auto record2 = pre_records2[i];
                 to_uppercase(record1.seq);
                 to_uppercase(record2.seq);
-                Read read1(record1.seq);
-                Read read2(record2.seq);
-                const auto mu = isize_est.mu;
-                const auto sigma = isize_est.sigma;
-                auto& align_tmp_res = pre_align_tmp_results[i];
-                size_t todo_size = align_tmp_res.todo_nams.size();
-                assert(todo_size == align_tmp_res.done_align.size());
-                assert(todo_size == align_tmp_res.align_res.size());
-                if (align_tmp_res.type == 1 || align_tmp_res.type == 2) {
-                    assert(todo_size % 2 == 0);
-                    for (size_t j = 0; j < todo_size; j += 2) {
-                        assert(align_tmp_res.is_extend_seed[j]);
-                        if (align_tmp_res.type == 1)
-                            assert(align_tmp_res.is_read1[j]);
-                        else
-                            assert(!align_tmp_res.is_read1[j]);
-                        if (!align_tmp_res.done_align[j]) {
-                            // solve extend_seed for good read1
-                            part2_extend_seed(align_tmp_res, j, read1, read2, references, aligner);
-                        }
-    
-                        assert(!align_tmp_res.is_extend_seed[j + 1]);
-                        if (align_tmp_res.type == 1)
-                            assert(!align_tmp_res.is_read1[j + 1]);
-                        else
-                            assert(align_tmp_res.is_read1[j + 1]);
-                        if (!align_tmp_res.done_align[j + 1]) {
-                            // solve rescue_mate for bad read2
-                            part2_rescue_mate(align_tmp_res, j + 1, read1, read2, references, aligner, mu, sigma);
-                        }
-                    }
-                } else if (align_tmp_res.type == 3) {
-                    assert(todo_size == 2);
-                    assert(align_tmp_res.is_extend_seed[0]);
-                    assert(align_tmp_res.is_read1[0]);
-                    if (!align_tmp_res.done_align[0]) {
-                        // solve extend_seed for read1
-                        part2_extend_seed(align_tmp_res, 0, read1, read2, references, aligner);
-                    }
-                    assert(align_tmp_res.is_extend_seed[1]);
-                    assert(!align_tmp_res.is_read1[1]);
-                    if (!align_tmp_res.done_align[1]) {
-                        // solve extend_seed for read2
-                        part2_extend_seed(align_tmp_res, 1, read1, read2, references, aligner);
-                    }
-                    //TODO
-                    //                bool is_proper = is_proper_pair(align_tmp_res.align_res[0], align_tmp_res.align_res[1], mu, sigma);
-                    //                if ((isize_est.sample_size < 400) && (align_tmp_res.align_res[0].edit_distance + align_tmp_res.align_res[1].edit_distance < 3) &&
-                    //                    is_proper) {
-                    //                    isize_est.update(std::abs(align_tmp_res.align_res[0].ref_start - align_tmp_res.align_res[1].ref_start));
-                    //                }
-                } else if (align_tmp_res.type == 4) {
-                    for (size_t j = 0; j < todo_size; j++) {
-                        if (!align_tmp_res.done_align[j]) {
-                            if (align_tmp_res.is_extend_seed[j]) {
-                                part2_extend_seed(align_tmp_res, j, read1, read2, references, aligner);
-                            } else {
-                                part2_rescue_mate(align_tmp_res, j, read1, read2, references, aligner, mu, sigma);
-                            }
-                        }
-                    }
-                }
+                align_PE_read_last(
+                    pre_align_tmp_results[i], record1, record2, sam, sam_out, statistics, isize_est, aligner,
+                    map_param, index_parameters, references, index, pre_random_engine
+                );
             }
-#endif
-            statistics.tot_extend += extend_timer1.duration();
-            time2 += GetTime() - t0;
+            time3_1 += GetTime() - t_1;
+            statistics.tot_extend += extend_timer2.duration();
 
-        });
-        //gpu_async_thread.join();
-
-        t0 = GetTime();
-        //chunk1_part2
-        Timer timer;
-        chunk_index = input_buffer.read_records(records1, records2, records3);
-        statistics.tot_read_file += timer.duration();
-        assert(records1.size() == records2.size());
-        if (records1.empty() && records3.empty() && input_buffer.finished_reading) {
-            eof = true;
+            t_1 = GetTime();
+            output_buffer.output_records(std::move(sam_out), pre_chunk_index);
+            time3_2 += GetTime() - t_1;
         }
-
-        InsertSizeDistribution isize_est;
-        // Use chunk index as random seed for reproducibility
-        random_engine.seed(chunk_index);
-        assert(align_tmp_results.size() == 0);
-        for (size_t i = 0; i < records1.size(); ++i) {
-            auto record1 = records1[i];
-            auto record2 = records2[i];
-            to_uppercase(record1.seq);
-            to_uppercase(record2.seq);
-            AlignTmpRes align_tmp_res;
-            align_PE_read_part(
-                align_tmp_res, record1, record2, statistics, isize_est, aligner, map_param, index_parameters,
-                references, index, random_engine
-            );
-            align_tmp_results.push_back(align_tmp_res);
-            statistics.n_reads += 2;
-        }
-        time1 += GetTime() - t0;
-
-        gpu_async_thread.join();
-
-
-        //chunk0_part3
-        t0 = GetTime();
-        Timer extend_timer2;
-        std::string sam_out;
-        sam_out.reserve(7 * map_param.r * (pre_records1.size() + pre_records3.size()));
-        Sam sam{sam_out,          references, map_param.cigar_ops, read_group_id, map_param.output_unmapped,
-                map_param.details};
-        for (size_t i = 0; i < pre_records1.size(); ++i) {
-            auto record1 = pre_records1[i];
-            auto record2 = pre_records2[i];
-            to_uppercase(record1.seq);
-            to_uppercase(record2.seq);
-            align_PE_read_last(
-                pre_align_tmp_results[i], record1, record2, sam, sam_out, statistics, isize_est, aligner,
-                map_param, index_parameters, references, index, pre_random_engine
-            );
-        }
-
-        output_buffer.output_records(std::move(sam_out), pre_chunk_index);
-        statistics.tot_extend += extend_timer2.duration();
-        time3 += GetTime() - t0;
-        //assert(sam_out == "");
 
         //change data
         pre_align_tmp_results = std::move(align_tmp_results);
@@ -921,8 +850,9 @@ void perform_task_async(
     }
     statistics.tot_aligner_calls += aligner.calls_count();
     done = true;
+    time_tot = GetTime() - t_0;
     fprintf(
-        stderr, "cost time1:%.2f time2:%.2f (%.2f %.2f [%.2f %.2f] (%d %d) %.2f) time3:%.2f, tot time:%.2f\n", time1, time2,
-        time2_1, time2_2, time2_2_1, time2_2_2, tot_cnt_2_2_2, gg_cnt_2_2_2, time2_3, time3, GetTime() - t00
+        stderr, "cost time1:%.2f time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), tot time:%.2f\n", time1,
+        time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
     );
 }

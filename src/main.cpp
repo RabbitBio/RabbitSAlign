@@ -321,13 +321,20 @@ int run_strobealign(int argc, char **argv) {
     std::vector<std::thread> workers;
     std::vector<int> worker_done(opt.n_threads);  // each thread sets its entry to 1 when it’s done
 
+#define use_good_numa
+
+#ifdef use_good_numa
     for (int i = 0; i < opt.n_threads / 2; ++i) {
+#else
+    for (int i = 0; i < opt.n_threads; ++i) {
+#endif
         std::thread consumer(perform_task_async, std::ref(input_buffer), std::ref(output_buffer),
             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
             std::ref(map_param), std::ref(index_parameters), std::ref(references),
             std::ref(index), std::ref(opt.read_group_id), i);
         workers.push_back(std::move(consumer));
     }
+#ifdef use_good_numa
     for (int i = opt.n_threads / 2; i < opt.n_threads; ++i) {
         std::thread consumer(perform_task_async, std::ref(input_buffer), std::ref(output_buffer),
             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
@@ -335,6 +342,7 @@ int run_strobealign(int argc, char **argv) {
             std::ref(index2), std::ref(opt.read_group_id), totalCPUs / 2 + i - opt.n_threads / 2);
         workers.push_back(std::move(consumer));
     }
+#endif
     if (opt.show_progress && isatty(2)) {
         show_progress_until_done(worker_done, log_stats_vec);
     }
