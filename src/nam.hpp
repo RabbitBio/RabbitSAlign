@@ -2,6 +2,7 @@
 #define STROBEALIGN_NAM_HPP
 
 #include <vector>
+#include <set>
 #include <array>
 #include "index.hpp"
 #include "randstrobes.hpp"
@@ -28,6 +29,11 @@ struct Nam {
 
     int query_span() const {
         return query_end - query_start;
+    }
+
+    bool operator < (const Nam& nn) const {
+        if(query_end != nn.query_end) return query_end < nn.query_end;
+        return nam_id < nn.nam_id;
     }
 };
 

@@ -30,6 +30,7 @@ struct RefRandstrobe {
         , m_packed(packed) { }
 
     bool operator< (const RefRandstrobe& other) const {
+        if(hash == other.hash) return position < other.position;
         return hash < other.hash;
     }
 

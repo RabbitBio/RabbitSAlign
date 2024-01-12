@@ -2,6 +2,8 @@
 #include <thread>
 #include <sstream>
 #include <sys/time.h>
+#include <map>
+#include <queue>
 inline double GetTime() {
     struct timeval tv;
     gettimeofday(&tv, NULL);
@@ -16,7 +18,52 @@ struct Hit {
     int query_end;
     int ref_start;
     int ref_end;
+    bool operator<(const Hit& other) const {
+        if(query_start == other.query_start) return ref_start < other.ref_start;
+        return query_start < other.query_start;
+    }
+
+    bool operator==(const Hit& other) const {
+        return query_start == other.query_start &&
+                query_end == other.query_end &&
+                ref_start == other.ref_start &&
+                ref_end == other.ref_end;
+    }
 };
+
+inline void add_to_hits_per_ref_fast(
+    robin_hood::unordered_map<unsigned int, std::vector<Hit>>& hits_per_ref,
+    int query_start,
+    int query_end,
+    const StrobemerIndex& index,
+    size_t position
+) {
+    int min_diff = std::numeric_limits<int>::max();
+    std::vector<Hit> tmp_hits;
+    int pre_ref_id = -1;
+    for (const auto hash = index.get_hash(position); index.get_hash(position) == hash; ++position) {
+        int ref_start = index.get_strobe1_position(position);
+        int ref_end = ref_start + index.strobe2_offset(position) + index.k();
+        int diff = std::abs((query_end - query_start) - (ref_end - ref_start));
+        if (diff <= min_diff) {
+            auto ref_id = index.reference_index(position);
+            if (ref_id == pre_ref_id || pre_ref_id == -1) {
+                tmp_hits.push_back(Hit{query_start, query_end, ref_start, ref_end});
+            } else {
+                std::sort(tmp_hits.begin(), tmp_hits.end());
+                hits_per_ref[pre_ref_id].insert(hits_per_ref[pre_ref_id].end(), tmp_hits.begin(), tmp_hits.end());
+                tmp_hits.clear();
+                tmp_hits.push_back(Hit{query_start, query_end, ref_start, ref_end});
+            }
+            pre_ref_id = ref_id;
+            min_diff = diff;
+        }
+    }
+    if(!tmp_hits.empty() && pre_ref_id != -1) {
+        std::sort(tmp_hits.begin(), tmp_hits.end());
+        hits_per_ref[pre_ref_id].insert(hits_per_ref[pre_ref_id].end(), tmp_hits.begin(), tmp_hits.end());
+    }
+}
 
 inline void add_to_hits_per_ref(
     robin_hood::unordered_map<unsigned int, std::vector<Hit>>& hits_per_ref,
@@ -37,6 +84,275 @@ inline void add_to_hits_per_ref(
     }
 }
 
+inline void add_to_hits_per_ref_pre(
+    robin_hood::unordered_map<unsigned int, std::vector<Hit>>& hits_per_ref,
+    int query_start,
+    int query_end,
+    const StrobemerIndex& index,
+    size_t position
+) {
+    int min_diff = std::numeric_limits<int>::max();
+    for (const auto hash = index.get_hash(position); index.get_hash(position) == hash; ++position) {
+        int ref_start = index.get_strobe1_position(position);
+        int ref_end = ref_start + index.strobe2_offset(position) + index.k();
+        int diff = std::abs((query_end - query_start) - (ref_end - ref_start));
+        if (diff <= min_diff) {
+            int refIndex = index.reference_index(position);
+            if (hits_per_ref.find(refIndex) == hits_per_ref.end()) {
+                hits_per_ref[refIndex] = std::vector<Hit>(); // 插入空向量
+            }
+            min_diff = diff;
+        }
+    }
+}
+
+inline uint64_t GetTime() {
+    unsigned int lo, hi;
+    asm volatile ("rdtsc" : "=a" (lo), "=d" (hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+
+//#define timer
+
+void merge_hits_into_nams_fast(
+    robin_hood::unordered_map<unsigned int, std::vector<Hit>>& hits_per_ref,
+    int k,
+    bool sort,
+    bool is_revcomp,
+    std::vector<Nam>& nams  // inout
+) {
+#ifdef timer
+    thread_local int cnt = 0;
+    cnt++;
+    thread_local uint64_t time1 = 0;
+    thread_local uint64_t time2 = 0;
+    thread_local uint64_t time3 = 0;
+    thread_local uint64_t time4 = 0;
+    thread_local uint64_t time5 = 0;
+    thread_local uint64_t time0 = 0;
+    thread_local uint64_t sum = 0;
+    uint64_t t_tot = GetTime();
+    uint64_t t0;
+#endif
+
+    for (auto &[ref_id, hits] : hits_per_ref) {
+#ifdef timer
+        t0 = GetTime();
+#endif
+        if (sort) {
+            std::sort(hits.begin(), hits.end());
+        }
+#ifdef timer
+        time1 += GetTime() - t0;
+#endif
+
+
+        std::vector<Nam> open_nams;
+        unsigned int prev_q_start = 0;
+
+        for (size_t i = 0; i < hits.size(); ) {
+#ifdef timer
+            t0 = GetTime();
+#endif
+            size_t i_start = i;
+            size_t i_end = i + 1;
+            size_t i_size;
+            while(i_end < hits.size() && hits[i_end].query_start == hits[i].query_start) i_end++;
+            i = i_end;
+            i_size = i_end - i_start;
+
+            bool is_added[i_size];
+            for(size_t j = 0; j < i_size; j++) is_added[j] = false;
+
+            int query_start = hits[i_start].query_start;
+            int cnt_done = 0;
+
+            for (auto & o : open_nams) {
+                auto lower = std::lower_bound(hits.begin() + i_start, hits.begin() + i_end, o.ref_prev_hit_startpos + 1, [](const Hit& h, int value){
+                    return h.ref_start < value;
+                }) - hits.begin();
+                auto upper = std::lower_bound(hits.begin() + i_start, hits.begin() + i_end, o.ref_end + 1,[](const Hit& h, int value) {
+                    return h.ref_start < value;
+                }) - hits.begin();
+                for (size_t j = lower; j < upper; j++) {
+                    if(is_added[j - i_start])
+                        continue;
+                    if ( query_start <= o.query_end) {
+                        auto& h = hits[j];
+                        if (o.ref_prev_hit_startpos < h.ref_start && h.ref_start <= o.ref_end) {
+                            if ((h.query_end > o.query_end) && (h.ref_end > o.ref_end)) {
+                                o.query_end = h.query_end;
+                                o.ref_end = h.ref_end;
+                                //                        o.previous_query_start = h.query_s;
+                                //                        o.previous_ref_start = h.ref_s; // keeping track so that we don't . Can be caused by interleaved repeats.
+                                o.query_prev_hit_startpos = h.query_start;
+                                o.ref_prev_hit_startpos = h.ref_start;
+                                o.n_hits++;
+                                //                        o.score += (float)1/ (float)h.count;
+                                is_added[j - i_start] = true;
+                                cnt_done++;
+                                break;
+                            } else if ((h.query_end <= o.query_end) && (h.ref_end <= o.ref_end)) {
+                                //                        o.previous_query_start = h.query_s;
+                                //                        o.previous_ref_start = h.ref_s; // keeping track so that we don't . Can be caused by interleaved repeats.
+                                o.query_prev_hit_startpos = h.query_start;
+                                o.ref_prev_hit_startpos = h.ref_start;
+                                o.n_hits++;
+                                //                        o.score += (float)1/ (float)h.count;
+                                is_added[j - i_start] = true;
+                                cnt_done++;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if(cnt_done == i_size) break;
+
+            }
+
+
+//            for (auto & o : open_nams) {
+//                if(query_start <= o.query_prev_hit_startpos) {
+//                    fprintf(stderr, "bound GG1\n");
+//                    exit(0);
+//                }
+//                // Extend NAM
+//                if (query_start <= o.query_end) {
+//                    // valid range is [o.ref_prev_hit_startpos, o.ref_end]
+//                    // h.ref_start is in ascending order
+//                    //                    auto lower = std::lower_bound(hits.begin() + i_start, hits.begin() + i_end, o.ref_prev_hit_startpos + 1, [](const Hit& h, int value){
+//                    //                        return h.ref_start < value;
+//                    //                    }) - hits.begin();
+//                    //                    auto upper = std::lower_bound(hits.begin() + i_start, hits.begin() + i_end, o.ref_end + 1,[](const Hit& h, int value) {
+//                    //                        return h.ref_start < value;
+//                    //                    }) - hits.begin();
+//                    //
+//                    //                    for(size_t j = lower; j < upper; j++) {
+//                    for (size_t j = i_start; j < i_end; j++) {
+//                        if(is_added[j - i_start]) continue;
+//                        auto& h = hits[j];
+//                        if (o.ref_prev_hit_startpos < h.ref_start && h.ref_start <= o.ref_end) {
+//                            if ((h.query_end > o.query_end) && (h.ref_end > o.ref_end)) {
+//                                o.query_end = h.query_end;
+//                                o.ref_end = h.ref_end;
+//                                //                        o.previous_query_start = h.query_s;
+//                                //                        o.previous_ref_start = h.ref_s; // keeping track so that we don't . Can be caused by interleaved repeats.
+//                                o.query_prev_hit_startpos = h.query_start;
+//                                o.ref_prev_hit_startpos = h.ref_start;
+//                                o.n_hits++;
+//                                //                        o.score += (float)1/ (float)h.count;
+//                                is_added[j - i_start] = true;
+//                                cnt_done++;
+//                            } else if ((h.query_end <= o.query_end) && (h.ref_end <= o.ref_end)) {
+//                                //                        o.previous_query_start = h.query_s;
+//                                //                        o.previous_ref_start = h.ref_s; // keeping track so that we don't . Can be caused by interleaved repeats.
+//                                o.query_prev_hit_startpos = h.query_start;
+//                                o.ref_prev_hit_startpos = h.ref_start;
+//                                o.n_hits++;
+//                                //                        o.score += (float)1/ (float)h.count;
+//                                is_added[j - i_start] = true;
+//                                cnt_done++;
+//                            }
+//                        }
+//                    }
+//                    if(cnt_done == i_size) break;
+//                }
+//
+//            }
+#ifdef timer
+            time2 += GetTime() - t0;
+            t0 = GetTime();
+#endif
+
+            // Add the hit to open matches
+            for(size_t j = 0; j < i_size; j++) {
+                if (!is_added[j]){
+                    Nam n;
+                    n.query_start = hits[i_start + j].query_start;
+                    n.query_end = hits[i_start + j].query_end;
+                    n.ref_start = hits[i_start + j].ref_start;
+                    n.ref_end = hits[i_start + j].ref_end;
+                    n.ref_id = ref_id;
+                    //                n.previous_query_start = h.query_s;
+                    //                n.previous_ref_start = h.ref_s;
+                    n.query_prev_hit_startpos = hits[i_start + j].query_start;
+                    n.ref_prev_hit_startpos = hits[i_start + j].ref_start;
+                    n.n_hits = 1;
+                    n.is_rc = is_revcomp;
+                    //                n.score += (float)1 / (float)h.count;
+                    open_nams.push_back(n);
+                }
+            }
+
+#ifdef timer
+            time3 += GetTime() - t0;
+            t0 = GetTime();
+#endif
+            // Only filter if we have advanced at least k nucleotides
+            if (query_start > prev_q_start + k) {
+                //            if (1) {
+
+                // Output all NAMs from open_matches to final_nams that the current hit have passed
+                for (auto &n : open_nams) {
+                    if (n.query_end < query_start) {
+                        int n_max_span = std::max(n.query_span(), n.ref_span());
+                        int n_min_span = std::min(n.query_span(), n.ref_span());
+                        float n_score;
+                        n_score = ( 2*n_min_span -  n_max_span) > 0 ? (float) (n.n_hits * ( 2*n_min_span -  n_max_span) ) : 1;   // this is really just n_hits * ( min_span - (offset_in_span) ) );
+                                                                                                                               //                        n_score = n.n_hits * n.query_span();
+                        n.score = n_score;
+                        n.nam_id = nams.size();
+                        nams.push_back(n);
+                    }
+                }
+
+                // Remove all NAMs from open_matches that the current hit have passed
+                auto c = query_start;
+                auto predicate = [c](decltype(open_nams)::value_type const &nam) { return nam.query_end < c; };
+                open_nams.erase(std::remove_if(open_nams.begin(), open_nams.end(), predicate), open_nams.end());
+                prev_q_start = query_start;
+            }
+#ifdef timer
+            time4 += GetTime() - t0;
+#endif
+        }
+        //        time3 += GetTime() - t0;
+
+#ifdef timer
+        t0 = GetTime();
+#endif
+        // Add all current open_matches to final NAMs
+        for (auto &n : open_nams) {
+            int n_max_span = std::max(n.query_span(), n.ref_span());
+            int n_min_span = std::min(n.query_span(), n.ref_span());
+            float n_score;
+            n_score = ( 2*n_min_span -  n_max_span) > 0 ? (float) (n.n_hits * ( 2*n_min_span -  n_max_span) ) : 1;   // this is really just n_hits * ( min_span - (offset_in_span) ) );
+                                                                                                                   //            n_score = n.n_hits * n.query_span();
+            n.score = n_score;
+            n.nam_id = nams.size();
+            nams.push_back(n);
+        }
+#ifdef timer
+        time5 += GetTime() - t0;
+#endif
+    }
+
+#ifdef timer
+    time0 += GetTime() - t_tot;
+
+    if(cnt % 100000 == 0) {
+        std::thread::id mainthreadid = std::this_thread::get_id();
+        std::ostringstream ss;
+        ss << mainthreadid;
+        unsigned long mainthreadidvalue = std::stoul(ss.str());
+        fprintf(stderr, "merge_hits_into_nams [%lu] tot_time:%lf time1:%lf time2:%lf time3:%lf time4:%lf time5:%lf - %llu\n",
+                mainthreadidvalue, time0 * 1e-8, time1 * 1e-8, time2 * 1e-8, time3 * 1e-8, time4 * 1e-8, time5 * 1e-8, sum);
+    }
+#endif
+}
+
+
+
 void merge_hits_into_nams(
     robin_hood::unordered_map<unsigned int, std::vector<Hit>>& hits_per_ref,
     int k,
@@ -44,19 +360,49 @@ void merge_hits_into_nams(
     bool is_revcomp,
     std::vector<Nam>& nams  // inout
 ) {
+#ifdef timer
+    thread_local int cnt = 0;
+    cnt++;
+    thread_local uint64_t time1 = 0;
+    thread_local uint64_t time2 = 0;
+    thread_local uint64_t time3 = 0;
+    thread_local uint64_t time4 = 0;
+    thread_local uint64_t time5 = 0;
+    thread_local uint64_t time0 = 0;
+    thread_local uint64_t sum = 0;
+    uint64_t t_tot = GetTime();
+    uint64_t t0;
+#endif
+
     for (auto &[ref_id, hits] : hits_per_ref) {
+#ifdef timer
+        t0 = GetTime();
+#endif
         if (sort) {
-            std::sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) -> bool {
-                    // first sort on query starts, then on reference starts
-                    return (a.query_start < b.query_start) || ( (a.query_start == b.query_start) && (a.ref_start < b.ref_start) );
-                }
-            );
+            std::sort(hits.begin(), hits.end());
+            //            std::sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) -> bool {
+            //                // first sort on query starts, then on reference starts
+            ////                return std::tie(a.query_start, a.ref_start, a.query_end, a.ref_end) <
+            ////                       std::tie(b.query_start, b.ref_start, b.query_end, b.ref_end);
+            //
+            //                return (a.query_start < b.query_start) || ( (a.query_start == b.query_start) && (a.ref_start < b.ref_start) );
+            ////                return a.query_start < b.query_start;
+            //            }
+            //            );
         }
+#ifdef timer
+        time1 += GetTime() - t0;
+#endif
+
 
         std::vector<Nam> open_nams;
         unsigned int prev_q_start = 0;
         for (auto &h : hits) {
             bool is_added = false;
+#ifdef timer
+            t0 = GetTime();
+#endif
+
             for (auto & o : open_nams) {
 
                 // Extend NAM
@@ -64,28 +410,33 @@ void merge_hits_into_nams(
                     if ( (h.query_end > o.query_end) && (h.ref_end > o.ref_end) ) {
                         o.query_end = h.query_end;
                         o.ref_end = h.ref_end;
-//                        o.previous_query_start = h.query_s;
-//                        o.previous_ref_start = h.ref_s; // keeping track so that we don't . Can be caused by interleaved repeats.
+                        //                        o.previous_query_start = h.query_s;
+                        //                        o.previous_ref_start = h.ref_s; // keeping track so that we don't . Can be caused by interleaved repeats.
                         o.query_prev_hit_startpos = h.query_start;
                         o.ref_prev_hit_startpos = h.ref_start;
                         o.n_hits ++;
-//                        o.score += (float)1/ (float)h.count;
+                        //                        o.score += (float)1/ (float)h.count;
                         is_added = true;
                         break;
                     }
                     else if ((h.query_end <= o.query_end) && (h.ref_end <= o.ref_end)) {
-//                        o.previous_query_start = h.query_s;
-//                        o.previous_ref_start = h.ref_s; // keeping track so that we don't . Can be caused by interleaved repeats.
+                        //                        o.previous_query_start = h.query_s;
+                        //                        o.previous_ref_start = h.ref_s; // keeping track so that we don't . Can be caused by interleaved repeats.
                         o.query_prev_hit_startpos = h.query_start;
                         o.ref_prev_hit_startpos = h.ref_start;
                         o.n_hits ++;
-//                        o.score += (float)1/ (float)h.count;
+                        //                        o.score += (float)1/ (float)h.count;
                         is_added = true;
                         break;
                     }
                 }
 
             }
+#ifdef timer
+            time2 += GetTime() - t0;
+            t0 = GetTime();
+#endif
+
             // Add the hit to open matches
             if (!is_added){
                 Nam n;
@@ -94,18 +445,22 @@ void merge_hits_into_nams(
                 n.ref_start = h.ref_start;
                 n.ref_end = h.ref_end;
                 n.ref_id = ref_id;
-//                n.previous_query_start = h.query_s;
-//                n.previous_ref_start = h.ref_s;
+                //                n.previous_query_start = h.query_s;
+                //                n.previous_ref_start = h.ref_s;
                 n.query_prev_hit_startpos = h.query_start;
                 n.ref_prev_hit_startpos = h.ref_start;
                 n.n_hits = 1;
                 n.is_rc = is_revcomp;
-//                n.score += (float)1 / (float)h.count;
+                //                n.score += (float)1 / (float)h.count;
                 open_nams.push_back(n);
             }
-
+#ifdef timer
+            time3 += GetTime() - t0;
+            t0 = GetTime();
+#endif
             // Only filter if we have advanced at least k nucleotides
             if (h.query_start > prev_q_start + k) {
+//            if (1) {
 
                 // Output all NAMs from open_matches to final_nams that the current hit have passed
                 for (auto &n : open_nams) {
@@ -114,7 +469,7 @@ void merge_hits_into_nams(
                         int n_min_span = std::min(n.query_span(), n.ref_span());
                         float n_score;
                         n_score = ( 2*n_min_span -  n_max_span) > 0 ? (float) (n.n_hits * ( 2*n_min_span -  n_max_span) ) : 1;   // this is really just n_hits * ( min_span - (offset_in_span) ) );
-//                        n_score = n.n_hits * n.query_span();
+                                                                                                                               //                        n_score = n.n_hits * n.query_span();
                         n.score = n_score;
                         n.nam_id = nams.size();
                         nams.push_back(n);
@@ -127,20 +482,56 @@ void merge_hits_into_nams(
                 open_nams.erase(std::remove_if(open_nams.begin(), open_nams.end(), predicate), open_nams.end());
                 prev_q_start = h.query_start;
             }
+#ifdef timer
+            time4 += GetTime() - t0;
+#endif
         }
+        //        time3 += GetTime() - t0;
 
+#ifdef timer
+        t0 = GetTime();
+#endif
         // Add all current open_matches to final NAMs
         for (auto &n : open_nams) {
             int n_max_span = std::max(n.query_span(), n.ref_span());
             int n_min_span = std::min(n.query_span(), n.ref_span());
             float n_score;
             n_score = ( 2*n_min_span -  n_max_span) > 0 ? (float) (n.n_hits * ( 2*n_min_span -  n_max_span) ) : 1;   // this is really just n_hits * ( min_span - (offset_in_span) ) );
-//            n_score = n.n_hits * n.query_span();
+                                                                                                                   //            n_score = n.n_hits * n.query_span();
             n.score = n_score;
             n.nam_id = nams.size();
             nams.push_back(n);
         }
+#ifdef timer
+        time5 += GetTime() - t0;
+#endif
     }
+
+#ifdef timer
+    time0 += GetTime() - t_tot;
+
+    if(cnt % 100000 == 0) {
+        std::thread::id mainthreadid = std::this_thread::get_id();
+        std::ostringstream ss;
+        ss << mainthreadid;
+        unsigned long mainthreadidvalue = std::stoul(ss.str());
+        fprintf(stderr, "merge_hits_into_nams [%lu] tot_time:%lf time1:%lf time2:%lf time3:%lf time4:%lf time5:%lf - %llu\n",
+                mainthreadidvalue, time0 * 1e-8, time1 * 1e-8, time2 * 1e-8, time3 * 1e-8, time4 * 1e-8, time5 * 1e-8, sum);
+    }
+#endif
+}
+
+std::vector<Nam> merge_hits_into_nams_forward_and_reverse_fast(
+    std::array<robin_hood::unordered_map<unsigned int, std::vector<Hit>>, 2>& hits_per_ref,
+    int k,
+    bool sort
+) {
+    std::vector<Nam> nams;
+    for (size_t is_revcomp = 0; is_revcomp < 2; ++is_revcomp) {
+        auto& hits_oriented = hits_per_ref[is_revcomp];
+        merge_hits_into_nams_fast(hits_oriented, k, sort, is_revcomp, nams);
+    }
+    return nams;
 }
 
 std::vector<Nam> merge_hits_into_nams_forward_and_reverse(
@@ -164,7 +555,7 @@ std::vector<Nam> merge_hits_into_nams_forward_and_reverse(
  *
  * Return the fraction of nonrepetitive hits (those not above the filter_cutoff threshold)
  */
-
+#define pre_sort
 //#define Detail_timer
 #define unROLL
 #ifdef Detail_timer
@@ -515,6 +906,7 @@ std::pair<float, std::vector<Nam>> find_nams(
     float nonrepetitive_fraction = total_hits > 0 ? ((float) nr_good_hits) / ((float) total_hits) : 1.0;
     auto nams = merge_hits_into_nams_forward_and_reverse(hits_per_ref, index.k(), false);
 
+
     return make_pair(nonrepetitive_fraction, nams);
 }
 #endif
@@ -525,24 +917,35 @@ std::pair<float, std::vector<Nam>> find_nams(
  * than filter_cutoff.
  *
  */
+struct RescueHit {
+    size_t position;
+    unsigned int count;
+    unsigned int query_start;
+    unsigned int query_end;
+
+};
+
+bool cmp1 (const RescueHit& a, const RescueHit& b) {
+    return std::tie(a.count, a.query_start, a.query_end)
+           < std::tie(b.count, b.query_start, b.query_end);
+}
+
+bool cmp2 (const RescueHit& a, const RescueHit& b) {
+    return std::tie(a.query_start, a.position)
+           < std::tie(b.query_start, b.position);
+}
+
+
 std::vector<Nam> find_nams_rescue(
     const QueryRandstrobeVector &query_randstrobes,
     const StrobemerIndex& index,
     unsigned int rescue_cutoff
 ) {
-    struct RescueHit {
-        size_t position;
-        unsigned int count;
-        unsigned int query_start;
-        unsigned int query_end;
 
-        bool operator< (const RescueHit& rhs) const {
-            return std::tie(count, query_start, query_end)
-                < std::tie(rhs.count, rhs.query_start, rhs.query_end);
-        }
-    };
+
 
     std::array<robin_hood::unordered_map<unsigned int, std::vector<Hit>>, 2> hits_per_ref;
+//    std::array<std::map<unsigned int, std::vector<Hit>>, 2> hits_per_ref;
     std::vector<RescueHit> hits_fw;
     std::vector<RescueHit> hits_rc;
     hits_per_ref[0].reserve(100);
@@ -563,8 +966,9 @@ std::vector<Nam> find_nams_rescue(
         }
     }
 
-    std::sort(hits_fw.begin(), hits_fw.end());
-    std::sort(hits_rc.begin(), hits_rc.end());
+    std::sort(hits_fw.begin(), hits_fw.end(), cmp1);
+    std::sort(hits_rc.begin(), hits_rc.end(), cmp1);
+    std::vector<RescueHit> rhs[2];
     size_t is_revcomp = 0;
     for (auto& rescue_hits : {hits_fw, hits_rc}) {
         int cnt = 0;
@@ -572,13 +976,36 @@ std::vector<Nam> find_nams_rescue(
             if ((rh.count > rescue_cutoff && cnt >= 5) || rh.count > 1000) {
                 break;
             }
+#ifdef pre_sort
+            rhs[is_revcomp].push_back(rh);
+            add_to_hits_per_ref_pre(hits_per_ref[is_revcomp], rh.query_start, rh.query_end, index, rh.position);
+#else
             add_to_hits_per_ref(hits_per_ref[is_revcomp], rh.query_start, rh.query_end, index, rh.position);
+#endif
             cnt++;
         }
         is_revcomp++;
     }
 
+
+#ifdef pre_sort
+    std::sort(rhs[0].begin(), rhs[0].end(), cmp2);
+    std::sort(rhs[1].begin(), rhs[1].end(), cmp2);
+    for(int i = 0; i < 2; i++) {
+        for(auto &rh : rhs[i]) {
+            add_to_hits_per_ref(hits_per_ref[i], rh.query_start, rh.query_end, index, rh.position);
+//            add_to_hits_per_ref_fast(hits_per_ref[i], rh.query_start, rh.query_end, index, rh.position);
+        }
+    }
+#endif
+
+
+#ifdef pre_sort
+    return merge_hits_into_nams_forward_and_reverse_fast(hits_per_ref, index.k(), false);
+#else
     return merge_hits_into_nams_forward_and_reverse(hits_per_ref, index.k(), true);
+
+#endif
 }
 
 std::ostream& operator<<(std::ostream& os, const Nam& n) {
