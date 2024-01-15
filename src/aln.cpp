@@ -389,11 +389,20 @@ bool is_proper_nam_pair(const Nam nam1, const Nam nam2, float mu, float sigma) {
 
     // r1 ---> <---- r2
     bool r1_r2 = nam2.is_rc && (a <= b) && (b - a < mu + 10 * sigma);
+    if(r1_r2) return 1;
 
     // r2 ---> <---- r1
     bool r2_r1 = nam1.is_rc && (b <= a) && (a - b < mu + 10 * sigma);
+    if(r2_r1) return 1;
+    return 0;
 
-    return r1_r2 || r2_r1;
+//    return r1_r2 || r2_r1;
+}
+
+inline uint64_t GetTime() {
+    unsigned int lo, hi;
+    asm volatile ("rdtsc" : "=a" (lo), "=d" (hi));
+    return ((uint64_t)hi << 32) | lo;
 }
 
 /*
@@ -401,18 +410,37 @@ bool is_proper_nam_pair(const Nam nam1, const Nam nam2, float mu, float sigma) {
  * high-scoring NAMs that could not be paired up are returned (these get a
  * "dummy" NAM as partner in the returned vector).
  */
+//#define timer1
 static inline std::vector<NamPair> get_best_scoring_nam_pairs(
     const std::vector<Nam>& nams1,
     const std::vector<Nam>& nams2,
     float mu,
     float sigma
 ) {
+#ifdef timer1
+    thread_local int cnt = 0;
+    cnt++;
+    thread_local uint64_t time_tot = 0;
+    thread_local uint64_t time1 = 0;
+    thread_local uint64_t time2 = 0;
+    thread_local uint64_t time3 = 0;
+    thread_local uint64_t time4 = 0;
+    thread_local uint64_t time5 = 0;
+    double t_tot = GetTime();
+    double t0;
+#endif
     std::vector<NamPair> joint_nam_scores;
     if (nams1.empty() && nams2.empty()) {
         return joint_nam_scores;
     }
 
+#ifdef timer1
+    t0 = GetTime();
+#endif
     // Find NAM pairs that appear to be proper pairs
+//    std::vector<bool> added_n1(nams1.size(), false);
+//    std::vector<bool> added_n2(nams2.size(), false);
+    joint_nam_scores.reserve(nams1.size() + nams2.size());
     robin_hood::unordered_set<int> added_n1;
     robin_hood::unordered_set<int> added_n2;
     int best_joint_hits = 0;
@@ -423,13 +451,21 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
                 break;
             }
             if (is_proper_nam_pair(nam1, nam2, mu, sigma)) {
-                joint_nam_scores.push_back(NamPair{joint_hits, nam1, nam2});
+                joint_nam_scores.emplace_back(NamPair{joint_hits, nam1, nam2});
+//                added_n1[nam1.nam_id] = 1;
+//                added_n2[nam2.nam_id] = 1;
                 added_n1.insert(nam1.nam_id);
                 added_n2.insert(nam2.nam_id);
                 best_joint_hits = std::max(joint_hits, best_joint_hits);
             }
         }
     }
+
+#ifdef timer1
+    time1 += GetTime() - t0;
+
+    t0 = GetTime();
+#endif
 
     // Find high-scoring R1 NAMs that are not part of a proper pair
     Nam dummy_nam;
@@ -441,12 +477,19 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
                 break;
             }
             if (added_n1.find(nam1.nam_id) != added_n1.end()) {
+//            if (added_n1[nam1.nam_id]) {
                 continue;
             }
             //            int n1_penalty = std::abs(nam1.query_span() - nam1.ref_span());
             joint_nam_scores.push_back(NamPair{nam1.n_hits, nam1, dummy_nam});
         }
     }
+
+#ifdef timer1
+    time2 += GetTime() - t0;
+
+    t0 = GetTime();
+#endif
 
     // Find high-scoring R2 NAMs that are not part of a proper pair
     if (!nams2.empty()) {
@@ -456,6 +499,7 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
                 break;
             }
             if (added_n2.find(nam2.nam_id) != added_n2.end()) {
+//            if (added_n2[nam2.nam_id]) {
                 continue;
             }
             //            int n2_penalty = std::abs(nam2.query_span() - nam2.ref_span());
@@ -463,14 +507,39 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
         }
     }
 
+#ifdef timer1
+    time3 += GetTime() - t0;
+
+    t0 = GetTime();
+#endif
+
     added_n1.clear();
     added_n2.clear();
+
+#ifdef timer1
+    time4 += GetTime() - t0;
+
+    t0 = GetTime();
+#endif
 
     std::sort(
         joint_nam_scores.begin(), joint_nam_scores.end(),
         [](const NamPair& a, const NamPair& b) -> bool { return a.score > b.score; }
     );  // Sort by highest score first
 
+#ifdef timer1
+    time5 += GetTime() - t0;
+    time_tot += GetTime() - t_tot;
+
+    if(cnt % 100000 == 0) {
+        std::thread::id mainthreadid = std::this_thread::get_id();
+        std::ostringstream ss;
+        ss << mainthreadid;
+        unsigned long mainthreadidvalue = std::stoul(ss.str());
+        fprintf(stderr, "get_best_scoring_nam_pairs [%lu] tot_time:%lf time1:%lf time2:%lf time3:%lf time4:%lf time5:%lf\n",
+                mainthreadidvalue, time_tot * 1e-8, time1 * 1e-8, time2 * 1e-8, time3 * 1e-8, time4 * 1e-8, time5 * 1e-8);
+    }
+#endif
     return joint_nam_scores;
 }
 
