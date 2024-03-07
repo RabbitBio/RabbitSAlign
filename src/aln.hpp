@@ -132,6 +132,32 @@ void align_PE_read(
     std::minstd_rand& random_engine
 );
 
+void align_SE_read_last(
+    AlignTmpRes& align_tmp_res,
+    const klibpp::KSeq& record,
+    Sam& sam,
+    std::string& outstring,
+    AlignmentStatistics& statistics,
+    const Aligner& aligner,
+    const MappingParameters& map_param,
+    const IndexParameters& index_parameters,
+    const References& references,
+    const StrobemerIndex& index,
+    std::minstd_rand& random_engine
+);
+
+void align_SE_read_part(
+    AlignTmpRes& align_tmp_res,
+    const klibpp::KSeq& record,
+    AlignmentStatistics& statistics,
+    const Aligner& aligner,
+    const MappingParameters& map_param,
+    const IndexParameters& index_parameters,
+    const References& references,
+    const StrobemerIndex& index,
+    std::minstd_rand& random_engine
+);
+
 void align_SE_read(
     const klibpp::KSeq& record,
     Sam& sam,

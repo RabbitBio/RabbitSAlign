@@ -32,6 +32,16 @@ static inline Alignment extend_seed(
     bool consistent_nam
 );
 
+
+static inline bool extend_seed_part(
+    AlignTmpRes& align_tmp_res,
+    const Aligner& aligner,
+    const Nam& nam,
+    const References& references,
+    const Read& read,
+    bool consistent_nam
+); 
+
 template <typename T>
 bool by_score(const T& a, const T& b) {
     return a.score > b.score;
@@ -80,6 +90,173 @@ bool reverse_nam_if_needed(Nam& nam, const Read& read, const References& referen
         return true;
     }
     return false;
+}
+
+static inline void align_SE_part(
+    AlignTmpRes& align_tmp_res,
+    const Aligner& aligner,
+    std::vector<Nam>& nams,
+    const KSeq& record,
+    int k,
+    const References& references,
+    Details& details,
+    float dropoff_threshold,
+    int max_tries,
+    unsigned max_secondary,
+    std::minstd_rand& random_engine
+) {
+    if (nams.empty()) {
+        align_tmp_res.type = 0;
+        return;
+    }
+
+    Read read(record.seq);
+    int tries = 0;
+    Nam n_max = nams[0];
+
+    align_tmp_res.type = 4;
+
+    for (auto& nam : nams) {
+        float score_dropoff = (float) nam.n_hits / n_max.n_hits;
+        if (tries >= max_tries || score_dropoff < dropoff_threshold) {
+            break;
+        }
+        bool consistent_nam = reverse_nam_if_needed(nam, read, references, k);
+        align_tmp_res.consistent_nam.push_back(consistent_nam);
+        align_tmp_res.is_read1.push_back(true);
+        bool gapped = extend_seed_part(align_tmp_res, aligner, nam, references, read, consistent_nam);
+        tries++;
+    }
+}
+
+void align_SE_read_last(
+    AlignTmpRes& align_tmp_res,
+    const KSeq& record,
+    Sam& sam,
+    std::string& outstring,
+    AlignmentStatistics& statistics,
+    const Aligner& aligner,
+    const MappingParameters& map_param,
+    const IndexParameters& index_parameters,
+    const References& references,
+    const StrobemerIndex& index,
+    std::minstd_rand& random_engine
+) {
+    Timer extend_timer;
+    auto dropoff_threshold = map_param.dropoff_threshold;
+    auto max_tries = map_param.max_tries;
+    auto max_secondary = map_param.max_secondary;
+    auto k = index_parameters.syncmer.k;
+    Details details;
+    if (align_tmp_res.type == 0) {
+        sam.add_unmapped(record);
+        return;
+    }
+
+    Read read(record.seq);
+    std::vector<Alignment> alignments;
+    int tries = 0;
+    Nam n_max = align_tmp_res.todo_nams[0];
+
+    int best_edit_distance = std::numeric_limits<int>::max();
+    int best_score = 0;
+    int second_best_score = 0;
+    int alignments_with_best_score = 0;
+    size_t best_index = 0;
+
+    Alignment best_alignment;
+    best_alignment.is_unaligned = true;
+
+    for (int i = 0; i < align_tmp_res.todo_nams.size(); i++) {
+        Nam nam = align_tmp_res.todo_nams[i];
+        float score_dropoff = (float) nam.n_hits / n_max.n_hits;
+        if (tries >= max_tries || (tries > 1 && best_edit_distance == 0) ||
+            score_dropoff < dropoff_threshold) {
+            for(int j = i; j < align_tmp_res.todo_nams.size(); j++) {
+                if(!align_tmp_res.done_align[j]) {
+                    aligner.m_align_calls--;
+                }
+            }
+            break;
+        }
+        bool consistent_nam = align_tmp_res.consistent_nam[i];
+        details.nam_inconsistent += !consistent_nam;
+        //auto alignment = extend_seed(aligner, nam, references, read, consistent_nam);
+        auto alignment = align_tmp_res.align_res[i];
+        details.tried_alignment++;
+        details.gapped += alignment.gapped;
+
+        if (max_secondary > 0) {
+            alignments.emplace_back(alignment);
+        }
+
+        if (alignment.score >= best_score) {
+            second_best_score = best_score;
+            bool update_best = false;
+            if (alignment.score > best_score) {
+                alignments_with_best_score = 1;
+                update_best = true;
+            } else {
+                assert(alignment.score == best_score);
+                // Two or more alignments have the same best score - count them
+                alignments_with_best_score++;
+
+                // Pick one randomly using reservoir sampling
+                std::uniform_int_distribution<> distrib(1, alignments_with_best_score);
+                if (distrib(random_engine) == 1) {
+                    //update_best = true;
+                }
+            }
+            if (update_best) {
+                best_score = alignment.score;
+                best_alignment = std::move(alignment);
+                best_index = tries;
+                if (max_secondary == 0) {
+                    best_edit_distance = best_alignment.global_ed;
+                }
+            }
+        } else if (alignment.score > second_best_score) {
+            second_best_score = alignment.score;
+        }
+        tries++;
+    }
+    uint8_t mapq = (60.0 * (best_score - second_best_score) + best_score - 1) / best_score;
+    bool is_primary = true;
+    sam.add(best_alignment, record, read.rc, mapq, is_primary, details);
+
+    if (max_secondary == 0) {
+        statistics.tot_extend += extend_timer.duration();
+        statistics += details;
+        return;
+    }
+
+    // Secondary alignments
+
+    // Remove the alignment that was already output
+    if (alignments.size() > 1) {
+        std::swap(alignments[best_index], alignments[alignments.size() - 1]);
+    }
+    alignments.resize(alignments.size() - 1);
+
+    // Sort remaining alignments by score, highest first
+    std::sort(alignments.begin(), alignments.end(), [](const Alignment& a, const Alignment& b) -> bool {
+        return a.score > b.score;
+    });
+
+    // Output secondary alignments
+    size_t n = 0;
+    for (const auto& alignment : alignments) {
+        if (n >= max_secondary ||
+            alignment.score - best_score > 2 * aligner.parameters.mismatch + aligner.parameters.gap_open) {
+            break;
+        }
+        bool is_primary = false;
+        sam.add(alignment, record, read.rc, mapq, is_primary, details);
+        n++;
+    }
+    statistics.tot_extend += extend_timer.duration();
+    statistics += details;
+        
 }
 
 static inline void align_SE(
@@ -144,7 +321,7 @@ static inline void align_SE(
                 // Pick one randomly using reservoir sampling
                 std::uniform_int_distribution<> distrib(1, alignments_with_best_score);
                 if (distrib(random_engine) == 1) {
-                    update_best = true;
+                    //update_best = true;
                 }
             }
             if (update_best) {
@@ -1892,6 +2069,53 @@ void align_PE_read(
     statistics += details[0];
     statistics += details[1];
 }
+
+void align_SE_read_part(
+    AlignTmpRes& align_tmp_res,
+    const KSeq& record,
+    AlignmentStatistics& statistics,
+    const Aligner& aligner,
+    const MappingParameters& map_param,
+    const IndexParameters& index_parameters,
+    const References& references,
+    const StrobemerIndex& index,
+    std::minstd_rand& random_engine
+) {
+    Details details;
+    Timer strobe_timer;
+    auto query_randstrobes = randstrobes_query(record.seq, index_parameters);
+    statistics.tot_construct_strobemers += strobe_timer.duration();
+
+    // Find NAMs
+    Timer nam_timer;
+    auto [nonrepetitive_fraction, nams] = find_nams(query_randstrobes, index);
+    statistics.tot_find_nams += nam_timer.duration();
+
+    if (map_param.rescue_level > 1) {
+        Timer rescue_timer;
+        if (nams.empty() || nonrepetitive_fraction < 0.7) {
+            details.nam_rescue = true;
+            nams = find_nams_rescue(query_randstrobes, index, map_param.rescue_cutoff);
+        }
+        statistics.tot_time_rescue += rescue_timer.duration();
+    }
+    details.nams = nams.size();
+
+    Timer nam_sort_timer;
+    std::sort(nams.begin(), nams.end(), by_score<Nam>);
+    //    shuffle_top_nams(nams, random_engine);
+    statistics.tot_sort_nams += nam_sort_timer.duration();
+
+    Timer extend_timer;
+
+    align_SE_part(
+        align_tmp_res, aligner, nams, record, index_parameters.syncmer.k, references, details,
+        map_param.dropoff_threshold, map_param.max_tries, map_param.max_secondary, random_engine);
+
+    statistics.tot_extend += extend_timer.duration();
+    statistics += details;
+}
+
 
 void align_SE_read(
     const KSeq& record,

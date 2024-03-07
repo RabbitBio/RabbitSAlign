@@ -41,6 +41,7 @@ public:
 
     AlignmentParameters parameters;
 
+    mutable unsigned m_align_calls{0};  // no. of calls to the align() method
     unsigned calls_count() {
         return m_align_calls;
     }
@@ -48,7 +49,6 @@ public:
 private:
     const StripedSmithWaterman::Aligner ssw_aligner;
     const StripedSmithWaterman::Filter filter;
-    mutable unsigned m_align_calls{0};  // no. of calls to the align() method
 };
 
 inline int hamming_distance(const std::string &s, const std::string &t) {

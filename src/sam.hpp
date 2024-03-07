@@ -35,6 +35,7 @@ struct AlignTmpRes {
     int mapq2;
     int type4_loop_size;
     std::vector<bool> is_extend_seed;
+    std::vector<bool> consistent_nam;
     std::vector<bool> is_read1;
     std::vector<Nam> type4_nams;
     std::vector<Nam> todo_nams;

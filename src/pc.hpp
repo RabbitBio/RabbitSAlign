@@ -62,12 +62,16 @@ public:
 };
 
 
-void perform_task(InputBuffer &input_buffer, OutputBuffer &output_buffer,
+void perform_task_init(InputBuffer &input_buffer, OutputBuffer &output_buffer,
+                  AlignmentStatistics& statistics, int& done, const AlignmentParameters &aln_params,
+                  const MappingParameters &map_param, const IndexParameters& index_parameters, const References& references, const StrobemerIndex& index, const std::string& read_group_id);
+
+void perform_task_async_se(InputBuffer &input_buffer, OutputBuffer &output_buffer,
                   AlignmentStatistics& statistics, int& done, const AlignmentParameters &aln_params,
                   const MappingParameters &map_param, const IndexParameters& index_parameters, const References& references, const StrobemerIndex& index, const std::string& read_group_id,
                   const int thread_id);
 
-void perform_task_async(InputBuffer &input_buffer, OutputBuffer &output_buffer,
+void perform_task_async_pe(InputBuffer &input_buffer, OutputBuffer &output_buffer,
                   AlignmentStatistics& statistics, int& done, const AlignmentParameters &aln_params,
                   const MappingParameters &map_param, const IndexParameters& index_parameters, const References& references, const StrobemerIndex& index, const std::string& read_group_id,
                   const int thread_id);
