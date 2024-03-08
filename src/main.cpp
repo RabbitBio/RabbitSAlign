@@ -28,6 +28,14 @@
 #include "version.hpp"
 #include "buildconfig.hpp"
 
+#ifdef RABBIT_FX
+#include "FastxStream.h"
+#include "FastxChunk.h"
+#include "DataQueue.h"
+#include "Formater.h"
+#endif
+
+
 #include <sys/time.h>
 inline double GetTime() {
     struct timeval tv;
@@ -157,6 +165,46 @@ void readIndexOnCPU(StrobemerIndex& index, const std::string& sti_path, int cpu_
     setThreadAffinity(cpu_id);
     index.read(sti_path);
 }
+
+#ifdef RABBIT_FX
+
+int producer_pe_fastq_task(std::string file, std::string file2, rabbit::fq::FastqDataPool &fastqPool, rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq) {
+	rabbit::fq::FastqFileReader *fqFileReader;
+	fqFileReader = new rabbit::fq::FastqFileReader(file, fastqPool, false, file2);
+	int n_chunks = 0;
+	int line_sum = 0;
+	while (true) {
+		rabbit::fq::FastqDataPairChunk *fqdatachunk = new rabbit::fq::FastqDataPairChunk;
+		fqdatachunk = fqFileReader->readNextPairChunk();
+		if (fqdatachunk == NULL) break;
+		//std::cout << "readed chunk: " << n_chunks << std::endl;
+		dq.Push(n_chunks, fqdatachunk);
+		n_chunks++;
+	}
+
+	dq.SetCompleted();
+	delete fqFileReader;
+	std::cerr << "file " << file << " has " << n_chunks << " chunks" << std::endl;
+	return 0;
+}
+
+int producer_se_fastq_task(std::string file, rabbit::fq::FastqDataPool& fastqPool, rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> &dq){
+	rabbit::fq::FastqFileReader fqFileReader(file, fastqPool);
+	rabbit::int64 n_chunks = 0; 
+	while(true){ 
+		rabbit::fq::FastqDataChunk* fqdatachunk;// = new rabbit::fq::FastqDataChunk;
+		fqdatachunk = fqFileReader.readNextChunk(); 
+		if (fqdatachunk == NULL) break;
+		//std::cout << "readed chunk: " << n_chunks << std::endl;
+		dq.Push(n_chunks, fqdatachunk);
+		n_chunks++;
+	}
+	dq.SetCompleted();
+	std::cerr << "file " << file << " has " << n_chunks << " chunks" << std::endl;
+	return 0;
+}
+#endif
+
 int run_strobealign(int argc, char **argv) {
     auto opt = parse_command_line_arguments(argc, argv);
 
@@ -170,12 +218,27 @@ int run_strobealign(int argc, char **argv) {
     if (opt.c >= 64 || opt.c <= 0) {
         throw BadParameter("c must be greater than 0 and less than 64");
     }
+
     InputBuffer input_buffer = get_input_buffer(opt);
+#ifdef RABBIT_FX
+    rabbit::fq::FastqDataPool fastqPool(256, 1 << 22);
+    rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> queue_se(256, 1);
+    rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> queue_pe(256, 1);
+    std::thread *producer;
+    if(opt.is_SE) {
+        producer = new std::thread(producer_se_fastq_task, opt.reads_filename1, std::ref(fastqPool), std::ref(queue_se));
+    } else if(opt.is_interleaved) {
+        producer = new std::thread(producer_se_fastq_task, opt.reads_filename1, std::ref(fastqPool), std::ref(queue_se));
+    } else {
+        producer = new std::thread(producer_pe_fastq_task, opt.reads_filename1, opt.reads_filename2, std::ref(fastqPool), std::ref(queue_pe));
+    }
+#else
     if (!opt.r_set && !opt.reads_filename1.empty()) {
         opt.r = estimate_read_length(input_buffer);
         logger.info() << "Estimated read length: " << opt.r << " bp\n";
     }
     input_buffer.rewind_reset();
+#endif
     IndexParameters index_parameters = IndexParameters::from_read_length(
         opt.r,
         opt.k_set ? opt.k : IndexParameters::DEFAULT,
@@ -332,15 +395,83 @@ int run_strobealign(int argc, char **argv) {
 
 #define use_good_numa
 
-    if(!input_buffer.is_interleaved && !input_buffer.ks2) {
+
+#ifdef RABBIT_FX
+
+    if(opt.is_SE) {
+        //SE
+        fprintf(stderr, "SE module RABBIT_FX\n");
+
+    #ifdef use_good_numa
+        for (int i = 0; i < opt.n_threads / 2; ++i) {
+    #else
+        for (int i = 0; i < opt.n_threads; ++i) {
+    #endif
+            std::thread consumer(perform_task_async_se_fx, std::ref(input_buffer), std::ref(output_buffer),
+                std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                std::ref(index), std::ref(opt.read_group_id), i, 
+                std::ref(fastqPool), std::ref(queue_se));
+            workers.push_back(std::move(consumer));
+        }
+    #ifdef use_good_numa
+        for (int i = opt.n_threads / 2; i < opt.n_threads; ++i) {
+            std::thread consumer(perform_task_async_se_fx, std::ref(input_buffer), std::ref(output_buffer),
+                std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                std::ref(index2), std::ref(opt.read_group_id), totalCPUs / 2 + i - opt.n_threads / 2, 
+                std::ref(fastqPool), std::ref(queue_se));
+            workers.push_back(std::move(consumer));
+        }
+    #endif
+
+    } else {
+        //PE
+        fprintf(stderr, "PE module RABBIT_FX\n");
+    #ifdef use_good_numa
+        for (int i = 0; i < opt.n_threads / 2; ++i) {
+    #else
+        for (int i = 0; i < opt.n_threads; ++i) {
+    #endif
+            std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
+                std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                std::ref(index), std::ref(opt.read_group_id), i,
+                std::ref(fastqPool), std::ref(queue_pe));
+            workers.push_back(std::move(consumer));
+        }
+    #ifdef use_good_numa
+        for (int i = opt.n_threads / 2; i < opt.n_threads; ++i) {
+            std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
+                std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                std::ref(index2), std::ref(opt.read_group_id), totalCPUs / 2 + i - opt.n_threads / 2,
+                std::ref(fastqPool), std::ref(queue_pe));
+            workers.push_back(std::move(consumer));
+        }
+    #endif
+    }
+    if (opt.show_progress && isatty(2)) {
+        show_progress_until_done(worker_done, log_stats_vec);
+    }
+    for (auto& worker : workers) {
+        worker.join();
+    }
+    producer->join();
+    delete producer;
+
+
+#else
+
+    if(opt.is_SE) {
         //SE
         fprintf(stderr, "SE module\n");
 
-#ifdef use_good_numa
+    #ifdef use_good_numa
         for (int i = 0; i < opt.n_threads / 2; ++i) {
-#else
+    #else
         for (int i = 0; i < opt.n_threads; ++i) {
-#endif
+    #endif
             std::thread consumer(perform_task_async_se, std::ref(input_buffer), std::ref(output_buffer),
             //std::thread consumer(perform_task_init, std::ref(input_buffer), std::ref(output_buffer),
                 std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
@@ -349,7 +480,7 @@ int run_strobealign(int argc, char **argv) {
                 //std::ref(index), std::ref(opt.read_group_id));
             workers.push_back(std::move(consumer));
         }
-#ifdef use_good_numa
+    #ifdef use_good_numa
         for (int i = opt.n_threads / 2; i < opt.n_threads; ++i) {
             std::thread consumer(perform_task_async_se, std::ref(input_buffer), std::ref(output_buffer),
             //std::thread consumer(perform_task_init, std::ref(input_buffer), std::ref(output_buffer),
@@ -359,23 +490,23 @@ int run_strobealign(int argc, char **argv) {
                 //std::ref(index2), std::ref(opt.read_group_id));
             workers.push_back(std::move(consumer));
         }
-#endif
+    #endif
 
     } else {
         //PE
         fprintf(stderr, "PE module\n");
-#ifdef use_good_numa
+    #ifdef use_good_numa
         for (int i = 0; i < opt.n_threads / 2; ++i) {
-#else
+    #else
         for (int i = 0; i < opt.n_threads; ++i) {
-#endif
+    #endif
             std::thread consumer(perform_task_async_pe, std::ref(input_buffer), std::ref(output_buffer),
                 std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
                 std::ref(map_param), std::ref(index_parameters), std::ref(references),
                 std::ref(index), std::ref(opt.read_group_id), i);
             workers.push_back(std::move(consumer));
         }
-#ifdef use_good_numa
+    #ifdef use_good_numa
         for (int i = opt.n_threads / 2; i < opt.n_threads; ++i) {
             std::thread consumer(perform_task_async_pe, std::ref(input_buffer), std::ref(output_buffer),
                 std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
@@ -383,7 +514,7 @@ int run_strobealign(int argc, char **argv) {
                 std::ref(index2), std::ref(opt.read_group_id), totalCPUs / 2 + i - opt.n_threads / 2);
             workers.push_back(std::move(consumer));
         }
-#endif
+    #endif
     }
     if (opt.show_progress && isatty(2)) {
         show_progress_until_done(worker_done, log_stats_vec);
@@ -391,6 +522,9 @@ int run_strobealign(int argc, char **argv) {
     for (auto& worker : workers) {
         worker.join();
     }
+
+#endif
+
     logger.info() << "Done!\n";
     fprintf(stderr, "consumer cost %.2f\n", GetTime() - tt0);
 

@@ -478,6 +478,334 @@ bool gasal_fail(std::string& query_str, std::string& ref_str, gasal_tmp_res gasa
 }
 
 
+#ifdef RABBIT_FX
+
+klibpp::KSeq ConvertNeo2KSeq(neoReference ref) {
+    klibpp::KSeq res;
+    res.name = std::string((char *) ref.base + ref.pname, ref.lname);
+    size_t space_pos = res.name.find(' ');
+    if (space_pos != std::string::npos) {
+        res.name = res.name.substr(1, space_pos - 1);
+    }
+    res.seq = std::string((char *) ref.base + ref.pseq, ref.lseq);
+    res.comment = std::string((char *) ref.base + ref.pstrand, ref.lstrand);
+    res.qual = std::string((char *) ref.base + ref.pqual, ref.lqual);
+    return res;
+}
+
+
+void perform_task_async_se_fx(
+    InputBuffer& input_buffer,
+    OutputBuffer& output_buffer,
+    AlignmentStatistics& statistics,
+    int& done,
+    const AlignmentParameters& aln_params,
+    const MappingParameters& map_param,
+    const IndexParameters& index_parameters,
+    const References& references,
+    const StrobemerIndex& index,
+    const std::string& read_group_id,
+    const int thread_id,
+    rabbit::fq::FastqDataPool& fastqPool, 
+    rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> &dq
+) {
+#define use_good_numa
+#ifdef use_good_numa
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(thread_id, &cpuset);
+
+    pthread_t current_thread = pthread_self();
+    if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+        std::cerr << "Error setting thread affinity" << std::endl;
+    }
+#endif
+
+    bool eof = false;
+    Aligner aligner{aln_params};
+    std::minstd_rand random_engine;
+    std::minstd_rand pre_random_engine;
+    std::vector<klibpp::KSeq> records1;
+    std::vector<klibpp::KSeq> records2;
+    std::vector<klibpp::KSeq> records3;
+    std::vector<klibpp::KSeq> pre_records1;
+    std::vector<klibpp::KSeq> pre_records2;
+    std::vector<klibpp::KSeq> pre_records3;
+    size_t chunk_index = 0;
+    size_t pre_chunk_index = 0;
+    std::vector<AlignTmpRes> align_tmp_results;
+    std::vector<AlignTmpRes> pre_align_tmp_results;
+    thread_local double time_tot = 0;
+    thread_local double time1 = 0;    //time except extend and output
+    thread_local double time2_1 = 0;  //time to filter nams and get todo_strings
+    thread_local double time2_2 = 0;  //time to do ssw on gpu
+    thread_local double time2_3 = 0;  //time to post-process the gpu results
+    thread_local double time2_4 = 0;  //time to store ssw results
+    thread_local double time3_1 = 0;  //time to construct sam
+    thread_local double time3_2 = 0;  //time to output
+    thread_local double time_read = 0;  //time to output
+    double t_0, t_1;
+
+    rabbit::int64 id = 0;
+    std::vector<neoReference> data;
+    rabbit::fq::FastqDataChunk* fqdatachunk;
+
+    t_0 = GetTime();
+
+    t_1 = GetTime();
+    //chunk0_part1
+    Timer timer;
+    double tt0 = GetTime();
+    bool res = dq.Pop(id, fqdatachunk);
+    if(res) {
+        data.clear();
+        rabbit::fq::chunkFormat(fqdatachunk, data);
+        pre_records3.clear();
+        for(auto item : data) {
+            pre_records3.push_back(ConvertNeo2KSeq(item));
+        }
+        fastqPool.Release(fqdatachunk);
+    }
+    pre_chunk_index = id;
+    //pre_chunk_index = input_buffer.read_records(pre_records1, pre_records2, pre_records3);
+    time_read += GetTime() - tt0;
+    statistics.tot_read_file += timer.duration();
+    if (pre_records1.empty() && pre_records3.empty() && res == 0) {
+        eof = true;
+    }
+ 
+    // Use chunk index as random seed for reproducibility
+    pre_random_engine.seed(pre_chunk_index);
+    for (size_t i = 0; i < pre_records3.size(); ++i) {
+        auto record = pre_records3[i];
+        AlignTmpRes align_tmp_res;
+        // call xx_part func, find seeds and filter them, but reserve extend step
+        align_SE_read_part(
+            align_tmp_res, record, statistics, aligner, map_param, index_parameters, references, index, pre_random_engine
+        );
+        //align_SE_read(record, sam, sam_out, statistics, aligner, map_param, index_parameters, references, index, pre_random_engine);
+        pre_align_tmp_results.push_back(align_tmp_res);
+        statistics.n_reads ++;
+    }
+    time1 += GetTime() - t_1;
+
+    while (!eof) {
+        std::vector<std::string> todo_querys;
+        std::vector<std::string> todo_refs;
+        std::vector<AlignmentInfo> info_results;
+        std::vector<gasal_tmp_res> gasal_results_tmp;
+        std::vector<gasal_tmp_res> gasal_results;
+
+        std::thread gpu_ssw_async;
+        //chunk0_E1
+        //process todo_nams
+        {
+            Timer extend_timer1;
+
+            // step1 : filter nams and get todo_strings
+            t_1 = GetTime();
+            for (size_t i = 0; i < pre_records3.size(); i++) {
+                auto record = pre_records3[i];
+                Read read(record.seq);
+                auto& align_tmp_res = pre_align_tmp_results[i];
+                size_t todo_size = align_tmp_res.todo_nams.size();
+                assert(todo_size == align_tmp_res.done_align.size());
+                assert(todo_size == align_tmp_res.align_res.size());
+                if (align_tmp_res.type == 1 || align_tmp_res.type == 2) {
+                    assert(0);
+                } else if (align_tmp_res.type == 3) {
+                    assert(0);
+                } else if (align_tmp_res.type == 4) {
+                    for (size_t j = 0; j < todo_size; j++) {
+                        if (!align_tmp_res.done_align[j]) {
+                            if (align_tmp_res.is_extend_seed[j]) {
+                                part2_extend_seed_get_str(
+                                    todo_querys, todo_refs, align_tmp_res, j, read, read, references, aligner
+                                );
+                            } else {
+                                assert(0);
+                            }
+                        }
+                    }
+                }
+            }
+            assert(todo_refs.size() == todo_querys.size());
+            assert(pre_align_tmp_results.size() == pre_records3.size());
+            time2_1 += GetTime() - t_1;
+
+            // step2 : solve todo_strings -- do ssw on gpu -- key step, need async
+            t_1 = GetTime();
+            gpu_ssw_async = std::thread([&] (){
+                for (size_t i = 0; i + STREAM_BATCH_SIZE <= todo_querys.size(); i += STREAM_BATCH_SIZE) {
+                    auto query_start = todo_querys.begin() + i;
+                    auto query_end = query_start + STREAM_BATCH_SIZE;
+                    std::vector<std::string> query_batch(query_start, query_end);
+
+                    auto ref_start = todo_refs.begin() + i;
+                    auto ref_end = ref_start + STREAM_BATCH_SIZE;
+                    std::vector<std::string> ref_batch(ref_start, ref_end);
+
+                    solve_ssw_on_gpu(
+                        thread_id, gasal_results_tmp, query_batch, ref_batch, aln_params.match,
+                        aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend
+                    );
+                    gasal_results.insert(gasal_results.end(), gasal_results_tmp.begin(), gasal_results_tmp.end());
+                }
+                size_t remaining = todo_querys.size() % STREAM_BATCH_SIZE;
+                if (remaining > 0) {
+                    auto query_start = todo_querys.end() - remaining;
+                    std::vector<std::string> query_batch(query_start, todo_querys.end());
+
+                    auto ref_start = todo_refs.end() - remaining;
+                    std::vector<std::string> ref_batch(ref_start, todo_refs.end());
+
+                    solve_ssw_on_gpu(
+                        thread_id, gasal_results_tmp, query_batch, ref_batch, aln_params.match,
+                        aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend
+                    );
+                    gasal_results.insert(gasal_results.end(), gasal_results_tmp.begin(), gasal_results_tmp.end());
+                }
+            });
+            //            gpu_ssw_async.join();
+
+            time2_2 += GetTime() - t_1;
+
+            statistics.tot_extend += extend_timer1.duration();
+        }
+
+        //chunk1_seed
+        //find next round nams
+        {
+            t_1 = GetTime();
+            Timer timer;
+            tt0 = GetTime();
+            bool res = dq.Pop(id, fqdatachunk);
+            if(res) {
+                data.clear();
+                rabbit::fq::chunkFormat(fqdatachunk, data);
+                records3.clear();
+                for(auto item : data) {
+                    records3.push_back(ConvertNeo2KSeq(item));
+                }
+                fastqPool.Release(fqdatachunk);
+            }
+            chunk_index = id;
+            //chunk_index = input_buffer.read_records(records1, records2, records3);
+            time_read += GetTime() - tt0;
+            statistics.tot_read_file += timer.duration();
+            assert(records1.size() == records2.size());
+            if (records1.empty() && records3.empty() && res == 0) {
+                eof = true;
+            }
+            // Use chunk index as random seed for reproducibility
+            random_engine.seed(chunk_index);
+
+      
+            assert(align_tmp_results.size() == 0);
+            for (size_t i = 0; i < records3.size(); ++i) {
+                auto record = records3[i];
+                AlignTmpRes align_tmp_res;
+                // call xx_part func, find seeds and filter them, but reserve extend step
+                align_SE_read_part(
+                    align_tmp_res, record, statistics, aligner, map_param, index_parameters, references, index, random_engine
+                );
+                //align_SE_read(record, sam, sam_out, statistics, aligner, map_param, index_parameters, references, index, random_engine);
+                align_tmp_results.push_back(align_tmp_res);
+                statistics.n_reads ++;
+            }
+            time1 += GetTime() - t_1;
+        }
+
+        if (gpu_ssw_async.joinable()) {
+            gpu_ssw_async.join();
+        }
+
+
+        //chunk0_E2
+        //post-process ssw results and trans to sam
+        {
+            Timer extend_timer2;
+            // step1 : post-process the gpu results, re-ssw for bad results on cpu
+            t_1 = GetTime();
+            for (size_t i = 0; i < todo_querys.size(); i++) {
+                AlignmentInfo info;
+                if (gasal_fail(todo_querys[i], todo_refs[i], gasal_results[i])) {
+                //if (1) {
+                    info = aligner.align(todo_querys[i], todo_refs[i]);
+                } else {
+                    info = aligner.align_gpu(todo_querys[i], todo_refs[i], gasal_results[i]);
+                }
+                info_results.push_back(info);
+            }
+            time2_3 += GetTime() - t_1;
+
+            // step2 : store ssw results
+            t_1 = GetTime();
+            int pos = 0;
+            for (size_t i = 0; i < pre_align_tmp_results.size(); i++) {
+                auto record = pre_records3[i];
+                Read read(record.seq);
+                auto& align_tmp_res = pre_align_tmp_results[i];
+                size_t todo_size = align_tmp_res.todo_nams.size();
+                if (align_tmp_res.type == 1 || align_tmp_res.type == 2) {
+                    assert(0);
+                } else if (align_tmp_res.type == 3) {
+                    assert(0);
+                } else if (align_tmp_res.type == 4) {
+                    for (size_t j = 0; j < todo_size; j++) {
+                        if (!align_tmp_res.done_align[j]) {
+                            if (align_tmp_res.is_extend_seed[j]) {
+                                part2_extend_seed_store_res(
+                                    align_tmp_res, j, read, read, references, info_results[pos++]
+                                );
+                            } else {
+                                assert(0);
+                            }
+                        }
+                    }
+                }
+            }
+            time2_4 += GetTime() - t_1;
+
+            // step3 : use ssw results to construct sam
+            t_1 = GetTime();
+            std::string sam_out;
+            sam_out.reserve(7 * map_param.r * (pre_records1.size() + pre_records3.size()));
+            Sam sam{sam_out, references, map_param.cigar_ops, read_group_id, map_param.output_unmapped,map_param.details};
+            for (size_t i = 0; i < pre_records3.size(); ++i) {
+                auto record = pre_records3[i];
+                align_SE_read_last(
+                    pre_align_tmp_results[i], record, sam, sam_out, statistics, aligner,
+                    map_param, index_parameters, references, index, pre_random_engine
+                );
+            }
+            time3_1 += GetTime() - t_1;
+            statistics.tot_extend += extend_timer2.duration();
+
+            t_1 = GetTime();
+            output_buffer.output_records(std::move(sam_out), pre_chunk_index);
+            time3_2 += GetTime() - t_1;
+        }
+
+        //change data
+        pre_align_tmp_results = std::move(align_tmp_results);
+        pre_records1 = std::move(records1);
+        pre_records2 = std::move(records2);
+        pre_records3 = std::move(records3);
+        pre_chunk_index = chunk_index;
+        pre_random_engine = random_engine;
+    }
+    statistics.tot_aligner_calls += aligner.calls_count();
+    done = true;
+    time_tot = GetTime() - t_0;
+    fprintf(
+        stderr, "cost time1:%.2f(%.2f) time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), tot time:%.2f\n", time1, time_read,
+        time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
+    );
+
+}
+#endif
+
 void perform_task_async_se(
     InputBuffer& input_buffer,
     OutputBuffer& output_buffer,
@@ -513,8 +841,8 @@ void perform_task_async_se(
     std::vector<klibpp::KSeq> pre_records1;
     std::vector<klibpp::KSeq> pre_records2;
     std::vector<klibpp::KSeq> pre_records3;
-    size_t chunk_index;
-    size_t pre_chunk_index;
+    size_t chunk_index = 0;
+    size_t pre_chunk_index = 0;
     std::vector<AlignTmpRes> align_tmp_results;
     std::vector<AlignTmpRes> pre_align_tmp_results;
     thread_local double time_tot = 0;
@@ -764,6 +1092,425 @@ void perform_task_async_se(
 
 }
 
+#ifdef RABBIT_FX
+
+void perform_task_async_pe_fx(
+    InputBuffer& input_buffer,
+    OutputBuffer& output_buffer,
+    AlignmentStatistics& statistics,
+    int& done,
+    const AlignmentParameters& aln_params,
+    const MappingParameters& map_param,
+    const IndexParameters& index_parameters,
+    const References& references,
+    const StrobemerIndex& index,
+    const std::string& read_group_id,
+    const int thread_id,
+    rabbit::fq::FastqDataPool& fastqPool, 
+    rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq
+) {
+#define use_good_numa
+#ifdef use_good_numa
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(thread_id, &cpuset);
+
+    pthread_t current_thread = pthread_self();
+    if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+        std::cerr << "Error setting thread affinity" << std::endl;
+    }
+#endif
+    bool eof = false;
+    Aligner aligner{aln_params};
+    std::minstd_rand random_engine;
+    std::minstd_rand pre_random_engine;
+    std::vector<klibpp::KSeq> records1;
+    std::vector<klibpp::KSeq> records2;
+    std::vector<klibpp::KSeq> records3;
+    std::vector<klibpp::KSeq> pre_records1;
+    std::vector<klibpp::KSeq> pre_records2;
+    std::vector<klibpp::KSeq> pre_records3;
+    size_t chunk_index = 0;
+    size_t pre_chunk_index = 0;
+    std::vector<AlignTmpRes> align_tmp_results;
+    std::vector<AlignTmpRes> pre_align_tmp_results;
+    thread_local double time_tot = 0;
+    thread_local double time1 = 0;    //time except extend and output
+    thread_local double time2_1 = 0;  //time to filter nams and get todo_strings
+    thread_local double time2_2 = 0;  //time to do ssw on gpu
+    thread_local double time2_3 = 0;  //time to post-process the gpu results
+    thread_local double time2_4 = 0;  //time to store ssw results
+    thread_local double time3_1 = 0;  //time to construct sam
+    thread_local double time3_2 = 0;  //time to output
+    double t_0, t_1;
+
+    rabbit::int64 id = 0;
+    std::vector<neoReference> data1;
+    std::vector<neoReference> data2;
+    rabbit::fq::FastqDataPairChunk *fqdatachunk = new rabbit::fq::FastqDataPairChunk;
+
+
+    t_0 = GetTime();
+
+    t_1 = GetTime();
+    //chunk0_part1
+    Timer timer;
+    bool res = dq.Pop(id, fqdatachunk);
+    if(res) {
+        data1.clear();
+        data2.clear();
+        rabbit::fq::chunkFormat((rabbit::fq::FastqDataChunk*)(fqdatachunk->left_part), data1);
+        rabbit::fq::chunkFormat((rabbit::fq::FastqDataChunk*)(fqdatachunk->right_part), data2);
+        pre_records1.clear();
+        pre_records2.clear();
+        assert(data1.size() == data2.size());
+        for(int i = 0; i < data1.size(); i++) {
+            auto item1 = data1[i];
+            auto item2 = data2[i];
+            pre_records1.push_back(ConvertNeo2KSeq(item1));
+            pre_records2.push_back(ConvertNeo2KSeq(item2));
+        }
+        fastqPool.Release(fqdatachunk->left_part);
+        fastqPool.Release(fqdatachunk->right_part);
+    }
+
+    pre_chunk_index = id;
+    //pre_chunk_index = input_buffer.read_records(pre_records1, pre_records2, pre_records3);
+    statistics.tot_read_file += timer.duration();
+    assert(pre_records1.size() == pre_records2.size());
+    if (pre_records1.empty() && pre_records3.empty() && res == 0) {
+        eof = true;
+    }
+
+    InsertSizeDistribution isize_est;
+    // Use chunk index as random seed for reproducibility
+    pre_random_engine.seed(pre_chunk_index);
+    for (size_t i = 0; i < pre_records1.size(); ++i) {
+        auto record1 = pre_records1[i];
+        auto record2 = pre_records2[i];
+        to_uppercase(record1.seq);
+        to_uppercase(record2.seq);
+        AlignTmpRes align_tmp_res;
+        // call xx_part func, find seeds and filter them, but reserve extend step
+        align_PE_read_part(
+            align_tmp_res, record1, record2, statistics, isize_est, aligner, map_param, index_parameters,
+            references, index, pre_random_engine
+        );
+        pre_align_tmp_results.push_back(align_tmp_res);
+        statistics.n_reads += 2;
+    }
+    time1 += GetTime() - t_1;
+
+    while (!eof) {
+        std::vector<std::string> todo_querys;
+        std::vector<std::string> todo_refs;
+        std::vector<AlignmentInfo> info_results;
+        std::vector<gasal_tmp_res> gasal_results_tmp;
+        std::vector<gasal_tmp_res> gasal_results;
+
+        std::thread gpu_ssw_async;
+        //chunk0_part2
+        //process todo_nams
+        {
+            Timer extend_timer1;
+
+            // step1 : filter nams and get todo_strings
+            t_1 = GetTime();
+            for (size_t i = 0; i < pre_records1.size(); i++) {
+                auto record1 = pre_records1[i];
+                auto record2 = pre_records2[i];
+                to_uppercase(record1.seq);
+                to_uppercase(record2.seq);
+                Read read1(record1.seq);
+                Read read2(record2.seq);
+                const auto mu = isize_est.mu;
+                const auto sigma = isize_est.sigma;
+                auto& align_tmp_res = pre_align_tmp_results[i];
+                size_t todo_size = align_tmp_res.todo_nams.size();
+                assert(todo_size == align_tmp_res.done_align.size());
+                assert(todo_size == align_tmp_res.align_res.size());
+                if (align_tmp_res.type == 1 || align_tmp_res.type == 2) {
+                    assert(todo_size % 2 == 0);
+                    for (size_t j = 0; j < todo_size; j += 2) {
+                        assert(align_tmp_res.is_extend_seed[j]);
+                        if (align_tmp_res.type == 1)
+                            assert(align_tmp_res.is_read1[j]);
+                        else
+                            assert(!align_tmp_res.is_read1[j]);
+                        if (!align_tmp_res.done_align[j]) {
+                            part2_extend_seed_get_str(
+                                todo_querys, todo_refs, align_tmp_res, j, read1, read2, references, aligner
+                            );
+                        }
+
+                        assert(!align_tmp_res.is_extend_seed[j + 1]);
+                        if (align_tmp_res.type == 1)
+                            assert(!align_tmp_res.is_read1[j + 1]);
+                        else
+                            assert(align_tmp_res.is_read1[j + 1]);
+                        if (!align_tmp_res.done_align[j + 1]) {
+                            part2_rescue_mate_get_str(
+                                todo_querys, todo_refs, align_tmp_res, j + 1, read1, read2, references,
+                                aligner, mu, sigma
+                            );
+                        }
+                    }
+                } else if (align_tmp_res.type == 3) {
+                    assert(todo_size == 2);
+                    assert(align_tmp_res.is_extend_seed[0]);
+                    assert(align_tmp_res.is_read1[0]);
+                    if (!align_tmp_res.done_align[0]) {
+                        part2_extend_seed_get_str(
+                            todo_querys, todo_refs, align_tmp_res, 0, read1, read2, references, aligner
+                        );
+                    }
+                    assert(align_tmp_res.is_extend_seed[1]);
+                    assert(!align_tmp_res.is_read1[1]);
+                    if (!align_tmp_res.done_align[1]) {
+                        part2_extend_seed_get_str(
+                            todo_querys, todo_refs, align_tmp_res, 1, read1, read2, references, aligner
+                        );
+                    }
+                    //TODO
+                    //                bool is_proper = is_proper_pair(align_tmp_res.align_res[0], align_tmp_res.align_res[1], mu, sigma);
+                    //                if ((isize_est.sample_size < 400) && (align_tmp_res.align_res[0].edit_distance + align_tmp_res.align_res[1].edit_distance < 3) && is_proper) {
+                    //                    isize_est.update(std::abs(align_tmp_res.align_res[0].ref_start - align_tmp_res.align_res[1].ref_start));
+                    //                }
+                } else if (align_tmp_res.type == 4) {
+                    for (size_t j = 0; j < todo_size; j++) {
+                        if (!align_tmp_res.done_align[j]) {
+                            if (align_tmp_res.is_extend_seed[j]) {
+                                part2_extend_seed_get_str(
+                                    todo_querys, todo_refs, align_tmp_res, j, read1, read2, references,
+                                    aligner
+                                );
+                            } else {
+                                part2_rescue_mate_get_str(
+                                    todo_querys, todo_refs, align_tmp_res, j, read1, read2, references,
+                                    aligner, mu, sigma
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            assert(todo_refs.size() == todo_querys.size());
+            assert(pre_align_tmp_results.size() == pre_records1.size());
+            time2_1 += GetTime() - t_1;
+
+            // step2 : solve todo_strings -- do ssw on gpu -- key step, need async
+            t_1 = GetTime();
+            gpu_ssw_async = std::thread([&] (){
+                for (size_t i = 0; i + STREAM_BATCH_SIZE <= todo_querys.size(); i += STREAM_BATCH_SIZE) {
+                    auto query_start = todo_querys.begin() + i;
+                    auto query_end = query_start + STREAM_BATCH_SIZE;
+                    std::vector<std::string> query_batch(query_start, query_end);
+
+                    auto ref_start = todo_refs.begin() + i;
+                    auto ref_end = ref_start + STREAM_BATCH_SIZE;
+                    std::vector<std::string> ref_batch(ref_start, ref_end);
+
+                    solve_ssw_on_gpu(
+                        thread_id, gasal_results_tmp, query_batch, ref_batch, aln_params.match,
+                        aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend
+                    );
+                    gasal_results.insert(gasal_results.end(), gasal_results_tmp.begin(), gasal_results_tmp.end());
+                }
+                size_t remaining = todo_querys.size() % STREAM_BATCH_SIZE;
+                if (remaining > 0) {
+                    auto query_start = todo_querys.end() - remaining;
+                    std::vector<std::string> query_batch(query_start, todo_querys.end());
+
+                    auto ref_start = todo_refs.end() - remaining;
+                    std::vector<std::string> ref_batch(ref_start, todo_refs.end());
+
+                    solve_ssw_on_gpu(
+                        thread_id, gasal_results_tmp, query_batch, ref_batch, aln_params.match,
+                        aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend
+                    );
+                    gasal_results.insert(gasal_results.end(), gasal_results_tmp.begin(), gasal_results_tmp.end());
+                }
+            });
+//            gpu_ssw_async.join();
+
+            time2_2 += GetTime() - t_1;
+
+            statistics.tot_extend += extend_timer1.duration();
+        }
+
+        //chunk1_part2
+        //find next round nams
+        {
+            t_1 = GetTime();
+            Timer timer;
+
+            bool res = dq.Pop(id, fqdatachunk);
+            if(res) {
+                data1.clear();
+                data2.clear();
+                rabbit::fq::chunkFormat((rabbit::fq::FastqDataChunk*)(fqdatachunk->left_part), data1);
+                rabbit::fq::chunkFormat((rabbit::fq::FastqDataChunk*)(fqdatachunk->right_part), data2);
+                assert(data1.size() == data2.size());
+                records1.clear();
+                records2.clear();
+                for(int i = 0; i < data1.size(); i++) {
+                    auto item1 = data1[i];
+                    auto item2 = data2[i];
+                    records1.push_back(ConvertNeo2KSeq(item1));
+                    records2.push_back(ConvertNeo2KSeq(item2));
+                }
+                fastqPool.Release(fqdatachunk->left_part);
+                fastqPool.Release(fqdatachunk->right_part);
+            }
+            chunk_index = id;
+            //chunk_index = input_buffer.read_records(records1, records2, records3);
+            statistics.tot_read_file += timer.duration();
+            assert(records1.size() == records2.size());
+            if (records1.empty() && records3.empty() && res == 0) {
+                eof = true;
+            }
+            InsertSizeDistribution isize_est;
+            // Use chunk index as random seed for reproducibility
+            random_engine.seed(chunk_index);
+            assert(align_tmp_results.size() == 0);
+            for (size_t i = 0; i < records1.size(); ++i) {
+                auto record1 = records1[i];
+                auto record2 = records2[i];
+                to_uppercase(record1.seq);
+                to_uppercase(record2.seq);
+                AlignTmpRes align_tmp_res;
+                align_PE_read_part(
+                    align_tmp_res, record1, record2, statistics, isize_est, aligner, map_param,
+                    index_parameters, references, index, random_engine
+                );
+                align_tmp_results.push_back(align_tmp_res);
+                statistics.n_reads += 2;
+            }
+            time1 += GetTime() - t_1;
+        }
+
+        if (gpu_ssw_async.joinable()) {
+            gpu_ssw_async.join();
+        }
+
+
+        //chunk0_part3
+        //post-process ssw results and trans to sam
+        {
+            Timer extend_timer2;
+            // step1 : post-process the gpu results, re-ssw for bad results on cpu
+            t_1 = GetTime();
+            for (size_t i = 0; i < todo_querys.size(); i++) {
+                AlignmentInfo info;
+                if (gasal_fail(todo_querys[i], todo_refs[i], gasal_results[i])) {
+                    info = aligner.align(todo_querys[i], todo_refs[i]);
+                } else {
+                    info = aligner.align_gpu(todo_querys[i], todo_refs[i], gasal_results[i]);
+                }
+                info_results.push_back(info);
+            }
+            time2_3 += GetTime() - t_1;
+
+            // step2 : store ssw results
+            t_1 = GetTime();
+            int pos = 0;
+            for (size_t i = 0; i < pre_align_tmp_results.size(); i++) {
+                auto record1 = pre_records1[i];
+                auto record2 = pre_records2[i];
+                to_uppercase(record1.seq);
+                to_uppercase(record2.seq);
+                Read read1(record1.seq);
+                Read read2(record2.seq);
+                const auto mu = isize_est.mu;
+                const auto sigma = isize_est.sigma;
+                auto& align_tmp_res = pre_align_tmp_results[i];
+                size_t todo_size = align_tmp_res.todo_nams.size();
+                if (align_tmp_res.type == 1 || align_tmp_res.type == 2) {
+                    for (size_t j = 0; j < todo_size; j += 2) {
+                        if (!align_tmp_res.done_align[j]) {
+                            part2_extend_seed_store_res(
+                                align_tmp_res, j, read1, read2, references, info_results[pos++]
+                            );
+                        }
+                        if (!align_tmp_res.done_align[j + 1]) {
+                            part2_rescue_mate_store_res(
+                                align_tmp_res, j + 1, read1, read2, references, info_results[pos++], mu, sigma
+                            );
+                        }
+                    }
+                } else if (align_tmp_res.type == 3) {
+                    if (!align_tmp_res.done_align[0]) {
+                        part2_extend_seed_store_res(
+                            align_tmp_res, 0, read1, read2, references, info_results[pos++]
+                        );
+                    }
+                    if (!align_tmp_res.done_align[1]) {
+                        part2_extend_seed_store_res(
+                            align_tmp_res, 1, read1, read2, references, info_results[pos++]
+                        );
+                    }
+                } else if (align_tmp_res.type == 4) {
+                    for (size_t j = 0; j < todo_size; j++) {
+                        if (!align_tmp_res.done_align[j]) {
+                            if (align_tmp_res.is_extend_seed[j]) {
+                                part2_extend_seed_store_res(
+                                    align_tmp_res, j, read1, read2, references, info_results[pos++]
+                                );
+                            } else {
+                                part2_rescue_mate_store_res(
+                                    align_tmp_res, j, read1, read2, references, info_results[pos++], mu, sigma
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            time2_4 += GetTime() - t_1;
+
+            // step3 : use ssw results to construct sam
+            t_1 = GetTime();
+            std::string sam_out;
+            sam_out.reserve(7 * map_param.r * (pre_records1.size() + pre_records3.size()));
+            Sam sam{
+                sam_out,          references, map_param.cigar_ops, read_group_id, map_param.output_unmapped,
+                map_param.details
+            };
+            for (size_t i = 0; i < pre_records1.size(); ++i) {
+                auto record1 = pre_records1[i];
+                auto record2 = pre_records2[i];
+                to_uppercase(record1.seq);
+                to_uppercase(record2.seq);
+                align_PE_read_last(
+                    pre_align_tmp_results[i], record1, record2, sam, sam_out, statistics, isize_est, aligner,
+                    map_param, index_parameters, references, index, pre_random_engine
+                );
+            }
+            time3_1 += GetTime() - t_1;
+            statistics.tot_extend += extend_timer2.duration();
+
+            t_1 = GetTime();
+            output_buffer.output_records(std::move(sam_out), pre_chunk_index);
+            time3_2 += GetTime() - t_1;
+        }
+
+        //change data
+        pre_align_tmp_results = std::move(align_tmp_results);
+        pre_records1 = std::move(records1);
+        pre_records2 = std::move(records2);
+        pre_records3 = std::move(records3);
+        pre_chunk_index = chunk_index;
+        pre_random_engine = random_engine;
+    }
+    statistics.tot_aligner_calls += aligner.calls_count();
+    done = true;
+    time_tot = GetTime() - t_0;
+    fprintf(
+        stderr, "cost time1:%.2f time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), tot time:%.2f\n", time1,
+        time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
+    );
+}
+#else
+
 void perform_task_async_pe(
     InputBuffer& input_buffer,
     OutputBuffer& output_buffer,
@@ -798,8 +1545,8 @@ void perform_task_async_pe(
     std::vector<klibpp::KSeq> pre_records1;
     std::vector<klibpp::KSeq> pre_records2;
     std::vector<klibpp::KSeq> pre_records3;
-    size_t chunk_index;
-    size_t pre_chunk_index;
+    size_t chunk_index = 0;
+    size_t pre_chunk_index = 0;
     std::vector<AlignTmpRes> align_tmp_results;
     std::vector<AlignTmpRes> pre_align_tmp_results;
     thread_local double time_tot = 0;
@@ -1131,3 +1878,4 @@ void perform_task_async_pe(
         time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
     );
 }
+#endif

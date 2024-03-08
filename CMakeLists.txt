@@ -5,6 +5,8 @@ include(FetchContent)
 
 option(ENABLE_AVX "Enable AVX2 support" OFF)
 option(PYTHON_BINDINGS "Build Python bindings" OFF)
+option(USE_RABBITFX "parse input fasta file with RabbitFX" OFF)
+
 
 find_package(ZLIB)
 find_package(Threads)
@@ -25,7 +27,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
-add_compile_options(-Wall -Wextra -Werror=maybe-uninitialized)
+add_compile_options(-w -Wall -Wextra -Werror=maybe-uninitialized)
 
 FetchContent_Declare(ZStrGitRepo
 #        GIT_REPOSITORY    "https://github.com/mateidavid/zstr"
@@ -33,6 +35,15 @@ FetchContent_Declare(ZStrGitRepo
   GIT_TAG           "755da7890ea22478a702e3139092e6c964fab1f5"
 )
 FetchContent_MakeAvailable(ZStrGitRepo)
+
+if(USE_RABBITFX)
+    set(CMAKE_CXX_FLAGS "-D RABBIT_FX ${CMAKE_CXX_FLAGS}")
+
+    include_directories(RabbitFX/build/include)
+    link_directories(RabbitFX/build/lib)
+endif()
+
+
 
 # Obtain version from Git or fall back to PROJECT_VERSION if not building
 # from a Git repository
@@ -69,11 +80,18 @@ add_library(salib STATIC ${SOURCES}
   ext/xxhash.c
   ext/ssw/ssw_cpp.cpp
   ext/ssw/ssw.c
-        src/gasal2_ssw.cpp
-        src/gasal2_ssw.h
+  src/gasal2_ssw.cpp
+  src/gasal2_ssw.h
 )
+
 target_include_directories(salib PUBLIC src/ ext/ ${PROJECT_BINARY_DIR})
-target_link_libraries(salib PUBLIC ZLIB::ZLIB Threads::Threads zstr::zstr)
+
+if(USE_RABBITFX)
+    target_link_libraries(salib PUBLIC ZLIB::ZLIB Threads::Threads zstr::zstr rabbitfx)
+else()
+    target_link_libraries(salib PUBLIC ZLIB::ZLIB Threads::Threads zstr::zstr)
+endif()
+
 IF(ENABLE_AVX)
   target_compile_options(salib PUBLIC "-mavx2")
 ENDIF()
