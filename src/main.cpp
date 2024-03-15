@@ -220,6 +220,11 @@ int run_strobealign(int argc, char **argv) {
     }
 
     InputBuffer input_buffer = get_input_buffer(opt);
+    if (!opt.r_set && !opt.reads_filename1.empty()) {
+        opt.r = estimate_read_length(input_buffer);
+        logger.info() << "Estimated read length: " << opt.r << " bp\n";
+    }
+
 #ifdef RABBIT_FX
     rabbit::fq::FastqDataPool fastqPool(256, 1 << 22);
     rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> queue_se(256, 1);
@@ -233,11 +238,7 @@ int run_strobealign(int argc, char **argv) {
         producer = new std::thread(producer_pe_fastq_task, opt.reads_filename1, opt.reads_filename2, std::ref(fastqPool), std::ref(queue_pe));
     }
 #else
-    if (!opt.r_set && !opt.reads_filename1.empty()) {
-        opt.r = estimate_read_length(input_buffer);
-        logger.info() << "Estimated read length: " << opt.r << " bp\n";
-    }
-    input_buffer.rewind_reset();
+        input_buffer.rewind_reset();
 #endif
     IndexParameters index_parameters = IndexParameters::from_read_length(
         opt.r,

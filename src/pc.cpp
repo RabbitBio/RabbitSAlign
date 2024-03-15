@@ -483,9 +483,15 @@ bool gasal_fail(std::string& query_str, std::string& ref_str, gasal_tmp_res gasa
 klibpp::KSeq ConvertNeo2KSeq(neoReference ref) {
     klibpp::KSeq res;
     res.name = std::string((char *) ref.base + ref.pname, ref.lname);
-    size_t space_pos = res.name.find(' ');
-    if (space_pos != std::string::npos) {
-        res.name = res.name.substr(1, space_pos - 1);
+    if(!res.name.empty()) {
+        size_t space_pos = res.name.find(' ');
+        int l_pos = 0;
+        if(res.name[0] == '@') l_pos = 1;
+        if (space_pos != std::string::npos) {
+            res.name = res.name.substr(l_pos, space_pos - l_pos);
+        } else {
+            res.name = res.name.substr(l_pos);
+        }
     }
     res.seq = std::string((char *) ref.base + ref.pseq, ref.lseq);
     res.comment = std::string((char *) ref.base + ref.pstrand, ref.lstrand);
