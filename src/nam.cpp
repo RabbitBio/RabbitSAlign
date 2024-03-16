@@ -99,7 +99,7 @@ inline void add_to_hits_per_ref_pre(
         if (diff <= min_diff) {
             int refIndex = index.reference_index(position);
             if (hits_per_ref.find(refIndex) == hits_per_ref.end()) {
-                hits_per_ref[refIndex] = std::vector<Hit>(); // 插入空向量
+                hits_per_ref[refIndex] = std::vector<Hit>(); 
             }
             min_diff = diff;
         }
@@ -140,6 +140,18 @@ void merge_hits_into_nams_fast(
         t0 = GetTime();
 #endif
         if (sort) {
+            //for(int i = 1; i < hits.size(); i++) {
+            //    if(hits[i].query_start < hits[i - 1].query_start) {
+            //        fprintf(stderr, "GG1 sort %d %d\n", hits[i - 1].query_start, hits[i].query_start);
+            //        exit(0);
+            //    } else if(hits[i].query_start == hits[i - 1].query_start && hits[i].ref_start < hits[i - 1].ref_start) {
+            //        //fprintf(stderr, "GG2 sort %d %d %d %d\n", hits[i - 1].query_start, hits[i].query_start, hits[i - 1].ref_start, hits[i].ref_start);
+            //        //for(int j = 0; j < hits.size(); j++)
+            //        //    fprintf(stderr, "%d %d\n", hits[j].query_start, hits[j].ref_start);
+            //        //fprintf(stderr, "\n");
+            //        //exit(0);
+            //    }
+            //}
             std::sort(hits.begin(), hits.end());
         }
 #ifdef timer
@@ -166,6 +178,8 @@ void merge_hits_into_nams_fast(
 
             int query_start = hits[i_start].query_start;
             int cnt_done = 0;
+
+            std::sort(hits.begin() + i_start, hits.begin() + i_end);
 
             for (auto & o : open_nams) {
                 auto lower = std::lower_bound(hits.begin() + i_start, hits.begin() + i_end, o.ref_prev_hit_startpos + 1, [](const Hit& h, int value){
@@ -931,8 +945,9 @@ bool cmp1 (const RescueHit& a, const RescueHit& b) {
 }
 
 bool cmp2 (const RescueHit& a, const RescueHit& b) {
-    return std::tie(a.query_start, a.position)
-           < std::tie(b.query_start, b.position);
+    //return std::tie(a.query_start, a.position)
+    //       < std::tie(b.query_start, b.position);
+    return a.query_start < b.query_start;
 }
 
 
@@ -943,6 +958,59 @@ std::vector<Nam> find_nams_rescue(
 ) {
 
 
+#ifdef pre_sort
+
+    std::array<robin_hood::unordered_map<unsigned int, std::vector<Hit>>, 2> hits_per_ref;
+    std::vector<RescueHit> hits_fw;
+    std::vector<RescueHit> hits_rc;
+    hits_per_ref[0].reserve(100);
+    hits_per_ref[1].reserve(100);
+    hits_fw.reserve(5000);
+    hits_rc.reserve(5000);
+
+    for (auto &qr : query_randstrobes) {
+        size_t position = index.find(qr.hash);
+        if (position != index.end()) {
+            unsigned int count = index.get_count(position);
+            RescueHit rh{position, count, qr.start, qr.end};
+            if (qr.is_reverse){
+                hits_rc.push_back(rh);
+            } else {
+                hits_fw.push_back(rh);
+            }
+        }
+    }
+
+    std::sort(hits_fw.begin(), hits_fw.end(), cmp1);
+    std::sort(hits_rc.begin(), hits_rc.end(), cmp1);
+    std::vector<RescueHit> rhs[2];
+    size_t is_revcomp = 0;
+    for (auto& rescue_hits : {hits_fw, hits_rc}) {
+        int cnt = 0;
+        for (auto &rh : rescue_hits) {
+            if ((rh.count > rescue_cutoff && cnt >= 5) || rh.count > 1000) {
+                break;
+            }
+            rhs[is_revcomp].push_back(rh);
+            add_to_hits_per_ref_pre(hits_per_ref[is_revcomp], rh.query_start, rh.query_end, index, rh.position);
+            cnt++;
+        }
+        is_revcomp++;
+    }
+
+
+    std::sort(rhs[0].begin(), rhs[0].end(), cmp2);
+    std::sort(rhs[1].begin(), rhs[1].end(), cmp2);
+    for(int i = 0; i < 2; i++) {
+        for(auto &rh : rhs[i]) {
+            add_to_hits_per_ref(hits_per_ref[i], rh.query_start, rh.query_end, index, rh.position);
+//            add_to_hits_per_ref_fast(hits_per_ref[i], rh.query_start, rh.query_end, index, rh.position);
+        }
+    }
+    return merge_hits_into_nams_forward_and_reverse_fast(hits_per_ref, index.k(), false);
+    //return merge_hits_into_nams_forward_and_reverse_fast(hits_per_ref, index.k(), true);
+
+#else
 
     std::array<robin_hood::unordered_map<unsigned int, std::vector<Hit>>, 2> hits_per_ref;
 //    std::array<std::map<unsigned int, std::vector<Hit>>, 2> hits_per_ref;
@@ -976,33 +1044,13 @@ std::vector<Nam> find_nams_rescue(
             if ((rh.count > rescue_cutoff && cnt >= 5) || rh.count > 1000) {
                 break;
             }
-#ifdef pre_sort
-            rhs[is_revcomp].push_back(rh);
-            add_to_hits_per_ref_pre(hits_per_ref[is_revcomp], rh.query_start, rh.query_end, index, rh.position);
-#else
             add_to_hits_per_ref(hits_per_ref[is_revcomp], rh.query_start, rh.query_end, index, rh.position);
-#endif
             cnt++;
         }
         is_revcomp++;
     }
 
 
-#ifdef pre_sort
-    std::sort(rhs[0].begin(), rhs[0].end(), cmp2);
-    std::sort(rhs[1].begin(), rhs[1].end(), cmp2);
-    for(int i = 0; i < 2; i++) {
-        for(auto &rh : rhs[i]) {
-            add_to_hits_per_ref(hits_per_ref[i], rh.query_start, rh.query_end, index, rh.position);
-//            add_to_hits_per_ref_fast(hits_per_ref[i], rh.query_start, rh.query_end, index, rh.position);
-        }
-    }
-#endif
-
-
-#ifdef pre_sort
-    return merge_hits_into_nams_forward_and_reverse_fast(hits_per_ref, index.k(), false);
-#else
     return merge_hits_into_nams_forward_and_reverse(hits_per_ref, index.k(), true);
 
 #endif
