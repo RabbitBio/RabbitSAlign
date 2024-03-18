@@ -515,7 +515,6 @@ void perform_task_async_se_fx(
     rabbit::fq::FastqDataPool& fastqPool, 
     rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> &dq
 ) {
-#define use_good_numa
 #ifdef use_good_numa
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
@@ -804,10 +803,10 @@ void perform_task_async_se_fx(
     statistics.tot_aligner_calls += aligner.calls_count();
     done = true;
     time_tot = GetTime() - t_0;
-    fprintf(
-        stderr, "cost time1:%.2f(%.2f) time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), tot time:%.2f\n", time1, time_read,
-        time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
-    );
+    //fprintf(
+    //    stderr, "cost time1:%.2f(%.2f) time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), tot time:%.2f\n", time1, time_read,
+    //    time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
+    //);
 
 }
 #endif
@@ -825,7 +824,6 @@ void perform_task_async_se(
     const std::string& read_group_id,
     const int thread_id
 ) {
-#define use_good_numa
 #ifdef use_good_numa
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
@@ -989,7 +987,7 @@ void perform_task_async_se(
             if (records1.empty() && records3.empty() && input_buffer.finished_reading) {
                 eof = true;
             }
-            InsertSizeDistribution isize_est;
+            //InsertSizeDistribution isize_est;
             // Use chunk index as random seed for reproducibility
             random_engine.seed(chunk_index);
 
@@ -1091,10 +1089,10 @@ void perform_task_async_se(
     statistics.tot_aligner_calls += aligner.calls_count();
     done = true;
     time_tot = GetTime() - t_0;
-    fprintf(
-        stderr, "cost time1:%.2f(%.2f) time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), tot time:%.2f\n", time1, time_read,
-        time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
-    );
+    //fprintf(
+    //    stderr, "cost time1:%.2f(%.2f) time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), tot time:%.2f\n", time1, time_read,
+    //    time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
+    //);
 
 }
 
@@ -1115,7 +1113,6 @@ void perform_task_async_pe_fx(
     rabbit::fq::FastqDataPool& fastqPool, 
     rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq
 ) {
-#define use_good_numa
 #ifdef use_good_numa
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
@@ -1188,7 +1185,7 @@ void perform_task_async_pe_fx(
         eof = true;
     }
 
-    InsertSizeDistribution isize_est;
+    InsertSizeDistribution pre_isize_est;
     // Use chunk index as random seed for reproducibility
     pre_random_engine.seed(pre_chunk_index);
     for (size_t i = 0; i < pre_records1.size(); ++i) {
@@ -1199,7 +1196,7 @@ void perform_task_async_pe_fx(
         AlignTmpRes align_tmp_res;
         // call xx_part func, find seeds and filter them, but reserve extend step
         align_PE_read_part(
-            align_tmp_res, record1, record2, statistics, isize_est, aligner, map_param, index_parameters,
+            align_tmp_res, record1, record2, statistics, pre_isize_est, aligner, map_param, index_parameters,
             references, index, pre_random_engine
         );
         pre_align_tmp_results.push_back(align_tmp_res);
@@ -1229,8 +1226,8 @@ void perform_task_async_pe_fx(
                 to_uppercase(record2.seq);
                 Read read1(record1.seq);
                 Read read2(record2.seq);
-                const auto mu = isize_est.mu;
-                const auto sigma = isize_est.sigma;
+                const auto mu = pre_isize_est.mu;
+                const auto sigma = pre_isize_est.sigma;
                 auto& align_tmp_res = pre_align_tmp_results[i];
                 size_t todo_size = align_tmp_res.todo_nams.size();
                 assert(todo_size == align_tmp_res.done_align.size());
@@ -1344,6 +1341,7 @@ void perform_task_async_pe_fx(
             statistics.tot_extend += extend_timer1.duration();
         }
 
+        InsertSizeDistribution isize_est;
         //chunk1_part2
         //find next round nams
         {
@@ -1375,7 +1373,6 @@ void perform_task_async_pe_fx(
             if (records1.empty() && records3.empty() && res == 0) {
                 eof = true;
             }
-            InsertSizeDistribution isize_est;
             // Use chunk index as random seed for reproducibility
             random_engine.seed(chunk_index);
             assert(align_tmp_results.size() == 0);
@@ -1409,6 +1406,7 @@ void perform_task_async_pe_fx(
             for (size_t i = 0; i < todo_querys.size(); i++) {
                 AlignmentInfo info;
                 if (gasal_fail(todo_querys[i], todo_refs[i], gasal_results[i])) {
+                //if (1) {
                     info = aligner.align(todo_querys[i], todo_refs[i]);
                 } else {
                     info = aligner.align_gpu(todo_querys[i], todo_refs[i], gasal_results[i]);
@@ -1427,8 +1425,8 @@ void perform_task_async_pe_fx(
                 to_uppercase(record2.seq);
                 Read read1(record1.seq);
                 Read read2(record2.seq);
-                const auto mu = isize_est.mu;
-                const auto sigma = isize_est.sigma;
+                const auto mu = pre_isize_est.mu;
+                const auto sigma = pre_isize_est.sigma;
                 auto& align_tmp_res = pre_align_tmp_results[i];
                 size_t todo_size = align_tmp_res.todo_nams.size();
                 if (align_tmp_res.type == 1 || align_tmp_res.type == 2) {
@@ -1487,7 +1485,7 @@ void perform_task_async_pe_fx(
                 to_uppercase(record1.seq);
                 to_uppercase(record2.seq);
                 align_PE_read_last(
-                    pre_align_tmp_results[i], record1, record2, sam, sam_out, statistics, isize_est, aligner,
+                    pre_align_tmp_results[i], record1, record2, sam, sam_out, statistics, pre_isize_est, aligner,
                     map_param, index_parameters, references, index, pre_random_engine
                 );
             }
@@ -1506,14 +1504,19 @@ void perform_task_async_pe_fx(
         pre_records3 = std::move(records3);
         pre_chunk_index = chunk_index;
         pre_random_engine = random_engine;
+        pre_isize_est.sample_size = isize_est.sample_size;
+        pre_isize_est.mu = isize_est.mu;
+        pre_isize_est.sigma = isize_est.sigma;
+        pre_isize_est.V = isize_est.V;
+        pre_isize_est.SSE = isize_est.SSE;
     }
     statistics.tot_aligner_calls += aligner.calls_count();
     done = true;
     time_tot = GetTime() - t_0;
-    fprintf(
-        stderr, "cost time1:%.2f time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), tot time:%.2f\n", time1,
-        time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
-    );
+    //fprintf(
+    //    stderr, "cost time1:%.2f time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), tot time:%.2f\n", time1,
+    //    time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
+    //);
 }
 #else
 
@@ -1530,7 +1533,6 @@ void perform_task_async_pe(
     const std::string& read_group_id,
     const int thread_id
 ) {
-#define use_good_numa
 #ifdef use_good_numa
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
@@ -1744,7 +1746,7 @@ void perform_task_async_pe(
             if (records1.empty() && records3.empty() && input_buffer.finished_reading) {
                 eof = true;
             }
-            InsertSizeDistribution isize_est;
+            //InsertSizeDistribution isize_est;
             // Use chunk index as random seed for reproducibility
             random_engine.seed(chunk_index);
             assert(align_tmp_results.size() == 0);
@@ -1879,9 +1881,9 @@ void perform_task_async_pe(
     statistics.tot_aligner_calls += aligner.calls_count();
     done = true;
     time_tot = GetTime() - t_0;
-    fprintf(
-        stderr, "cost time1:%.2f time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), tot time:%.2f\n", time1,
-        time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
-    );
+    //fprintf(
+    //    stderr, "cost time1:%.2f time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), tot time:%.2f\n", time1,
+    //    time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
+    //);
 }
 #endif

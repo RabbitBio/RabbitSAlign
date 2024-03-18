@@ -25,6 +25,7 @@
 #include "Formater.h"
 #endif
 
+#define use_good_numa
 
 class InputBuffer {
 

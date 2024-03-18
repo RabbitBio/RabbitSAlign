@@ -204,7 +204,7 @@ void align_SE_read_last(
                 // Pick one randomly using reservoir sampling
                 std::uniform_int_distribution<> distrib(1, alignments_with_best_score);
                 if (distrib(random_engine) == 1) {
-                    //update_best = true;
+                    update_best = true;
                 }
             }
             if (update_best) {
@@ -321,7 +321,7 @@ static inline void align_SE(
                 // Pick one randomly using reservoir sampling
                 std::uniform_int_distribution<> distrib(1, alignments_with_best_score);
                 if (distrib(random_engine) == 1) {
-                    //update_best = true;
+                    update_best = true;
                 }
             }
             if (update_best) {
@@ -1025,7 +1025,7 @@ void rescue_read(
 
     std::sort(high_scores.begin(), high_scores.end(), by_score<ScoredAlignmentPair>);
     deduplicate_scored_pairs(high_scores);
-//    pick_random_top_pair(high_scores, random_engine);
+    pick_random_top_pair(high_scores, random_engine);
 
     auto [mapq1, mapq2] = joint_mapq_from_high_scores(high_scores);
 
@@ -1171,6 +1171,24 @@ inline void align_PE_part(
         int mapq2 = get_mapq(nams2, n_max2);
         align_tmp_res.mapq1 = mapq1;
         align_tmp_res.mapq2 = mapq2;
+
+        if(!gapped1 && !gapped2) {
+            int res_size = align_tmp_res.align_res.size();
+            if(res_size < 2) {
+                fprintf(stderr, "align_tmp_res.align_res.size error %d\n", res_size);
+                exit(0);
+            }
+            auto alignment1 = align_tmp_res.align_res[res_size - 2];
+            auto alignment2 = align_tmp_res.align_res[res_size - 1];
+            if(alignment1.gapped || alignment2.gapped) {
+                fprintf(stderr, "alignment gapped error\n");
+                exit(0);
+            }
+            bool is_proper = is_proper_pair(alignment1, alignment2, mu, sigma);
+            if ((isize_est.sample_size < 400) && (alignment1.edit_distance + alignment2.edit_distance < 3) && is_proper) {
+                isize_est.update(std::abs(alignment1.ref_start - alignment2.ref_start));
+            }
+        }
 
         return;
     }
@@ -1488,7 +1506,7 @@ inline void align_PE(
 
     std::sort(high_scores.begin(), high_scores.end(), by_score<ScoredAlignmentPair>);
     deduplicate_scored_pairs(high_scores);
-//    pick_random_top_pair(high_scores, random_engine);
+    pick_random_top_pair(high_scores, random_engine);
 
     auto [mapq1, mapq2] = joint_mapq_from_high_scores(high_scores);
     auto best_aln_pair = high_scores[0];
@@ -1670,7 +1688,7 @@ void align_PE_read_part(
         details[is_revcomp].nams = nams.size();
         Timer nam_sort_timer;
         std::sort(nams.begin(), nams.end(), by_score<Nam>);
-//        shuffle_top_nams(nams, random_engine);
+        shuffle_top_nams(nams, random_engine);
         statistics.tot_sort_nams += nam_sort_timer.duration();
         nams_pair[is_revcomp] = nams;
     }
@@ -1728,7 +1746,7 @@ void rescue_read_last(
 //    for(auto item : high_scores)
 //        fprintf(stderr, "%f ,", item.score);
 //    fprintf(stderr, "\n\n");
-//    pick_random_top_pair(high_scores, random_engine);
+    pick_random_top_pair(high_scores, random_engine);
 
     auto [mapq1, mapq2] = joint_mapq_from_high_scores(high_scores);
 
@@ -1836,6 +1854,12 @@ void align_PE_read_last(
             alignment1, alignment2, record1, record2, read1.rc, read2.rc, mapq1, mapq2, is_proper, is_primary,
             details
         );
+        //TODO update
+        //if ((isize_est.sample_size < 400) && (alignment1.edit_distance + alignment2.edit_distance < 3) &&
+        //    is_proper) {
+        //    isize_est.update(std::abs(alignment1.ref_start - alignment2.ref_start));
+        //}
+
     } else if (align_tmp_res.type == 4) {
         int pos = 0;
         robin_hood::unordered_map<int, Alignment> is_aligned1;
@@ -1956,7 +1980,7 @@ void align_PE_read_last(
 //        for(auto item : high_scores)
 //            fprintf(stderr, "%f ,", item.score);
 //        fprintf(stderr, "\n\n");
-//        pick_random_top_pair(high_scores, random_engine);
+        pick_random_top_pair(high_scores, random_engine);
 //        fprintf(stderr, "111\n");
 
         auto [mapq1, mapq2] = joint_mapq_from_high_scores(high_scores);
@@ -2046,7 +2070,7 @@ void align_PE_read(
         details[is_revcomp].nams = nams.size();
         Timer nam_sort_timer;
         std::sort(nams.begin(), nams.end(), by_score<Nam>);
-//        shuffle_top_nams(nams, random_engine);
+        shuffle_top_nams(nams, random_engine);
         statistics.tot_sort_nams += nam_sort_timer.duration();
         nams_pair[is_revcomp] = nams;
     }
@@ -2103,7 +2127,7 @@ void align_SE_read_part(
 
     Timer nam_sort_timer;
     std::sort(nams.begin(), nams.end(), by_score<Nam>);
-    //    shuffle_top_nams(nams, random_engine);
+    shuffle_top_nams(nams, random_engine);
     statistics.tot_sort_nams += nam_sort_timer.duration();
 
     Timer extend_timer;
@@ -2151,7 +2175,7 @@ void align_SE_read(
 
     Timer nam_sort_timer;
     std::sort(nams.begin(), nams.end(), by_score<Nam>);
-//    shuffle_top_nams(nams, random_engine);
+    shuffle_top_nams(nams, random_engine);
     statistics.tot_sort_nams += nam_sort_timer.duration();
 
     Timer extend_timer;

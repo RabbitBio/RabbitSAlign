@@ -289,7 +289,9 @@ int run_strobealign(int argc, char **argv) {
     }
 
     StrobemerIndex index(references, index_parameters, opt.bits);
+#ifdef use_good_numa
     StrobemerIndex index2(references, index_parameters, opt.bits);
+#endif
     if (opt.use_index) {
         // Read the index from a file
         assert(!opt.only_gen_index);
@@ -302,9 +304,11 @@ int run_strobealign(int argc, char **argv) {
         std::thread thread1(readIndexOnCPU, std::ref(index), sti_path, 0);
         thread1.join();
 
+#ifdef use_good_numa
 		fprintf(stderr, "read index2\n");
         std::thread thread2(readIndexOnCPU, std::ref(index2), sti_path, totalCPUs / 2);
         thread2.join();
+#endif
 
         logger.debug() << "Bits used to index buckets: " << index.get_bits() << "\n";
         logger.info() << "Total time reading index: " << read_index_timer.elapsed() << " s\n";
@@ -394,7 +398,6 @@ int run_strobealign(int argc, char **argv) {
     std::vector<std::thread> workers;
     std::vector<int> worker_done(opt.n_threads);  // each thread sets its entry to 1 when it’s done
 
-#define use_good_numa
 
 
 #ifdef RABBIT_FX
