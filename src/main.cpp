@@ -329,6 +329,9 @@ int run_rabbitsalign(int argc, char **argv) {
     if(numa_num * (15ll << 30) > mem_avali * 0.8) {
         use_good_numa = 0;
     }
+    if(numa_num == 1) {
+        use_good_numa = 0;
+    }
     fprintf(stderr, "use_good_numa is %d\n", use_good_numa);
 
     StrobemerIndex index(references, index_parameters, opt.bits);
