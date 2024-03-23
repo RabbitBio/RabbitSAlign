@@ -46,7 +46,7 @@ sed -i "s|-L/usr/local/cuda/targets/x86_64-linux/lib|-L$CUDA_PATH/targets/x86_64
 echo "Compiling the main project..."
 mkdir -p build
 cd build
-cmake .. -DCMAKE_C_FLAGS="-march=native" -DCMAKE_CXX_FLAGS="-march=native" -DUSE_RABBITFX=ON
+cmake .. -DCMAKE_C_FLAGS="-march=native" -DCMAKE_CXX_FLAGS="-march=native" -DUSE_RABBITFX=ON -DCLOSE_NUMA_OPT=ON
 make -j8
 
 echo "build successfully."
