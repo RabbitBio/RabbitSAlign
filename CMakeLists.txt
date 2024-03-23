@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(strobealign VERSION 0.12.0)
+project(RabbitSAlign VERSION 0.0.1)
 include(FetchContent)
 
 option(ENABLE_AVX "Enable AVX2 support" OFF)
@@ -11,7 +11,7 @@ option(USE_RABBITFX "parse input fasta file with RabbitFX" OFF)
 find_package(ZLIB)
 find_package(Threads)
 find_package(OpenMP)
-set(CMAKE_CUDA_COMPILER "/usr/local/cuda-12.0/bin/nvcc")
+set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc")
 enable_language(CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -98,42 +98,20 @@ ENDIF()
 add_dependencies(salib version)
 set_target_properties(salib PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
-add_executable(strobealign src/main.cpp)
-target_link_libraries(strobealign PUBLIC salib)
+add_executable(rabbitsalign src/main.cpp)
+target_link_libraries(rabbitsalign PUBLIC salib)
 
-set_target_properties(strobealign PROPERTIES
+set_target_properties(rabbitsalign PROPERTIES
         LINKER_LANGUAGE CUDA
         CUDA_STANDARD 14
 )
-target_link_libraries(strobealign PUBLIC
-        -L/usr/local/cuda-12.0/targets/x86_64-linux/lib
-        -L/home/user_home/ylf/someGit/GASAL2/lib
+target_link_libraries(rabbitsalign PUBLIC
+        -L/usr/local/cuda/targets/x86_64-linux/lib
+        -L${PROJECT_SOURCE_DIR}/GASAL2/lib
 #        -Xcompiler
         -fopenmp -lcudart -lgasal
 )
 
-#if(NOT PYTHON_BINDINGS)
-#  install(TARGETS strobealign DESTINATION bin)
-#endif()
-#add_executable(test-strobealign
-#  tests/tests.cpp
-#  tests/test_input.cpp
-#  tests/test_refs.cpp
-#  tests/test_sam.cpp
-#  tests/test_aligner.cpp
-#  tests/test_cigar.cpp
-#)
-#target_link_libraries(test-strobealign salib)
-#target_include_directories(test-strobealign PUBLIC src/ ext/ ${PROJECT_BINARY_DIR})
-
-#add_executable(dumpstrobes src/dumpstrobes.cpp)
-#target_link_libraries(dumpstrobes salib)
-#target_include_directories(dumpstrobes PUBLIC src/ ext/ ${PROJECT_BINARY_DIR})
-#
-## Currently unused code for which we only want to ensure that it still compiles
-#add_executable(unused-code src/unused.cpp)
-#target_link_libraries(unused-code salib)
-#target_include_directories(unused-code PUBLIC src/ ext/ ${PROJECT_BINARY_DIR})
 
 if(PYTHON_BINDINGS)
   add_subdirectory(src/python)

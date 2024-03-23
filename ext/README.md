@@ -1,4 +1,4 @@
-# External (3rd-party) software used in strobealign
+# External (3rd-party) software used in rabbitsalign
 
 ## args
 

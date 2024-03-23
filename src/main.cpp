@@ -62,7 +62,7 @@ std::string sam_header(const References& references, const std::string& read_gro
         }
         out << '\n';
     }
-    out << "@PG\tID:strobealign\tPN:strobealign\tVN:" << version_string() << "\tCL:" << cmd_line << std::endl;
+    out << "@PG\tID:rabbitsalign\tPN:rabbitsalign\tVN:" << version_string() << "\tCL:" << cmd_line << std::endl;
     return out.str();
 }
 
@@ -205,12 +205,12 @@ int producer_se_fastq_task(std::string file, rabbit::fq::FastqDataPool& fastqPoo
 }
 #endif
 
-int run_strobealign(int argc, char **argv) {
+int run_rabbitsalign(int argc, char **argv) {
     auto opt = parse_command_line_arguments(argc, argv);
 
     logger.set_level(opt.verbose ? LOG_DEBUG : LOG_INFO);
     logger.info() << std::setprecision(2) << std::fixed;
-    logger.info() << "This is strobealign " << version_string() << '\n';
+    logger.info() << "This is rabbitsalign " << version_string() << '\n';
     logger.debug() << "Build type: " << CMAKE_BUILD_TYPE << '\n';
     warn_if_no_optimizations();
     logger.debug() << "AVX2 enabled: " << (avx2_enabled() ? "yes" : "no") << '\n';
@@ -556,11 +556,11 @@ int run_strobealign(int argc, char **argv) {
 
 int main(int argc, char **argv) {
     try {
-        return run_strobealign(argc, argv);
+        return run_rabbitsalign(argc, argv);
     } catch (BadParameter& e) {
         logger.error() << "A parameter is invalid: " << e.what() << std::endl;
     } catch (const std::runtime_error& e) {
-        logger.error() << "strobealign: " << e.what() << std::endl;
+        logger.error() << "rabbitsalign: " << e.what() << std::endl;
     }
     return EXIT_FAILURE;
 }
