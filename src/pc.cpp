@@ -1334,7 +1334,7 @@ void perform_task_async_pe_fx(
                     gasal_results.insert(gasal_results.end(), gasal_results_tmp.begin(), gasal_results_tmp.end());
                 }
             });
-//            gpu_ssw_async.join();
+            //gpu_ssw_async.join();
 
             time2_2 += GetTime() - t_1;
 

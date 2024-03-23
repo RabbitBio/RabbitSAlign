@@ -561,7 +561,7 @@ bool is_proper_nam_pair(const Nam nam1, const Nam nam2, float mu, float sigma) {
     if (nam1.ref_id != nam2.ref_id || nam1.is_rc == nam2.is_rc) {
         return false;
     }
-    int a = std::max(0, nam1.ref_start - nam2.query_start);
+    int a = std::max(0, nam1.ref_start - nam1.query_start);
     int b = std::max(0, nam2.ref_start - nam2.query_start);
 
     // r1 ---> <---- r2
@@ -597,6 +597,11 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
 #ifdef timer1
     thread_local int cnt = 0;
     cnt++;
+    thread_local long long cnt0 = 0;
+    thread_local long long cnt1 = 0;
+    thread_local long long cnt2 = 0;
+    thread_local long long cnt3 = 0;
+    thread_local long long cnt4 = 0;
     thread_local uint64_t time_tot = 0;
     thread_local uint64_t time1 = 0;
     thread_local uint64_t time2 = 0;
@@ -621,13 +626,282 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
     robin_hood::unordered_set<int> added_n1;
     robin_hood::unordered_set<int> added_n2;
     int best_joint_hits = 0;
+#define use_fast_loop3
+//#define use_fast_loop2
+//#define use_init_loop
+//
+
+#ifdef use_fast_loop3
+
+    std::vector<Nam> nams2_sorted[2];
+    for(auto nam2 : nams2) {
+        nams2_sorted[nam2.is_rc].push_back(nam2);
+    }
+    for(int i = 0; i < 2; i++) {
+        std::sort(nams2_sorted[i].begin(), nams2_sorted[i].end(), [](const Nam &n1, const Nam &n2) {
+                int val1 = std::max(0, n1.ref_start - n1.query_start);
+                int val2 = std::max(0, n2.ref_start - n2.query_start);
+                return val1 < val2;
+                });
+    }
+
     for (auto& nam1 : nams1) {
-        for (auto& nam2 : nams2) {
+        int nam1_val = std::max(0, nam1.ref_start - nam1.query_start);
+        if(nam1.is_rc == 1) {
+            float L_val = nam1_val - (mu + 10 * sigma);
+            float R_val = nam1_val;
+            int ll = 0, rr = nams2_sorted[0].size() - 1, ans_pos = nams2_sorted[0].size();
+            while(ll <= rr) {
+                int mid  = (ll + rr) / 2;
+                int now_val = std::max(0, nams2_sorted[0][mid].ref_start - nams2_sorted[0][mid].query_start);
+                if(now_val > L_val) {
+                    rr = mid - 1;
+                    ans_pos = mid;
+                } else {
+                    ll = mid + 1;
+                }
+            }
+
+			for (int id = ans_pos; id < nams2_sorted[0].size(); id++) {
+				Nam nam2 = nams2_sorted[0][id];
+                //cnt0++;
+                int joint_hits = nam1.n_hits + nam2.n_hits;
+                //cnt1++;
+                if(nam1.ref_id != nam2.ref_id) continue;
+                //cnt2++;
+                //if(nam1.is_rc == nam2.is_rc) {
+                //    fprintf(stderr, "GGGGG\n");
+                //    exit(0);
+                //}
+                //cnt3++;
+
+                int a = std::max(0, nam1.ref_start - nam1.query_start);
+                int b = std::max(0, nam2.ref_start - nam2.query_start);
+                if(b > R_val - 1e-6) break;
+
+                // nam1 is rec, nam2 is fwd
+                
+                //// r1 ---> <---- r2
+                //bool r1_r2 = nam2.is_rc && (a <= b) && (b - a < mu + 10 * sigma);
+
+                // r2 ---> <---- r1
+                bool r2_r1 = (a - b >= 0) && (a - b < mu + 10 * sigma);
+
+                //if(a - b >= mu + 10 * sigma) {
+                //    fprintf(stderr, "GGG2 _ 1\n");
+                //    exit(0);
+                //}
+
+                //if(a - b < 0) {
+                //    fprintf(stderr, "GGG2 _ 2\n");
+                //    exit(0);
+                //}
+
+                if (r2_r1) {
+                    //cnt4++;
+                    joint_nam_scores.emplace_back(NamPair{joint_hits, nam1, nam2});
+                    //                added_n1[nam1.nam_id] = 1;
+                    //                added_n2[nam2.nam_id] = 1;
+                    added_n1.insert(nam1.nam_id);
+                    added_n2.insert(nam2.nam_id);
+                    //best_joint_hits = std::max(joint_hits, best_joint_hits);
+                }
+            }
+        } else{
+            float L_val = nam1_val;
+            float R_val = nam1_val + mu + 10 * sigma;
+            int ll = 0, rr = nams2_sorted[1].size() - 1, ans_pos = nams2_sorted[1].size();
+            while(ll <= rr) {
+                int mid  = (ll + rr) / 2;
+                int now_val = std::max(0, nams2_sorted[1][mid].ref_start - nams2_sorted[1][mid].query_start);
+                if(now_val >= L_val) {
+                    rr = mid - 1;
+                    ans_pos = mid;
+                } else {
+                    ll = mid + 1;
+                }
+            }
+
+			for (int id = ans_pos; id < nams2_sorted[1].size(); id++) {
+				Nam nam2 = nams2_sorted[1][id];
+                //cnt0++;
+                int joint_hits = nam1.n_hits + nam2.n_hits;
+                //cnt1++;
+                if(nam1.ref_id != nam2.ref_id) continue;
+                //cnt2++;
+                //if(nam1.is_rc == nam2.is_rc) {
+                //    fprintf(stderr, "GGGGG\n");
+                //    exit(0);
+                //}
+                //cnt3++;
+
+                int a = std::max(0, nam1.ref_start - nam1.query_start);
+                int b = std::max(0, nam2.ref_start - nam2.query_start);
+                if(b >= R_val - 1e-6) break;
+
+                // nam1 is fwd, nam2 is rec
+
+                // r1 ---> <---- r2
+                bool r1_r2 = (b - a >= 0) && (b - a < mu + 10 * sigma);
+
+                //// r2 ---> <---- r1
+                //bool r2_r1 = nam1.is_rc && (b <= a) && (a - b < mu + 10 * sigma);
+                //if(b - a >= mu + 10 * sigma) {
+                //    fprintf(stderr, "GGG3 _ 1\n");
+                //    exit(0);
+                //}
+                //if(b - a < 0) {
+                //    fprintf(stderr, "GGG3 _ 2\n");
+                //    exit(0);
+                //}
+                if (r1_r2) {
+                    //cnt4++;
+                    joint_nam_scores.emplace_back(NamPair{joint_hits, nam1, nam2});
+                    //                added_n1[nam1.nam_id] = 1;
+                    //                added_n2[nam2.nam_id] = 1;
+                    added_n1.insert(nam1.nam_id);
+                    added_n2.insert(nam2.nam_id);
+                    //best_joint_hits = std::max(joint_hits, best_joint_hits);
+                }
+            }
+        }
+		
+    }
+
+#endif
+
+
+#ifdef use_fast_loop
+
+    std::vector<Nam> nams2_sorted[2];
+    for(auto nam2 : nams2) {
+        nams2_sorted[nam2.is_rc].push_back(nam2);
+    }
+    for(int i = 0; i < 2; i++) {
+        std::sort(nams2_sorted[i].begin(), nams2_sorted[i].end(), [](const Nam &a, const Nam &b) {
+                return a.ref_id < b.ref_id;
+                });
+    }
+
+    for (auto& nam1 : nams1) {
+
+		auto lower = std::lower_bound(nams2_sorted[!nam1.is_rc].begin(), nams2_sorted[!nam1.is_rc].end(), nam1, 
+				[](const Nam& nam2, const Nam& nam1) {
+				return nam2.ref_id < nam1.ref_id;
+				});
+
+		auto upper = std::upper_bound(nams2_sorted[!nam1.is_rc].begin(), nams2_sorted[!nam1.is_rc].end(), nam1, 
+				[](const Nam& nam1, const Nam& nam2) {
+				return nam1.ref_id < nam2.ref_id;
+				});
+		for (auto it = lower; it != upper; ++it) {
+            Nam nam2 = *it;
+            cnt0++;
+            int joint_hits = nam1.n_hits + nam2.n_hits;
+            //if (joint_hits < best_joint_hits / 2) {
+            //    break;
+            //}
+            cnt1++;
+            assert(nam1.ref_id != nam2.ref_id);
+            cnt2++;
+            assert(nam1.is_rc == nam2.is_rc);
+            cnt3++;
+
+            int a = std::max(0, nam1.ref_start - nam2.query_start);
+            int b = std::max(0, nam2.ref_start - nam2.query_start);
+
+            // r1 ---> <---- r2
+            bool r1_r2 = nam2.is_rc && (a <= b) && (b - a < mu + 10 * sigma);
+
+            // r2 ---> <---- r1
+            bool r2_r1 = nam1.is_rc && (b <= a) && (a - b < mu + 10 * sigma);
+  
+            if (r1_r2 || r2_r1) {
+                cnt4++;
+                joint_nam_scores.emplace_back(NamPair{joint_hits, nam1, nam2});
+//                added_n1[nam1.nam_id] = 1;
+//                added_n2[nam2.nam_id] = 1;
+                added_n1.insert(nam1.nam_id);
+                added_n2.insert(nam2.nam_id);
+                //best_joint_hits = std::max(joint_hits, best_joint_hits);
+            }
+        }
+    }
+
+#endif
+
+#ifdef use_fast_loop2
+
+    std::vector<Nam> nams2_sorted[2];
+    for(auto nam2 : nams2) {
+        nams2_sorted[nam2.is_rc].push_back(nam2);
+    }
+
+    for (auto& nam1 : nams1) {
+
+		for (auto& nam2 : nams2_sorted[!nam1.is_rc]) {
+            cnt0++;
             int joint_hits = nam1.n_hits + nam2.n_hits;
             if (joint_hits < best_joint_hits / 2) {
                 break;
             }
+            cnt1++;
+            if(nam1.ref_id != nam2.ref_id) continue;
+            //assert(nam1.ref_id != nam2.ref_id);
+            cnt2++;
+            assert(nam1.is_rc == nam2.is_rc);
+            cnt3++;
+
+            int a = std::max(0, nam1.ref_start - nam2.query_start);
+            int b = std::max(0, nam2.ref_start - nam2.query_start);
+
+            // r1 ---> <---- r2
+            bool r1_r2 = nam2.is_rc && (a <= b) && (b - a < mu + 10 * sigma);
+
+            // r2 ---> <---- r1
+            bool r2_r1 = nam1.is_rc && (b <= a) && (a - b < mu + 10 * sigma);
+  
+            if (r1_r2 || r2_r1) {
+                cnt4++;
+                joint_nam_scores.emplace_back(NamPair{joint_hits, nam1, nam2});
+//                added_n1[nam1.nam_id] = 1;
+//                added_n2[nam2.nam_id] = 1;
+                added_n1.insert(nam1.nam_id);
+                added_n2.insert(nam2.nam_id);
+                //best_joint_hits = std::max(joint_hits, best_joint_hits);
+            }
+        }
+    }
+#endif
+
+#ifdef use_init_loop
+
+    for (auto& nam1 : nams1) {
+        for (auto& nam2 : nams2) {
+            cnt0++;
+            int joint_hits = nam1.n_hits + nam2.n_hits;
+            if (joint_hits < best_joint_hits / 2) {
+                break;
+            }
+            cnt1++;
+            if(nam1.ref_id != nam2.ref_id) continue;
+            cnt2++;
+            if(nam1.is_rc == nam2.is_rc) continue;
+            cnt3++;
+
+            //int a = std::max(0, nam1.ref_start - nam2.query_start);
+            //int b = std::max(0, nam2.ref_start - nam2.query_start);
+
+            //// r1 ---> <---- r2
+            //bool r1_r2 = nam2.is_rc && (a <= b) && (b - a < mu + 10 * sigma);
+            //if(r1_r2) return 1;
+
+            //// r2 ---> <---- r1
+            //bool r2_r1 = nam1.is_rc && (b <= a) && (a - b < mu + 10 * sigma);
+            //if(r2_r1) return 1;
+  
             if (is_proper_nam_pair(nam1, nam2, mu, sigma)) {
+                cnt4++;
                 joint_nam_scores.emplace_back(NamPair{joint_hits, nam1, nam2});
 //                added_n1[nam1.nam_id] = 1;
 //                added_n2[nam2.nam_id] = 1;
@@ -637,6 +911,7 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
             }
         }
     }
+#endif
 
 #ifdef timer1
     time1 += GetTime() - t0;
@@ -713,8 +988,8 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
         std::ostringstream ss;
         ss << mainthreadid;
         unsigned long mainthreadidvalue = std::stoul(ss.str());
-        fprintf(stderr, "get_best_scoring_nam_pairs [%lu] tot_time:%lf time1:%lf time2:%lf time3:%lf time4:%lf time5:%lf\n",
-                mainthreadidvalue, time_tot * 1e-8, time1 * 1e-8, time2 * 1e-8, time3 * 1e-8, time4 * 1e-8, time5 * 1e-8);
+        fprintf(stderr, "get_best_scoring_nam_pairs [%lu] tot_time:%lf time1:%lf time2:%lf time3:%lf time4:%lf time5:%lf [%lld %lld %lld %lld %lld]\n",
+                mainthreadidvalue, time_tot * 1e-8, time1 * 1e-8, time2 * 1e-8, time3 * 1e-8, time4 * 1e-8, time5 * 1e-8, cnt0, cnt1, cnt2, cnt3, cnt4);
     }
 #endif
     return joint_nam_scores;
