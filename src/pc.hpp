@@ -25,7 +25,6 @@
 #include "Formater.h"
 #endif
 
-#define use_good_numa
 
 class InputBuffer {
 
@@ -80,25 +79,25 @@ void perform_task_async_se_fx(InputBuffer &input_buffer, OutputBuffer &output_bu
                   AlignmentStatistics& statistics, int& done, const AlignmentParameters &aln_params,
                   const MappingParameters &map_param, const IndexParameters& index_parameters, const References& references, const StrobemerIndex& index, const std::string& read_group_id,
                   const int thread_id, rabbit::fq::FastqDataPool& fastqPool,
-                  rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> &dq);
+                  rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> &dq, bool use_good_numa);
 
 void perform_task_async_pe_fx(InputBuffer &input_buffer, OutputBuffer &output_buffer,
                   AlignmentStatistics& statistics, int& done, const AlignmentParameters &aln_params,
                   const MappingParameters &map_param, const IndexParameters& index_parameters, const References& references, const StrobemerIndex& index, const std::string& read_group_id,
                   const int thread_id, rabbit::fq::FastqDataPool& fastqPool,
-                  rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq);
+                  rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq, bool use_good_numa);
 #endif
 
 
 void perform_task_async_se(InputBuffer &input_buffer, OutputBuffer &output_buffer,
                   AlignmentStatistics& statistics, int& done, const AlignmentParameters &aln_params,
                   const MappingParameters &map_param, const IndexParameters& index_parameters, const References& references, const StrobemerIndex& index, const std::string& read_group_id,
-                  const int thread_id);
+                  const int thread_id, bool use_good_numa);
 
 void perform_task_async_pe(InputBuffer &input_buffer, OutputBuffer &output_buffer,
                   AlignmentStatistics& statistics, int& done, const AlignmentParameters &aln_params,
                   const MappingParameters &map_param, const IndexParameters& index_parameters, const References& references, const StrobemerIndex& index, const std::string& read_group_id,
-                  const int thread_id);
+                  const int thread_id, bool use_good_numa);
 
 bool same_name(const std::string& n1, const std::string& n2);
 

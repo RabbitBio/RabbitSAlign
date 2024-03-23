@@ -513,18 +513,18 @@ void perform_task_async_se_fx(
     const std::string& read_group_id,
     const int thread_id,
     rabbit::fq::FastqDataPool& fastqPool, 
-    rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> &dq
+    rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> &dq,
+    bool use_good_numa
 ) {
-#ifdef use_good_numa
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(thread_id, &cpuset);
-
-    pthread_t current_thread = pthread_self();
-    if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
-        std::cerr << "Error setting thread affinity" << std::endl;
+    if(use_good_numa) {
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        CPU_SET(thread_id, &cpuset);
+        pthread_t current_thread = pthread_self();
+        if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+            std::cerr << "Error setting thread affinity" << std::endl;
+        }
     }
-#endif
 
     bool eof = false;
     Aligner aligner{aln_params};
@@ -822,19 +822,18 @@ void perform_task_async_se(
     const References& references,
     const StrobemerIndex& index,
     const std::string& read_group_id,
-    const int thread_id
+    const int thread_id,
+    bool use_good_numa
 ) {
-#ifdef use_good_numa
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(thread_id, &cpuset);
-
-    pthread_t current_thread = pthread_self();
-    if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
-        std::cerr << "Error setting thread affinity" << std::endl;
+    if(use_good_numa) {
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        CPU_SET(thread_id, &cpuset);
+        pthread_t current_thread = pthread_self();
+        if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+            std::cerr << "Error setting thread affinity" << std::endl;
+        }
     }
-#endif
-
     bool eof = false;
     Aligner aligner{aln_params};
     std::minstd_rand random_engine;
@@ -1111,18 +1110,18 @@ void perform_task_async_pe_fx(
     const std::string& read_group_id,
     const int thread_id,
     rabbit::fq::FastqDataPool& fastqPool, 
-    rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq
+    rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq, 
+    bool use_good_numa
 ) {
-#ifdef use_good_numa
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(thread_id, &cpuset);
-
-    pthread_t current_thread = pthread_self();
-    if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
-        std::cerr << "Error setting thread affinity" << std::endl;
+    if(use_good_numa) {
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        CPU_SET(thread_id, &cpuset);
+        pthread_t current_thread = pthread_self();
+        if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+            std::cerr << "Error setting thread affinity" << std::endl;
+        }
     }
-#endif
     bool eof = false;
     Aligner aligner{aln_params};
     std::minstd_rand random_engine;
@@ -1531,18 +1530,18 @@ void perform_task_async_pe(
     const References& references,
     const StrobemerIndex& index,
     const std::string& read_group_id,
-    const int thread_id
+    const int thread_id,
+    bool use_good_numa
 ) {
-#ifdef use_good_numa
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(thread_id, &cpuset);
-
-    pthread_t current_thread = pthread_self();
-    if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
-        std::cerr << "Error setting thread affinity" << std::endl;
+    if(use_good_numa) {
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        CPU_SET(thread_id, &cpuset);
+        pthread_t current_thread = pthread_self();
+        if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+            std::cerr << "Error setting thread affinity" << std::endl;
+        }
     }
-#endif
     bool eof = false;
     Aligner aligner{aln_params};
     std::minstd_rand random_engine;

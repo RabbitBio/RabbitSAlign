@@ -6,6 +6,7 @@ include(FetchContent)
 option(ENABLE_AVX "Enable AVX2 support" OFF)
 option(PYTHON_BINDINGS "Build Python bindings" OFF)
 option(USE_RABBITFX "parse input fasta file with RabbitFX" OFF)
+option(CLOSE_NUMA_OPT "close numa opt code" OFF)
 
 
 find_package(ZLIB)
@@ -35,6 +36,10 @@ FetchContent_Declare(ZStrGitRepo
   GIT_TAG           "755da7890ea22478a702e3139092e6c964fab1f5"
 )
 FetchContent_MakeAvailable(ZStrGitRepo)
+
+if(CLOSE_NUMA_OPT)
+    set(CMAKE_CXX_FLAGS "-D OPT_NUMA_CLOSE ${CMAKE_CXX_FLAGS}")
+endif()
 
 if(USE_RABBITFX)
     set(CMAKE_CXX_FLAGS "-D RABBIT_FX ${CMAKE_CXX_FLAGS}")

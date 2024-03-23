@@ -1,6 +1,7 @@
 #include <iostream>
 #include <fstream>
 #include <vector>
+#include <cstdlib>
 #include <string>
 #include <sstream>
 #include <algorithm>
@@ -41,6 +42,37 @@ inline double GetTime() {
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return (double) tv.tv_sec + (double) tv.tv_usec / 1000000;
+}
+
+int getNumaNodeCount() {
+    FILE* pipe = popen("lscpu | grep 'NUMA node(s)' | awk '{print $3}'", "r");
+    if (!pipe) return -1;
+    char buffer[128];
+    std::string result = "";
+    while (!feof(pipe)) {
+        if (fgets(buffer, 128, pipe) != nullptr)
+            result += buffer;
+    }
+    pclose(pipe);
+    return std::stoi(result);
+}
+
+long long getAvailableMemory() {
+    std::ifstream meminfo("/proc/meminfo");
+    std::string line;
+    long long availableMemory = -1;
+    while (std::getline(meminfo, line)) {
+        std::istringstream iss(line);
+        std::string key;
+        long long value;
+        std::string unit;
+        iss >> key >> value >> unit;
+        if (key == "MemAvailable:") {
+            availableMemory = value * 1024;  // Convert from kB to Bytes
+            break;
+        }
+    }
+    return availableMemory;
 }
 
 
@@ -288,10 +320,19 @@ int run_rabbitsalign(int argc, char **argv) {
         throw InvalidFasta("No reference sequences found");
     }
 
-    StrobemerIndex index(references, index_parameters, opt.bits);
-#ifdef use_good_numa
-    StrobemerIndex index2(references, index_parameters, opt.bits);
+    int numa_num = getNumaNodeCount();
+    long long mem_avali = getAvailableMemory();
+    bool use_good_numa = 1;
+#ifdef OPT_NUMA_CLOSE
+    use_good_numa = 0;
 #endif
+    if(numa_num * (15ll << 30) > mem_avali * 0.8) {
+        use_good_numa = 0;
+    }
+    fprintf(stderr, "use_good_numa is %d\n", use_good_numa);
+
+    StrobemerIndex index(references, index_parameters, opt.bits);
+    StrobemerIndex index2(references, index_parameters, opt.bits);
     if (opt.use_index) {
         // Read the index from a file
         assert(!opt.only_gen_index);
@@ -304,11 +345,12 @@ int run_rabbitsalign(int argc, char **argv) {
         std::thread thread1(readIndexOnCPU, std::ref(index), sti_path, 0);
         thread1.join();
 
-#ifdef use_good_numa
-		fprintf(stderr, "read index2\n");
-        std::thread thread2(readIndexOnCPU, std::ref(index2), sti_path, totalCPUs / 2);
-        thread2.join();
-#endif
+        if(use_good_numa) {
+            fprintf(stderr, "read index2\n");
+            std::thread thread2(readIndexOnCPU, std::ref(index2), sti_path, totalCPUs / 2);
+            thread2.join();
+        }
+
 
         logger.debug() << "Bits used to index buckets: " << index.get_bits() << "\n";
         logger.info() << "Total time reading index: " << read_index_timer.elapsed() << " s\n";
@@ -405,55 +447,65 @@ int run_rabbitsalign(int argc, char **argv) {
     if(opt.is_SE) {
         //SE
         fprintf(stderr, "SE module RABBIT_FX\n");
-
-    #ifdef use_good_numa
-        for (int i = 0; i < opt.n_threads / 2; ++i) {
-    #else
-        for (int i = 0; i < opt.n_threads; ++i) {
-    #endif
-            std::thread consumer(perform_task_async_se_fx, std::ref(input_buffer), std::ref(output_buffer),
-                std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                std::ref(index), std::ref(opt.read_group_id), i, 
-                std::ref(fastqPool), std::ref(queue_se));
-            workers.push_back(std::move(consumer));
+        if(use_good_numa) {
+            for (int i = 0; i < opt.n_threads / 2; ++i) {
+                std::thread consumer(perform_task_async_se_fx, std::ref(input_buffer), std::ref(output_buffer),
+                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                        std::ref(index), std::ref(opt.read_group_id), i, 
+                        std::ref(fastqPool), std::ref(queue_se), use_good_numa);
+                workers.push_back(std::move(consumer));
+            }
+            for (int i = opt.n_threads / 2; i < opt.n_threads; ++i) {
+                std::thread consumer(perform_task_async_se_fx, std::ref(input_buffer), std::ref(output_buffer),
+                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                        std::ref(index2), std::ref(opt.read_group_id), totalCPUs / 2 + i - opt.n_threads / 2, 
+                        std::ref(fastqPool), std::ref(queue_se), use_good_numa);
+                workers.push_back(std::move(consumer));
+            }
+        } else {
+            for (int i = 0; i < opt.n_threads; ++i) {
+                std::thread consumer(perform_task_async_se_fx, std::ref(input_buffer), std::ref(output_buffer),
+                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                        std::ref(index), std::ref(opt.read_group_id), i, 
+                        std::ref(fastqPool), std::ref(queue_se), use_good_numa);
+                workers.push_back(std::move(consumer));
+            }
         }
-    #ifdef use_good_numa
-        for (int i = opt.n_threads / 2; i < opt.n_threads; ++i) {
-            std::thread consumer(perform_task_async_se_fx, std::ref(input_buffer), std::ref(output_buffer),
-                std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                std::ref(index2), std::ref(opt.read_group_id), totalCPUs / 2 + i - opt.n_threads / 2, 
-                std::ref(fastqPool), std::ref(queue_se));
-            workers.push_back(std::move(consumer));
-        }
-    #endif
 
     } else {
         //PE
         fprintf(stderr, "PE module RABBIT_FX\n");
-    #ifdef use_good_numa
-        for (int i = 0; i < opt.n_threads / 2; ++i) {
-    #else
-        for (int i = 0; i < opt.n_threads; ++i) {
-    #endif
-            std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
-                std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                std::ref(index), std::ref(opt.read_group_id), i,
-                std::ref(fastqPool), std::ref(queue_pe));
-            workers.push_back(std::move(consumer));
+
+        if(use_good_numa) {
+            for (int i = 0; i < opt.n_threads / 2; ++i) {
+                std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
+                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                        std::ref(index), std::ref(opt.read_group_id), i,
+                        std::ref(fastqPool), std::ref(queue_pe), use_good_numa);
+                workers.push_back(std::move(consumer));
+            }
+            for (int i = opt.n_threads / 2; i < opt.n_threads; ++i) {
+                std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
+                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                        std::ref(index2), std::ref(opt.read_group_id), totalCPUs / 2 + i - opt.n_threads / 2,
+                        std::ref(fastqPool), std::ref(queue_pe), use_good_numa);
+                workers.push_back(std::move(consumer));
+            }
+        } else {
+            for (int i = 0; i < opt.n_threads; ++i) {
+                std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
+                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                        std::ref(index), std::ref(opt.read_group_id), i,
+                        std::ref(fastqPool), std::ref(queue_pe), use_good_numa);
+                workers.push_back(std::move(consumer));
+            }
         }
-    #ifdef use_good_numa
-        for (int i = opt.n_threads / 2; i < opt.n_threads; ++i) {
-            std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
-                std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                std::ref(index2), std::ref(opt.read_group_id), totalCPUs / 2 + i - opt.n_threads / 2,
-                std::ref(fastqPool), std::ref(queue_pe));
-            workers.push_back(std::move(consumer));
-        }
-    #endif
     }
     if (opt.show_progress && isatty(2)) {
         show_progress_until_done(worker_done, log_stats_vec);
@@ -470,55 +522,57 @@ int run_rabbitsalign(int argc, char **argv) {
     if(opt.is_SE) {
         //SE
         fprintf(stderr, "SE module\n");
-
-    #ifdef use_good_numa
-        for (int i = 0; i < opt.n_threads / 2; ++i) {
-    #else
-        for (int i = 0; i < opt.n_threads; ++i) {
-    #endif
-            std::thread consumer(perform_task_async_se, std::ref(input_buffer), std::ref(output_buffer),
-            //std::thread consumer(perform_task_init, std::ref(input_buffer), std::ref(output_buffer),
-                std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                std::ref(index), std::ref(opt.read_group_id), i);
-                //std::ref(index), std::ref(opt.read_group_id));
-            workers.push_back(std::move(consumer));
+        if(use_good_numa) {
+            for (int i = 0; i < opt.n_threads / 2; ++i) {
+                std::thread consumer(perform_task_async_se, std::ref(input_buffer), std::ref(output_buffer),
+                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                        std::ref(index), std::ref(opt.read_group_id), i, use_good_numa);
+                workers.push_back(std::move(consumer));
+            }
+            for (int i = opt.n_threads / 2; i < opt.n_threads; ++i) {
+                std::thread consumer(perform_task_async_se, std::ref(input_buffer), std::ref(output_buffer),
+                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                        std::ref(index2), std::ref(opt.read_group_id), totalCPUs / 2 + i - opt.n_threads / 2, use_good_numa);
+                workers.push_back(std::move(consumer));
+            }
+        } else {
+            for (int i = 0; i < opt.n_threads; ++i) {
+                std::thread consumer(perform_task_async_se, std::ref(input_buffer), std::ref(output_buffer),
+                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                        std::ref(index), std::ref(opt.read_group_id), i, use_good_numa);
+                workers.push_back(std::move(consumer));
+            }
         }
-    #ifdef use_good_numa
-        for (int i = opt.n_threads / 2; i < opt.n_threads; ++i) {
-            std::thread consumer(perform_task_async_se, std::ref(input_buffer), std::ref(output_buffer),
-            //std::thread consumer(perform_task_init, std::ref(input_buffer), std::ref(output_buffer),
-                std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                std::ref(index2), std::ref(opt.read_group_id), totalCPUs / 2 + i - opt.n_threads / 2);
-                //std::ref(index2), std::ref(opt.read_group_id));
-            workers.push_back(std::move(consumer));
-        }
-    #endif
-
     } else {
         //PE
         fprintf(stderr, "PE module\n");
-    #ifdef use_good_numa
-        for (int i = 0; i < opt.n_threads / 2; ++i) {
-    #else
-        for (int i = 0; i < opt.n_threads; ++i) {
-    #endif
-            std::thread consumer(perform_task_async_pe, std::ref(input_buffer), std::ref(output_buffer),
-                std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                std::ref(index), std::ref(opt.read_group_id), i);
-            workers.push_back(std::move(consumer));
+        if(use_good_numa) {
+            for (int i = 0; i < opt.n_threads / 2; ++i) {
+                std::thread consumer(perform_task_async_pe, std::ref(input_buffer), std::ref(output_buffer),
+                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                        std::ref(index), std::ref(opt.read_group_id), i, use_good_numa);
+                workers.push_back(std::move(consumer));
+            }
+            for (int i = opt.n_threads / 2; i < opt.n_threads; ++i) {
+                std::thread consumer(perform_task_async_pe, std::ref(input_buffer), std::ref(output_buffer),
+                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                        std::ref(index2), std::ref(opt.read_group_id), totalCPUs / 2 + i - opt.n_threads / 2, use_good_numa);
+                workers.push_back(std::move(consumer));
+            }
+        } else{
+            for (int i = 0; i < opt.n_threads; ++i) {
+                std::thread consumer(perform_task_async_pe, std::ref(input_buffer), std::ref(output_buffer),
+                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                        std::ref(index), std::ref(opt.read_group_id), i, use_good_numa);
+                workers.push_back(std::move(consumer));
+            }
         }
-    #ifdef use_good_numa
-        for (int i = opt.n_threads / 2; i < opt.n_threads; ++i) {
-            std::thread consumer(perform_task_async_pe, std::ref(input_buffer), std::ref(output_buffer),
-                std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                std::ref(index2), std::ref(opt.read_group_id), totalCPUs / 2 + i - opt.n_threads / 2);
-            workers.push_back(std::move(consumer));
-        }
-    #endif
     }
     if (opt.show_progress && isatty(2)) {
         show_progress_until_done(worker_done, log_stats_vec);
