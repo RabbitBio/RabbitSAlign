@@ -262,15 +262,17 @@ int run_rabbitsalign(int argc, char **argv) {
     rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> queue_se(256, 1);
     rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> queue_pe(256, 1);
     std::thread *producer;
-    if(opt.is_SE) {
-        producer = new std::thread(producer_se_fastq_task, opt.reads_filename1, std::ref(fastqPool), std::ref(queue_se));
-    } else if(opt.is_interleaved) {
-        producer = new std::thread(producer_se_fastq_task, opt.reads_filename1, std::ref(fastqPool), std::ref(queue_se));
-    } else {
-        producer = new std::thread(producer_pe_fastq_task, opt.reads_filename1, opt.reads_filename2, std::ref(fastqPool), std::ref(queue_pe));
+    if(!opt.only_gen_index) {
+        if(opt.is_SE) {
+            producer = new std::thread(producer_se_fastq_task, opt.reads_filename1, std::ref(fastqPool), std::ref(queue_se));
+        } else if(opt.is_interleaved) {
+            producer = new std::thread(producer_se_fastq_task, opt.reads_filename1, std::ref(fastqPool), std::ref(queue_se));
+        } else {
+            producer = new std::thread(producer_pe_fastq_task, opt.reads_filename1, opt.reads_filename2, std::ref(fastqPool), std::ref(queue_pe));
+        }
     }
 #else
-        input_buffer.rewind_reset();
+    input_buffer.rewind_reset();
 #endif
     IndexParameters index_parameters = IndexParameters::from_read_length(
         opt.r,
@@ -332,6 +334,9 @@ int run_rabbitsalign(int argc, char **argv) {
     if(numa_num == 1) {
         use_good_numa = 0;
     }
+    if(!opt.use_index) {
+        use_good_numa = 0;
+    }
     fprintf(stderr, "use_good_numa is %d\n", use_good_numa);
 
     StrobemerIndex index(references, index_parameters, opt.bits);
@@ -346,13 +351,13 @@ int run_rabbitsalign(int argc, char **argv) {
     
 		fprintf(stderr, "read index1\n");
         std::thread thread1(readIndexOnCPU, std::ref(index), sti_path, 0);
-        thread1.join();
 
         if(use_good_numa) {
             fprintf(stderr, "read index2\n");
             std::thread thread2(readIndexOnCPU, std::ref(index2), sti_path, totalCPUs / 2);
             thread2.join();
         }
+        thread1.join();
 
 
         logger.debug() << "Bits used to index buckets: " << index.get_bits() << "\n";
