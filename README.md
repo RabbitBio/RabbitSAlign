@@ -21,3 +21,5 @@ The resulting binary is in `build/rabbitsalign`.
 
 Detailed usage can refer to the [strobealign](https://github.com/ksahlin/strobealign). RabbitSAlign can share the index file (.sti) with strobealign.
 
+Note: If there is an error saying GPU out of memory, you can adjust the STREAM_BATCH_SIZE variable in src/gasal2_ssw.h, which is proportional to the size of the GPU memory.
+
