@@ -56,6 +56,8 @@ echo "Configuring gasal.h..."
 
 sed  -i "s,.*cuda_runtime\.h\",\#include \"$cuda_runtime_file\",g" ./src/gasal.h
 
+sed  -i "s,.*cuda_runtime\.h\",\#include \"$cuda_runtime_file\",g" ../src/include/gasal.h
+
 
 #mkdir -p include
 
