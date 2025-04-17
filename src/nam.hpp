@@ -6,36 +6,37 @@
 #include <array>
 #include "index.hpp"
 #include "randstrobes.hpp"
+#include "my_struct.hpp"
 
 // Non-overlapping approximate match
-struct Nam {
-    int nam_id;
-    int query_start;
-    int query_end;
-    int query_prev_hit_startpos;
-    int ref_start;
-    int ref_end;
-    int ref_prev_hit_startpos;
-    int n_hits = 0;
-    int ref_id;
-    float score;
-//    unsigned int previous_query_start;
-//    unsigned int previous_ref_start;
-    bool is_rc = false;
-
-    int ref_span() const {
-        return ref_end - ref_start;
-    }
-
-    int query_span() const {
-        return query_end - query_start;
-    }
-
-    bool operator < (const Nam& nn) const {
-        if(query_end != nn.query_end) return query_end < nn.query_end;
-        return nam_id < nn.nam_id;
-    }
-};
+//struct Nam {
+//    int nam_id;
+//    int query_start;
+//    int query_end;
+//    int query_prev_hit_startpos;
+//    int ref_start;
+//    int ref_end;
+//    int ref_prev_hit_startpos;
+//    int n_hits = 0;
+//    int ref_id;
+//    float score;
+////    unsigned int previous_query_start;
+////    unsigned int previous_ref_start;
+//    bool is_rc = false;
+//
+//    int ref_span() const {
+//        return ref_end - ref_start;
+//    }
+//
+//    int query_span() const {
+//        return query_end - query_start;
+//    }
+//
+//    bool operator < (const Nam& nn) const {
+//        if(query_end != nn.query_end) return query_end < nn.query_end;
+//        return nam_id < nn.nam_id;
+//    }
+//};
 
 std::pair<float, std::vector<Nam>> find_nams(
     const QueryRandstrobeVector &query_randstrobes,

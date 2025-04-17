@@ -174,7 +174,7 @@ inline void part2_extend_seed(
     alignment.gapped = true;
 }
 
-inline void part2_extend_seed_store_res(
+void part2_extend_seed_store_res(
     AlignTmpRes& align_tmp_res,
     int j,
     Read read1,
@@ -211,7 +211,7 @@ inline void part2_extend_seed_store_res(
     alignment.gapped = true;
 }
 
-inline void part2_extend_seed_get_str(
+void part2_extend_seed_get_str(
     std::vector<std::string>& todo_querys,
     std::vector<std::string>& todo_refs,
     AlignTmpRes& align_tmp_res,
@@ -288,7 +288,7 @@ inline void part2_rescue_mate(
     alignment.length = info.ref_span();
 }
 
-inline void part2_rescue_mate_store_res(
+void part2_rescue_mate_store_res(
     AlignTmpRes& align_tmp_res,
     int j,
     Read read1,
@@ -330,7 +330,7 @@ inline void part2_rescue_mate_store_res(
     alignment.length = info.ref_span();
 }
 
-inline void part2_rescue_mate_get_str(
+void part2_rescue_mate_get_str(
     std::vector<std::string>& todo_querys,
     std::vector<std::string>& todo_refs,
     AlignTmpRes& align_tmp_res,

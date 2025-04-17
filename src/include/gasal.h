@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 
-#include "/usr/local/cuda-12.0//targets/x86_64-linux/include/cuda_runtime.h"
+#include "/usr/local/cuda/targets/x86_64-linux/include/cuda_runtime.h"
 
 #ifndef HOST_MALLOC_SAFETY_FACTOR
 #define HOST_MALLOC_SAFETY_FACTOR 5

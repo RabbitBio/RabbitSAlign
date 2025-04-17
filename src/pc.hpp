@@ -17,6 +17,8 @@
 #include "aln.hpp"
 #include "refs.hpp"
 #include "fastq.hpp"
+#include "revcomp.hpp"
+
 
 #ifdef RABBIT_FX
 #include "FastxStream.h"
@@ -101,4 +103,50 @@ void perform_task_async_pe(InputBuffer &input_buffer, OutputBuffer &output_buffe
 
 bool same_name(const std::string& n1, const std::string& n2);
 
+
+void part2_extend_seed_get_str(
+    std::vector<std::string>& todo_querys,
+    std::vector<std::string>& todo_refs,
+    AlignTmpRes& align_tmp_res,
+    int j,
+    Read read1,
+    Read read2,
+    const References& references,
+    const Aligner& aligner
+);
+
+bool gasal_fail(std::string& query_str, std::string& ref_str, gasal_tmp_res gasal_res);
+
+void part2_extend_seed_store_res(
+    AlignTmpRes& align_tmp_res,
+    int j,
+    Read read1,
+    Read read2,
+    const References& references,
+    const AlignmentInfo info
+);
+
+void part2_rescue_mate_get_str(
+    std::vector<std::string>& todo_querys,
+    std::vector<std::string>& todo_refs,
+    AlignTmpRes& align_tmp_res,
+    int j,
+    Read read1,
+    Read read2,
+    const References& references,
+    const Aligner& aligner,
+    float mu,
+    float sigma
+);
+
+void part2_rescue_mate_store_res(
+    AlignTmpRes& align_tmp_res,
+    int j,
+    Read read1,
+    Read read2,
+    const References& references,
+    const AlignmentInfo& info,
+    float mu,
+    float sigma
+);
 #endif

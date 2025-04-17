@@ -34,12 +34,12 @@ struct AlignTmpRes {
     int mapq1;
     int mapq2;
     int type4_loop_size;
-    std::vector<bool> is_extend_seed;
-    std::vector<bool> consistent_nam;
-    std::vector<bool> is_read1;
+    std::vector<int> is_extend_seed;
+    std::vector<int> consistent_nam;
+    std::vector<int> is_read1;
     std::vector<Nam> type4_nams;
     std::vector<Nam> todo_nams;
-    std::vector<bool> done_align;
+    std::vector<int> done_align;
     // if done_align, align_res is the alignment results
     std::vector<Alignment> align_res;
 };

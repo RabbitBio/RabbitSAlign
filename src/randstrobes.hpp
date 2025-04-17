@@ -13,6 +13,13 @@
 
 #include "indexparameters.hpp"
 
+#ifdef __CUDACC__
+#define CUDA_HOST __host__
+#define CUDA_DEV __device__
+#else
+#define CUDA_HOST
+#define CUDA_DEV
+#endif
 
 using syncmer_hash_t = uint64_t;
 using randstrobe_hash_t = uint64_t;
@@ -34,11 +41,11 @@ struct RefRandstrobe {
         return hash < other.hash;
     }
 
-    int reference_index() const {
+    CUDA_HOST CUDA_DEV int reference_index() const {
         return m_packed >> bit_alloc;
     }
 
-    int strobe2_offset() const {
+    CUDA_HOST CUDA_DEV int strobe2_offset() const {
         return m_packed & mask;
     }
 
