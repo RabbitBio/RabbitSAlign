@@ -259,7 +259,7 @@ int run_rabbitsalign(int argc, char **argv) {
     }
 
 #ifdef RABBIT_FX
-    rabbit::fq::FastqDataPool fastqPool(256, 1 << 27);
+    rabbit::fq::FastqDataPool fastqPool(256, 1 << 24);
     rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> queue_se(256, 1);
     rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> queue_pe(256, 1);
     std::thread *producer;
@@ -506,7 +506,27 @@ int run_rabbitsalign(int argc, char **argv) {
                 workers.push_back(std::move(consumer));
             }
         } else {
+
+#define use_gpu_align
+#ifdef use_gpu_align
             for (int i = 0; i < opt.n_threads - 1; ++i) {
+                std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
+                                     std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                                     std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                                     std::ref(index), std::ref(opt.read_group_id), i,
+                                     std::ref(fastqPool), std::ref(queue_pe), use_good_numa);
+                workers.push_back(std::move(consumer));
+            }
+            for (int i = opt.n_threads - 1; i < opt.n_threads; i++) {
+                std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
+                                     std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                                     std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                                     std::ref(index), std::ref(opt.read_group_id), i,
+                                     std::ref(fastqPool), std::ref(queue_pe), use_good_numa);
+                workers.push_back(std::move(consumer));
+            }
+#else
+            for (int i = 0; i < opt.n_threads; ++i) {
                 std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
                         std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
                         std::ref(map_param), std::ref(index_parameters), std::ref(references),
@@ -514,12 +534,7 @@ int run_rabbitsalign(int argc, char **argv) {
                         std::ref(fastqPool), std::ref(queue_pe), use_good_numa);
                 workers.push_back(std::move(consumer));
             }
-            std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
-                    std::ref(log_stats_vec[opt.n_threads - 1]), std::ref(worker_done[opt.n_threads - 1]), std::ref(aln_params),
-                    std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                    std::ref(index), std::ref(opt.read_group_id), opt.n_threads - 1,
-                    std::ref(fastqPool), std::ref(queue_pe), use_good_numa);
-            workers.push_back(std::move(consumer));
+#endif
         }
     }
     if (opt.show_progress && isatty(2)) {

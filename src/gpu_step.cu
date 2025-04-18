@@ -229,6 +229,12 @@ __device__ void print_str(my_string str) {
     printf("\n");
 }
 
+
+#define MAX_TRIES_LIMIT (mapping_parameters->max_tries * 2 + 2)
+#define MAX_TRIES_LIMIT2 (map_param.max_tries * 2 + 2)
+#define MAX_CIGAR_ITEM 20
+
+
 struct GPURead {
     char* seq;
     char* rc;
@@ -264,6 +270,10 @@ struct GPUAlignment {
 
 };
 
+struct CigarData{
+    uint32_t cigar[MAX_CIGAR_ITEM];
+};
+
 struct GPUAlignTmpRes {
     int type;
     // type 0 : size1 == 0 size2 == 0, unmapped_pair
@@ -282,19 +292,7 @@ struct GPUAlignTmpRes {
     my_vector<int> done_align;
     // if done_align, align_res is the alignment results
     my_vector<GPUAlignment> align_res;
-    __device__ void init() {
-        type = 0;
-        mapq1 = 0;
-        mapq2 = 0;
-        type4_loop_size = 0;
-        is_extend_seed.init();
-        consistent_nam.init();
-        is_read1.init();
-        type4_nams.init();
-        todo_nams.init();
-        done_align.init();
-        align_res.init();
-    }
+    my_vector<CigarData> cigar_info;
 };
 
 struct GPUReferences {
@@ -443,6 +441,8 @@ __device__ bool gpu_extend_seed_part(
         GPUAlignment alignment;
         align_tmp_res.done_align.push_back(false);
         align_tmp_res.align_res.push_back(alignment);
+        align_tmp_res.cigar_info.length++;
+        align_tmp_res.cigar_info.back().cigar[0] = 0;
     } else {
         // pass hamming, store result, tag is true
         align_tmp_res.done_align.push_back(true);
@@ -459,6 +459,12 @@ __device__ bool gpu_extend_seed_part(
         alignment.ref_id = nam.ref_id;
         alignment.gapped = gapped;
         align_tmp_res.align_res.push_back(alignment);
+        assert(info.cigar.size() + 1 <= MAX_CIGAR_ITEM);
+        align_tmp_res.cigar_info.length++;
+        align_tmp_res.cigar_info.back().cigar[0] = info.cigar.size();
+        for (int i = 0; i < info.cigar.size(); i++) {
+            align_tmp_res.cigar_info.back().cigar[i + 1] = info.cigar[i];
+        }
     }
     return gapped;
 }
@@ -543,6 +549,8 @@ __device__ bool gpu_rescue_mate_part(
         alignment.is_unaligned = true;
         align_tmp_res.done_align.push_back(true);
         align_tmp_res.align_res.push_back(alignment);
+        align_tmp_res.cigar_info.length++;
+        align_tmp_res.cigar_info.back().cigar[0] = 0;
         return true;
     }
     my_string ref_segm = references.sequences[nam.ref_id].substr(ref_start, ref_end - ref_start);
@@ -557,11 +565,15 @@ __device__ bool gpu_rescue_mate_part(
         alignment.is_unaligned = true;
         align_tmp_res.done_align.push_back(true);
         align_tmp_res.align_res.push_back(alignment);
+        align_tmp_res.cigar_info.length++;
+        align_tmp_res.cigar_info.back().cigar[0] = 0;
         return true;
     }
 
     align_tmp_res.done_align.push_back(false);
     align_tmp_res.align_res.push_back(alignment);
+    align_tmp_res.cigar_info.length++;
+    align_tmp_res.cigar_info.back().cigar[0] = 0;
     return false;
 }
 
@@ -1525,8 +1537,7 @@ __device__ void get_best_scoring_nam_pairs_sort3(
     return;
 }
 
-
-__device__ void gpu_get_best_scoring_nam_pairs(
+__device__ void gpu_get_best_scoring_nam_pairs_check(
     my_vector<gpu_NamPair>& joint_nam_scores,
     my_vector<Nam>& nams1,
     my_vector<Nam>& nams2,
@@ -1548,7 +1559,7 @@ __device__ void gpu_get_best_scoring_nam_pairs(
         for (int j = 0; j < nams2_len; j++) {
             const Nam &nam2 = nams2[j];
             int joint_hits = nam1.n_hits + nam2.n_hits;
-//            if (joint_hits < 0.5 * best_joint_hits || joint_nam_scores.size() > max_tries * 2) {
+            //            if (joint_hits < 0.5 * best_joint_hits || joint_nam_scores.size() > max_tries * 2) {
             if (joint_hits < best_joint_hits / 2) {
                 break;
             }
@@ -1559,14 +1570,14 @@ __device__ void gpu_get_best_scoring_nam_pairs(
                 best_joint_hits = my_max(joint_hits, best_joint_hits);
             }
         }
-//        if (joint_nam_scores.size() > max_tries * 2) break;
+        //        if (joint_nam_scores.size() > max_tries * 2) break;
     }
 
     // Find high-scoring R1 NAMs that are not part of a proper pair
     Nam dummy_nam;
     dummy_nam.ref_start = -1;
     int best_joint_hits1 = best_joint_hits > 0 ? best_joint_hits : nams1[0].n_hits;
-//    for(int i = 0; i < my_min(nams1.size(), max_tries); i++) {
+    //    for(int i = 0; i < my_min(nams1.size(), max_tries); i++) {
     for(int i = 0; i < nams1.size(); i++) {
         Nam nam1 = nams1[i];
         if (nam1.n_hits < best_joint_hits1 / 2) {
@@ -1580,7 +1591,7 @@ __device__ void gpu_get_best_scoring_nam_pairs(
 
     // Find high-scoring R2 NAMs that are not part of a proper pair
     int best_joint_hits2 = best_joint_hits > 0 ? best_joint_hits : nams2[0].n_hits;
-//    for(int i = 0; i < my_min(nams2.size(), max_tries); i++) {
+    //    for(int i = 0; i < my_min(nams2.size(), max_tries); i++) {
     for(int i = 0; i < nams2.size(); i++) {
         Nam nam2 = nams2[i];
         if (nam2.n_hits < best_joint_hits2 / 2) {
@@ -1614,6 +1625,78 @@ __device__ void gpu_get_best_scoring_nam_pairs(
         if (nam1_2.ref_end != nam2_2.ref_end) return nam1_2.ref_end < nam2_2.ref_end;
         return nam1_2.ref_start < nam2_2.ref_start;
 
+    });
+
+    return;
+}
+
+__device__ void gpu_get_best_scoring_nam_pairs(
+    my_vector<gpu_NamPair>& joint_nam_scores,
+    my_vector<Nam>& nams1,
+    my_vector<Nam>& nams2,
+    float mu,
+    float sigma,
+    int max_tries,
+    int tid
+) {
+    int nams1_len = nams1.size();
+    int nams2_len = nams2.size();
+    my_vector<bool> added_n1(nams1_len);
+    my_vector<bool> added_n2(nams2_len);
+    for(int i = 0; i < nams1_len; i++) added_n1.push_back(false);
+    for(int i = 0; i < nams2_len; i++) added_n2.push_back(false);
+
+    int best_joint_hits = 0;
+    for (int i = 0; i < nams1_len; i++) {
+        const Nam &nam1 = nams1[i];
+        for (int j = 0; j < nams2_len; j++) {
+            const Nam &nam2 = nams2[j];
+            int joint_hits = nam1.n_hits + nam2.n_hits;
+            if (joint_hits < 0.5 * best_joint_hits || joint_nam_scores.size() > max_tries * 2) {
+                break;
+            }
+            if (gpu_is_proper_nam_pair(nam1, nam2, mu, sigma)) {
+                joint_nam_scores.push_back(gpu_NamPair{joint_hits, &nams1, &nams2, i, j});
+                added_n1[i] = 1;
+                added_n2[j] = 1;
+                best_joint_hits = my_max(joint_hits, best_joint_hits);
+            }
+        }
+        if (joint_nam_scores.size() > max_tries * 2) break;
+    }
+
+    // Find high-scoring R1 NAMs that are not part of a proper pair
+    Nam dummy_nam;
+    dummy_nam.ref_start = -1;
+    int best_joint_hits1 = best_joint_hits > 0 ? best_joint_hits : nams1[0].n_hits;
+    for(int i = 0; i < my_min(nams1.size(), max_tries); i++) {
+//    for(int i = 0; i < nams1.size(); i++) {
+        Nam nam1 = nams1[i];
+        if (nam1.n_hits < best_joint_hits1 / 2) {
+            break;
+        }
+        if (added_n1[i]) {
+            continue;
+        }
+        joint_nam_scores.push_back(gpu_NamPair{nam1.n_hits, &nams1, &nams2, i, -1});
+    }
+
+    // Find high-scoring R2 NAMs that are not part of a proper pair
+    int best_joint_hits2 = best_joint_hits > 0 ? best_joint_hits : nams2[0].n_hits;
+    for(int i = 0; i < my_min(nams2.size(), max_tries); i++) {
+//    for(int i = 0; i < nams2.size(); i++) {
+        Nam nam2 = nams2[i];
+        if (nam2.n_hits < best_joint_hits2 / 2) {
+            break;
+        }
+        if (added_n2[i]) {
+            continue;
+        }
+        joint_nam_scores.push_back(gpu_NamPair{nam2.n_hits, &nams1, &nams2, -1, i});
+    }
+
+    quick_sort_iterative(&(joint_nam_scores[0]), 0, joint_nam_scores.size() - 1, [](const gpu_NamPair &n1, const gpu_NamPair &n2) {
+        if (n1.score != n2.score) return n1.score > n2.score;
     });
 
     return;
@@ -3115,11 +3198,11 @@ __global__ void gpu_sort_nams(
     for (int id = l_range; id < r_range; id++) {
         //int max_tries = mapping_parameters->max_tries;
 //        if (id >= read_num)
-        sort_nams_single(global_nams[id]);
+//        sort_nams_single(global_nams[id]);
 //        else sort_nams_single2(global_nams[id]);
         //topk_quick_sort(global_nams[id], max_tries * 2);
         //sort_nams_by_score(global_nams[id], max_tries * 2);
-//        sort_nams_by_score(global_nams[id], 1e9);
+        sort_nams_by_score(global_nams[id], 1e9);
         //sort_nams_get_k(global_nams[id], max_tries * 2);
         //global_nams[id].length = my_min(global_nams[id].length, max_tries * 2);
         //        check_nams(global_nams[id]);
@@ -3204,9 +3287,6 @@ __global__ void gpu_merge_hits_get_nams(
     }
 }
 
-#define MAX_TRIES_LIMIT (mapping_parameters->max_tries * 2 + 2)
-#define MAX_TRIES_LIMIT2 (map_param.max_tries * 2 + 2)
-
 
 __global__ void gpu_pre_cal_type(
     int num_tasks,
@@ -3265,27 +3345,6 @@ __global__ void gpu_align_PE0(
     if (r_range > num_tasks) r_range = num_tasks;
     for (int id = l_range; id < r_range; id++) {
         int real_id = global_todo_ids[id];
-//        size_t seq_len1, seq_len2;
-//        char *seq1, *seq2;
-//        seq_len1 = lens[real_id];
-//        seq1 = all_seqs + pre_sum[real_id];
-//        seq_len2 = lens2[real_id];
-//        seq2 = all_seqs2 + pre_sum2[real_id];
-//        GPUAlignTmpRes* align_tmp_res = (GPUAlignTmpRes*)my_malloc(sizeof(GPUAlignTmpRes));
-//        align_tmp_res->init();
-//        GPUInsertSizeDistribution isize_est;
-//        align_PE_part0(*align_tmp_res, *aligner_parameters, global_nams[real_id], global_nams[real_id + s_len], seq1, seq_len1, seq2, seq_len2, index_para->syncmer.k, *global_references,
-//                       mapping_parameters->dropoff_threshold, isize_est, mapping_parameters->max_tries, mapping_parameters->max_secondary);
-//        global_align_info[real_id] += align_tmp_res->type + align_tmp_res->mapq1 + align_tmp_res->mapq2 + align_tmp_res->type4_loop_size;
-//        global_align_info[real_id] += align_tmp_res->is_extend_seed.size() + align_tmp_res->consistent_nam.size() + align_tmp_res->is_read1.size() +
-//                                      align_tmp_res->type4_nams.size() + align_tmp_res->todo_nams.size() + align_tmp_res->done_align.size() + align_tmp_res->align_res.size();
-//        uint64_t local_sum = 0;
-//        for (int i = 0; i < align_tmp_res->todo_nams.size(); i++) {
-//            local_sum += align_tmp_res->todo_nams[i].ref_id;
-//        }
-//        global_align_res[real_id] = *align_tmp_res;
-//        my_free(align_tmp_res);
-//        global_align_info[real_id] += local_sum;
         global_nams[real_id].release();
         global_nams[real_id + s_len].release();
     }
@@ -3324,8 +3383,6 @@ __global__ void gpu_align_PE1(
         seq_len2 = lens2[real_id];
         seq2 = all_seqs2 + pre_sum2[real_id];
 
-//        GPUAlignTmpRes* align_tmp_res = (GPUAlignTmpRes*)my_malloc(sizeof(GPUAlignTmpRes));
-//        align_tmp_res->init();
         GPUAlignTmpRes* align_tmp_res = &global_align_res[real_id];
         GPUInsertSizeDistribution isize_est;
         align_PE_part1(*align_tmp_res, *aligner_parameters, global_nams[real_id], global_nams[real_id + s_len], seq1, seq_len1, seq2, seq_len2, index_para->syncmer.k, *global_references,
@@ -3337,15 +3394,6 @@ __global__ void gpu_align_PE1(
         for (int i = 0; i < align_tmp_res->todo_nams.size(); i++) {
             local_sum += align_tmp_res->todo_nams[i].ref_id;
         }
-//        assert(align_tmp_res->is_read1.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->is_extend_seed.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->consistent_nam.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->type4_nams.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->todo_nams.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->done_align.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->align_res.size() <= MAX_TRIES_LIMIT);
-//        global_align_res[real_id] = *align_tmp_res;
-//        my_free(align_tmp_res);
         global_align_info[real_id] += local_sum;
         global_nams[real_id].release();
         global_nams[real_id + s_len].release();
@@ -3385,8 +3433,6 @@ __global__ void gpu_align_PE2(
         seq_len2 = lens2[real_id];
         seq2 = all_seqs2 + pre_sum2[real_id];
 
-//        GPUAlignTmpRes* align_tmp_res = (GPUAlignTmpRes*)my_malloc(sizeof(GPUAlignTmpRes));
-//        align_tmp_res->init();
         GPUAlignTmpRes* align_tmp_res = &global_align_res[real_id];
         GPUInsertSizeDistribution isize_est;
         align_PE_part2(*align_tmp_res, *aligner_parameters, global_nams[real_id], global_nams[real_id + s_len], seq1, seq_len1, seq2, seq_len2, index_para->syncmer.k, *global_references,
@@ -3398,15 +3444,6 @@ __global__ void gpu_align_PE2(
         for (int i = 0; i < align_tmp_res->todo_nams.size(); i++) {
             local_sum += align_tmp_res->todo_nams[i].ref_id;
         }
-//        assert(align_tmp_res->is_read1.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->is_extend_seed.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->consistent_nam.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->type4_nams.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->todo_nams.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->done_align.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->align_res.size() <= MAX_TRIES_LIMIT);
-//        global_align_res[real_id] = *align_tmp_res;
-//        my_free(align_tmp_res);
         global_align_info[real_id] += local_sum;
         global_nams[real_id].release();
         global_nams[real_id + s_len].release();
@@ -3446,8 +3483,6 @@ __global__ void gpu_align_PE3(
         seq_len2 = lens2[real_id];
         seq2 = all_seqs2 + pre_sum2[real_id];
 
-//        GPUAlignTmpRes* align_tmp_res = (GPUAlignTmpRes*)my_malloc(sizeof(GPUAlignTmpRes));
-//        align_tmp_res->init();
         GPUAlignTmpRes* align_tmp_res = &global_align_res[real_id];
         GPUInsertSizeDistribution isize_est;
         align_PE_part3(*align_tmp_res, *aligner_parameters, global_nams[real_id], global_nams[real_id + s_len], seq1, seq_len1, seq2, seq_len2, index_para->syncmer.k, *global_references,
@@ -3459,66 +3494,6 @@ __global__ void gpu_align_PE3(
         for (int i = 0; i < align_tmp_res->todo_nams.size(); i++) {
             local_sum += align_tmp_res->todo_nams[i].ref_id;
         }
-//        assert(align_tmp_res->is_read1.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->is_extend_seed.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->consistent_nam.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->type4_nams.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->todo_nams.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->done_align.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->align_res.size() <= MAX_TRIES_LIMIT);
-//        global_align_res[real_id] = *align_tmp_res;
-//        my_free(align_tmp_res);
-        global_align_info[real_id] += local_sum;
-        global_nams[real_id].release();
-        global_nams[real_id + s_len].release();
-    }
-}
-
-__global__ void gpu_align_PE4_single(
-    int num_tasks,
-    int s_len,
-    IndexParameters *index_para,
-    uint64_t *global_align_info,
-    AlignmentParameters* aligner_parameters,
-    int *pre_sum,
-    int *lens,
-    char *all_seqs,
-    int *pre_sum2,
-    int *lens2,
-    char *all_seqs2,
-    GPUReferences *global_references,
-    MappingParameters *mapping_parameters,
-    my_vector<Nam> *global_nams,
-    int *global_todo_ids,
-    GPUAlignTmpRes *global_align_res
-) {
-    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
-    if (global_id) return;
-    int bid = blockIdx.x;
-    int tid = threadIdx.x;
-    for (int id = 0; id < num_tasks; id++) {
-        int real_id = global_todo_ids[id];
-        size_t seq_len1, seq_len2;
-        char *seq1, *seq2;
-        seq_len1 = lens[real_id];
-        seq1 = all_seqs + pre_sum[real_id];
-        seq_len2 = lens2[real_id];
-        seq2 = all_seqs2 + pre_sum2[real_id];
-
-        GPUAlignTmpRes* align_tmp_res = (GPUAlignTmpRes*)my_malloc(sizeof(GPUAlignTmpRes));
-        align_tmp_res->init();
-        GPUInsertSizeDistribution isize_est;
-        align_PE_part4(*align_tmp_res, *aligner_parameters, global_nams[real_id], global_nams[real_id + s_len], seq1, seq_len1, seq2, seq_len2, index_para->syncmer.k, *global_references,
-                       mapping_parameters->dropoff_threshold, isize_est, mapping_parameters->max_tries, mapping_parameters->max_secondary, tid, real_id);
-        global_align_info[real_id] += align_tmp_res->type + align_tmp_res->mapq1 + align_tmp_res->mapq2 + align_tmp_res->type4_loop_size;
-        global_align_info[real_id] += align_tmp_res->is_extend_seed.size() + align_tmp_res->consistent_nam.size() + align_tmp_res->is_read1.size() +
-                                      align_tmp_res->type4_nams.size() + align_tmp_res->todo_nams.size() + align_tmp_res->done_align.size() + align_tmp_res->align_res.size();
-        uint64_t local_sum = 0;
-        for (int i = 0; i < align_tmp_res->todo_nams.size(); i++) {
-            local_sum += align_tmp_res->todo_nams[i].ref_id;
-        }
-        global_align_res[real_id] = *align_tmp_res;
-        my_free(align_tmp_res);
         global_align_info[real_id] += local_sum;
         global_nams[real_id].release();
         global_nams[real_id + s_len].release();
@@ -3559,8 +3534,6 @@ __global__ void gpu_align_PE4(
         seq_len2 = lens2[real_id];
         seq2 = all_seqs2 + pre_sum2[real_id];
 
-//        GPUAlignTmpRes* align_tmp_res = (GPUAlignTmpRes*)my_malloc(sizeof(GPUAlignTmpRes));
-//        align_tmp_res->init();
         GPUAlignTmpRes* align_tmp_res = &global_align_res[real_id];
         GPUInsertSizeDistribution isize_est;
         align_PE_part4(*align_tmp_res, *aligner_parameters, global_nams[real_id], global_nams[real_id + s_len], seq1, seq_len1, seq2, seq_len2, index_para->syncmer.k, *global_references,
@@ -3572,15 +3545,6 @@ __global__ void gpu_align_PE4(
         for (int i = 0; i < align_tmp_res->todo_nams.size(); i++) {
             local_sum += align_tmp_res->todo_nams[i].ref_id;
         }
-//        assert(align_tmp_res->is_read1.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->is_extend_seed.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->consistent_nam.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->type4_nams.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->todo_nams.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->done_align.size() <= MAX_TRIES_LIMIT);
-//        assert(align_tmp_res->align_res.size() <= MAX_TRIES_LIMIT);
-//        global_align_res[real_id] = *align_tmp_res;
-//        my_free(align_tmp_res);
         global_align_info[real_id] += local_sum;
         global_nams[real_id].release();
         global_nams[real_id + s_len].release();
@@ -3654,7 +3618,8 @@ double gpu_cost10_2 = 0;
 double gpu_cost10_3 = 0;
 double gpu_cost10_4 = 0;
 double gpu_cost11 = 0;
-double gpu_cost11_copy = 0;
+double gpu_cost11_copy1 = 0;
+double gpu_cost11_copy2 = 0;
 double tot_cost = 0;
 
 template <typename T>
@@ -3745,6 +3710,8 @@ void print_global_align_res(GPUAlignTmpRes* global_align_res, int batch_size) {
 
 void fast_copy_align_res(GPUAlignTmpRes* global_align_res, int batch_size, std::vector<AlignTmpRes>& align_tmp_results) {
     assert(align_tmp_results.size() == 0);
+    uint64_t cigar_size = 0;
+    uint64_t mx_cigar_size = 0;
     for (int i = 0; i < batch_size; ++i) {
         const GPUAlignTmpRes& tmp = global_align_res[i];
         AlignTmpRes align_tmp_res;
@@ -3753,6 +3720,7 @@ void fast_copy_align_res(GPUAlignTmpRes* global_align_res, int batch_size, std::
         align_tmp_res.mapq1 = tmp.mapq1;
         align_tmp_res.mapq2 = tmp.mapq2;
         align_tmp_res.type4_loop_size = tmp.type4_loop_size;
+
         double t0 = GetTime();
         fast_copy_vector_to_host(tmp.is_extend_seed, align_tmp_res.is_extend_seed);
         fast_copy_vector_to_host(tmp.consistent_nam, align_tmp_res.consistent_nam);
@@ -3760,11 +3728,26 @@ void fast_copy_align_res(GPUAlignTmpRes* global_align_res, int batch_size, std::
         fast_copy_vector_to_host(tmp.type4_nams, align_tmp_res.type4_nams);
         fast_copy_vector_to_host(tmp.todo_nams, align_tmp_res.todo_nams);
         fast_copy_vector_to_host(tmp.done_align, align_tmp_res.done_align);
+        gpu_cost11_copy1 += GetTime() - t0;
+
+        t0 = GetTime();
+        assert(tmp.align_res.length == tmp.cigar_info.length);
+//        for (int j = 0; j < tmp.cigar_info.length; j++) {
+//            cigar_size += tmp.cigar_info[j].cigar[0];
+//            mx_cigar_size = std::max(mx_cigar_size, (uint64_t)tmp.cigar_info[j].cigar[0]);
+//        }
         for (int j = 0; j < tmp.align_res.length; j++) {
+            Cigar host_cigar;
+//            for (int k = 0; k < tmp.cigar_info[j].cigar[0]; k++) {
+//                host_cigar.m_ops.push_back(tmp.cigar_info[j].cigar[k + 1]);
+//            }
+            host_cigar.m_ops.resize(tmp.cigar_info[j].cigar[0]);
+            memcpy(host_cigar.m_ops.data(), tmp.cigar_info[j].cigar + 1, sizeof(int) * tmp.cigar_info[j].cigar[0]);
+
             align_tmp_res.align_res.push_back({
                 tmp.align_res[j].ref_id,
                 tmp.align_res[j].ref_start,
-                Cigar(),
+                host_cigar,
                 tmp.align_res[j].edit_distance,
                 tmp.align_res[j].global_ed,
                 tmp.align_res[j].score,
@@ -3775,8 +3758,9 @@ void fast_copy_align_res(GPUAlignTmpRes* global_align_res, int batch_size, std::
             });
         }
         align_tmp_results.push_back(align_tmp_res);
-        gpu_cost11_copy += GetTime() - t0;
+        gpu_cost11_copy2 += GetTime() - t0;
     }
+    printf("cigar_size = %lu, mx = %lu\n", cigar_size, mx_cigar_size);
 }
 
 void copy_align_res(GPUAlignTmpRes* global_align_res, int batch_size, std::vector<AlignTmpRes>& align_tmp_results) {
@@ -3798,8 +3782,9 @@ void copy_align_res(GPUAlignTmpRes* global_align_res, int batch_size, std::vecto
         std::vector<Nam> todo_nams       = copy_vector_to_host(tmp.todo_nams);
         std::vector<int> done_flags      = copy_vector_to_host(tmp.done_align);
         std::vector<GPUAlignment> aligns = copy_vector_to_host(tmp.align_res);
-        gpu_cost11_copy += GetTime() - t0;
+        gpu_cost11_copy1 += GetTime() - t0;
 
+        t0 = GetTime();
         align_tmp_res.is_extend_seed.assign(is_extend_seeds.begin(), is_extend_seeds.end());
         align_tmp_res.consistent_nam.assign(consistent_nams.begin(), consistent_nams.end());
         align_tmp_res.is_read1.assign(is_read1s.begin(), is_read1s.end());
@@ -3820,6 +3805,7 @@ void copy_align_res(GPUAlignTmpRes* global_align_res, int batch_size, std::vecto
                 aligns[j].gapped
             });
         }
+        gpu_cost11_copy2 += GetTime() - t0;
 
         align_tmp_results.push_back(align_tmp_res);
     }
@@ -4059,6 +4045,7 @@ void GPU_align_PE(std::vector<klibpp::KSeq> &records1, std::vector<klibpp::KSeq>
         global_align_res[i].todo_nams.length = 0;
         global_align_res[i].done_align.length = 0;
         global_align_res[i].align_res.length = 0;
+        global_align_res[i].cigar_info.length = 0;
     }
     printf("types: %d %d %d %d %d\n", types[0].size(), types[1].size(), types[2].size(), types[3].size(), types[4].size());
 
@@ -4178,6 +4165,8 @@ void perform_task_async_pe_fx_GPU(
     rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq,
     bool use_good_numa
 ) {
+    cudaSetDevice(1);
+
     bool eof = false;
     Aligner aligner{aln_params};
     std::minstd_rand random_engine;
@@ -4193,6 +4182,7 @@ void perform_task_async_pe_fx_GPU(
     std::vector<AlignTmpRes> align_tmp_results;
     std::vector<AlignTmpRes> pre_align_tmp_results;
     thread_local double time_tot = 0;
+    thread_local double time0 = 0;
     thread_local double time1 = 0;    //time except extend and output
     thread_local double time2_1 = 0;  //time to filter nams and get todo_strings
     thread_local double time2_2 = 0;  //time to do ssw on gpu
@@ -4200,6 +4190,8 @@ void perform_task_async_pe_fx_GPU(
     thread_local double time2_4 = 0;  //time to store ssw results
     thread_local double time3_1 = 0;  //time to construct sam
     thread_local double time3_2 = 0;  //time to output
+    thread_local double time4 = 0;
+
     double t_0, t_1;
 
     rabbit::int64 id = 0;
@@ -4207,9 +4199,10 @@ void perform_task_async_pe_fx_GPU(
     std::vector<neoReference> data2;
     rabbit::fq::FastqDataPairChunk *fqdatachunk = new rabbit::fq::FastqDataPairChunk;
 
-#define batch_size 400000ll
+#define batch_size 200000ll
 #define batch_seq_szie batch_size * 250ll
 
+    t_1 = GetTime();
     // init device memory pool
     uint64_t num_bytes = 20ll * 1024ll * 1024ll * 1024ll;
     uint64_t seed = 13;
@@ -4284,8 +4277,9 @@ void perform_task_async_pe_fx_GPU(
         my_vector<Nam> todo_nams;
         my_vector<int> done_align;
         my_vector<GPUAlignment> align_res;
+        my_vector<CigarData> cigar_info;
      */
-    uint64_t pre_vec_size = 4 * sizeof(int) + 2 * sizeof(Nam) + sizeof(GPUAlignment);
+    uint64_t pre_vec_size = 4 * sizeof(int) + 2 * sizeof(Nam) + sizeof(GPUAlignment) + sizeof(CigarData);
     uint64_t global_align_res_data_size = batch_size * MAX_TRIES_LIMIT2 * pre_vec_size;
     printf("global_align_res_data_size %llu\n", global_align_res_data_size);
     char *global_align_res_data;
@@ -4330,11 +4324,13 @@ void perform_task_async_pe_fx_GPU(
         tmp->align_res.capacity = MAX_TRIES_LIMIT2;
         base_ptr += MAX_TRIES_LIMIT2 * sizeof(GPUAlignment);
 
+        tmp->cigar_info.data = (CigarData*)base_ptr;
+        tmp->cigar_info.length = 0;
+        tmp->cigar_info.capacity = MAX_TRIES_LIMIT2;
+        base_ptr += MAX_TRIES_LIMIT2 * sizeof(CigarData);
+
         assert(base_ptr - global_align_res_data == (i + 1) * MAX_TRIES_LIMIT2 * pre_vec_size);
     }
-
-    uint64_t global_align_res_cigar_size = batch_seq_szie * MAX_TRIES_LIMIT2;
-    printf("global_align_res_cigar_size %llu\n", global_align_res_cigar_size);
 
     char *d_seq;
     int *d_len;
@@ -4373,6 +4369,8 @@ void perform_task_async_pe_fx_GPU(
     uint64_t * global_align_info;
     cudaMallocManaged(&global_align_info, batch_size * sizeof(uint64_t));
 
+    time0 += GetTime() - t_1;
+
 
     t_0 = GetTime();
 
@@ -4409,7 +4407,7 @@ void perform_task_async_pe_fx_GPU(
     InsertSizeDistribution pre_isize_est;
     // Use chunk index as random seed for reproducibility
     pre_random_engine.seed(pre_chunk_index);
-    // process align on gpu
+    printf("record size %zu\n", pre_records1.size());
     GPU_align_PE(pre_records1, pre_records2,
                  pre_align_tmp_results,
                  global_hits_num, global_nams_info, global_align_info,
@@ -4421,6 +4419,7 @@ void perform_task_async_pe_fx_GPU(
                  h_seq, h_len, h_pre_sum, h_seq2, h_len2, h_pre_sum2);
 
     statistics.n_reads += pre_records1.size() * 2;
+
     time1 += GetTime() - t_1;
 
     while (!eof) {
@@ -4605,6 +4604,7 @@ void perform_task_async_pe_fx_GPU(
                          d_seq, d_len, d_pre_sum, d_seq2, d_len2, d_pre_sum2,
                          h_seq, h_len, h_pre_sum, h_seq2, h_len2, h_pre_sum2);
             statistics.n_reads += records1.size() * 2;
+
             time1 += GetTime() - t_1;
         }
 
@@ -4619,6 +4619,8 @@ void perform_task_async_pe_fx_GPU(
             Timer extend_timer2;
             // step1 : post-process the gpu results, re-ssw for bad results on cpu
             t_1 = GetTime();
+            info_results.resize(todo_querys.size());
+//#pragma omp parallel for num_threads(8)
             for (size_t i = 0; i < todo_querys.size(); i++) {
                 AlignmentInfo info;
                 if (gasal_fail(todo_querys[i], todo_refs[i], gasal_results[i])) {
@@ -4627,7 +4629,7 @@ void perform_task_async_pe_fx_GPU(
                 } else {
                     info = aligner.align_gpu(todo_querys[i], todo_refs[i], gasal_results[i]);
                 }
-                info_results.push_back(info);
+                info_results[i] = info;
             }
             time2_3 += GetTime() - t_1;
 
@@ -4695,6 +4697,7 @@ void perform_task_async_pe_fx_GPU(
                 sam_out,          references, map_param.cigar_ops, read_group_id, map_param.output_unmapped,
                 map_param.details
             };
+//#pragma omp parallel for num_threads(8)
             for (size_t i = 0; i < pre_records1.size(); ++i) {
                 auto record1 = pre_records1[i];
                 auto record2 = pre_records2[i];
@@ -4728,19 +4731,18 @@ void perform_task_async_pe_fx_GPU(
     }
     statistics.tot_aligner_calls += aligner.calls_count();
     done = true;
-    time_tot = GetTime() - t_0;
-
 
     std::cout << "gpu cost " << gpu_cost1 << " " << gpu_cost2 << " [" << gpu_cost2_1 << " " << gpu_cost2_2 << "] " << gpu_cost3 << " " << gpu_cost4 << std::endl;
     std::cout << gpu_cost5 << " " << gpu_cost6 << " " << gpu_cost7 << " " << gpu_cost8 << " " << gpu_cost9 << " " << gpu_cost10 << std::endl;
     std::cout << "[" << gpu_cost10_0 << " " << gpu_cost10_1 << " " << gpu_cost10_2 << " " << gpu_cost10_3 << " " << gpu_cost10_4 << "]" << std::endl;
-    std::cout << "copy data to host cost " << gpu_cost11 << " " << gpu_cost11_copy << std::endl;
+    std::cout << "copy data to host cost " << gpu_cost11 << " [" << gpu_cost11_copy1 << ", " << gpu_cost11_copy2 << "]" << std::endl;
     std::cout << "total cost " << tot_cost << std::endl;
     std::cout << "check_sum : " << check_sum << ", size_tot : " << size_tot << std::endl;
     std::cout << "total_hits12 : " << global_hits_num12 << ", nr_good_hits12 : " << global_nams_info12 << std::endl;
     std::cout << "total_hits3 : " << global_hits_num3 << ", nr_good_hits3 : " << global_nams_info3 << std::endl;
     std::cout << "total_align_info123 : " << global_align_info123 << std::endl;
 
+    t_1 = GetTime();
     cudaFree(d_seq);
     cudaFree(d_len);
     cudaFree(d_pre_sum);
@@ -4750,8 +4752,12 @@ void perform_task_async_pe_fx_GPU(
     delete h_seq;
     delete h_len;
     delete h_pre_sum;
-    //fprintf(
-    //    stderr, "cost time1:%.2f time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), tot time:%.2f\n", time1,
-    //    time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
-    //);
+    time4 += GetTime() - t_1;
+
+
+    time_tot = GetTime() - t_0;
+    fprintf(
+        stderr, "cost time0:%.2f time1:%.2f time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), time4:%.2f tot time:%.2f\n", time0, time1,
+        time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time4, time_tot
+    );
 }

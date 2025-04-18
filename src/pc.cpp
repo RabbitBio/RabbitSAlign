@@ -1333,7 +1333,7 @@ void perform_task_async_pe_fx(
                     gasal_results.insert(gasal_results.end(), gasal_results_tmp.begin(), gasal_results_tmp.end());
                 }
             });
-            //gpu_ssw_async.join();
+//            gpu_ssw_async.join();
 
             time2_2 += GetTime() - t_1;
 
@@ -1512,10 +1512,10 @@ void perform_task_async_pe_fx(
     statistics.tot_aligner_calls += aligner.calls_count();
     done = true;
     time_tot = GetTime() - t_0;
-    //fprintf(
-    //    stderr, "cost time1:%.2f time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), tot time:%.2f\n", time1,
-    //    time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
-    //);
+    fprintf(
+        stderr, "cost time1:%.2f time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), tot time:%.2f\n", time1,
+        time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
+    );
 }
 #else
 
