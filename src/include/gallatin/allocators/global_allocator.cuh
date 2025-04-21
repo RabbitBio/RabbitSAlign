@@ -38,8 +38,8 @@ namespace gallatin {
 namespace allocators {
 
 
-//using global_allocator_type = gallatin::allocators::Gallatin<16ULL*1024*1024, 16ULL, 4096ULL>;
-using global_allocator_type = gallatin::allocators::Gallatin<256ULL*1024*1024, 128ULL, 65536ULL>;
+using global_allocator_type = gallatin::allocators::Gallatin<16ULL*1024*1024, 16ULL, 4096ULL>;
+//using global_allocator_type = gallatin::allocators::Gallatin<256ULL*1024*1024, 128ULL, 65536ULL>;
 
 __device__ global_allocator_type * global_gallatin;
 

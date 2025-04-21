@@ -4047,7 +4047,7 @@ void GPU_align_PE(std::vector<klibpp::KSeq> &records1, std::vector<klibpp::KSeq>
         global_align_res[i].align_res.length = 0;
         global_align_res[i].cigar_info.length = 0;
     }
-//    printf("types: %d %d %d %d %d\n", types[0].size(), types[1].size(), types[2].size(), types[3].size(), types[4].size());
+    printf("types: %d %d %d %d %d\n", types[0].size(), types[1].size(), types[2].size(), types[3].size(), types[4].size());
 
     t1 = GetTime();
 
@@ -4067,7 +4067,7 @@ void GPU_align_PE(std::vector<klibpp::KSeq> &records1, std::vector<klibpp::KSeq>
     for (int i = 0; i < types[1].size(); i++) {
         global_todo_ids[i] = types[1][i];
     }
-    threads_per_block = 32;
+    threads_per_block = 4;
     reads_per_block = threads_per_block * GPU_thread_task_size;
     blocks_per_grid = (types[1].size() + reads_per_block - 1) / reads_per_block;
     gpu_align_PE1<<<blocks_per_grid, threads_per_block>>>(types[1].size(), s_len, d_index_para, global_align_info, d_aligner, d_pre_sum, d_len, d_seq, d_pre_sum2, d_len2, d_seq2,
@@ -4079,7 +4079,7 @@ void GPU_align_PE(std::vector<klibpp::KSeq> &records1, std::vector<klibpp::KSeq>
     for (int i = 0; i < types[2].size(); i++) {
         global_todo_ids[i] = types[2][i];
     }
-    threads_per_block = 32;
+    threads_per_block = 4;
     reads_per_block = threads_per_block * GPU_thread_task_size;
     blocks_per_grid = (types[2].size() + reads_per_block - 1) / reads_per_block;
     gpu_align_PE2<<<blocks_per_grid, threads_per_block>>>(types[2].size(), s_len, d_index_para, global_align_info, d_aligner, d_pre_sum, d_len, d_seq, d_pre_sum2, d_len2, d_seq2,
@@ -4091,7 +4091,7 @@ void GPU_align_PE(std::vector<klibpp::KSeq> &records1, std::vector<klibpp::KSeq>
     for (int i = 0; i < types[3].size(); i++) {
         global_todo_ids[i] = types[3][i];
     }
-    threads_per_block = 32;
+    threads_per_block = 4;
     reads_per_block = threads_per_block * GPU_thread_task_size;
     blocks_per_grid = (types[3].size() + reads_per_block - 1) / reads_per_block;
     gpu_align_PE3<<<blocks_per_grid, threads_per_block>>>(types[3].size(), s_len, d_index_para, global_align_info, d_aligner, d_pre_sum, d_len, d_seq, d_pre_sum2, d_len2, d_seq2,
@@ -4239,12 +4239,12 @@ void perform_task_async_pe_fx_GPU(
     std::vector<neoReference> data2;
     rabbit::fq::FastqDataPairChunk *fqdatachunk = new rabbit::fq::FastqDataPairChunk;
 
-#define batch_size 50000ll
-#define batch_seq_szie batch_size * 200ll
+#define batch_size 60000ll
+#define batch_seq_szie batch_size * 160ll
 
     t_1 = GetTime();
     // init device memory pool
-    uint64_t num_bytes = 16 * 1024ll * 1024ll * 1024ll;
+    uint64_t num_bytes = 24 * 1024ll * 1024ll * 1024ll;
     uint64_t seed = 13;
     std::call_once(init_flag_pool[gpu_id], init_mm_safe, num_bytes, seed, gpu_id, thread_id);
     printf("Gallatin global allocator initialized with %lu bytes.\n", num_bytes);
@@ -4523,8 +4523,8 @@ void perform_task_async_pe_fx_GPU(
 
             // step2 : solve todo_strings -- do ssw on gpu -- key step, need async
             t_1 = GetTime();
-//            gpu_ssw_async = std::thread([&] (){
-//                cudaSetDevice(0);
+            gpu_ssw_async = std::thread([&] (){
+                cudaSetDevice(0);
                 for (size_t i = 0; i + STREAM_BATCH_SIZE <= todo_querys.size(); i += STREAM_BATCH_SIZE) {
                     auto query_start = todo_querys.begin() + i;
                     auto query_end = query_start + STREAM_BATCH_SIZE;
@@ -4554,7 +4554,7 @@ void perform_task_async_pe_fx_GPU(
                     );
                     gasal_results.insert(gasal_results.end(), gasal_results_tmp.begin(), gasal_results_tmp.end());
                 }
-//            });
+            });
 //            gpu_ssw_async.join();
 
             time2_2 += GetTime() - t_1;
@@ -4610,9 +4610,9 @@ void perform_task_async_pe_fx_GPU(
             time1 += GetTime() - t_1;
         }
 
-//        if (gpu_ssw_async.joinable()) {
-//            gpu_ssw_async.join();
-//        }
+        if (gpu_ssw_async.joinable()) {
+            gpu_ssw_async.join();
+        }
 
 
         //chunk0_part3
@@ -4622,7 +4622,6 @@ void perform_task_async_pe_fx_GPU(
             // step1 : post-process the gpu results, re-ssw for bad results on cpu
             t_1 = GetTime();
             info_results.resize(todo_querys.size());
-//#pragma omp parallel for num_threads(8)
             for (size_t i = 0; i < todo_querys.size(); i++) {
                 AlignmentInfo info;
                 if (gasal_fail(todo_querys[i], todo_refs[i], gasal_results[i])) {
@@ -4699,7 +4698,6 @@ void perform_task_async_pe_fx_GPU(
                 sam_out,          references, map_param.cigar_ops, read_group_id, map_param.output_unmapped,
                 map_param.details
             };
-//#pragma omp parallel for num_threads(8)
             for (size_t i = 0; i < pre_records1.size(); ++i) {
                 auto record1 = pre_records1[i];
                 auto record2 = pre_records2[i];
