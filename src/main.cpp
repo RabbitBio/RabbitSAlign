@@ -509,7 +509,7 @@ int run_rabbitsalign(int argc, char **argv) {
 
 #define use_gpu_align
 #ifdef use_gpu_align
-            for (int i = 0; i < opt.n_threads - 1; ++i) {
+            for (int i = 0; i < opt.n_threads - 12; ++i) {
                 std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
                                      std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
                                      std::ref(map_param), std::ref(index_parameters), std::ref(references),
@@ -517,12 +517,12 @@ int run_rabbitsalign(int argc, char **argv) {
                                      std::ref(fastqPool), std::ref(queue_pe), use_good_numa);
                 workers.push_back(std::move(consumer));
             }
-            for (int i = opt.n_threads - 1; i < opt.n_threads; i++) {
+            for (int i = opt.n_threads - 12, j = 0; i < opt.n_threads; i++, j++) {
                 std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
                                      std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
                                      std::ref(map_param), std::ref(index_parameters), std::ref(references),
                                      std::ref(index), std::ref(opt.read_group_id), i,
-                                     std::ref(fastqPool), std::ref(queue_pe), use_good_numa);
+                                     std::ref(fastqPool), std::ref(queue_pe), use_good_numa, j / 4 + 1);
                 workers.push_back(std::move(consumer));
             }
 #else

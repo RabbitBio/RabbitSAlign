@@ -27,6 +27,7 @@ void perform_task_async_pe_fx_GPU(
     const int thread_id,
     rabbit::fq::FastqDataPool& fastqPool,
     rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq,
-    bool use_good_numa
+    bool use_good_numa,
+    int gpu_id
 );
 #endif  //RABBITSALIGN_GPU_STEP_H
