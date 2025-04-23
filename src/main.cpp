@@ -515,6 +515,7 @@ int run_rabbitsalign(int argc, char **argv) {
             const int cpu_thread_num = opt.n_threads - gpu_thread_num;
             const int per_gpu_thread_num = gpu_thread_num / gpu_num;
             const int per_cpu_thread_num = cpu_thread_num / gpu_num;
+            printf("cpu_thread_num: %d, gpu_thread_num: %d, per_gpu_thread_num: %d, per_cpu_thread_num: %d\n", cpu_thread_num, gpu_thread_num, per_gpu_thread_num, per_cpu_thread_num);
             for (int i = 0; i < cpu_thread_num; ++i) {
                 std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
                                      std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),

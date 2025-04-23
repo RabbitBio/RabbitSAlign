@@ -232,7 +232,7 @@ __device__ void print_str(my_string str) {
 
 #define MAX_TRIES_LIMIT (mapping_parameters->max_tries * 2 + 2)
 #define MAX_TRIES_LIMIT2 (map_param.max_tries * 2 + 2)
-#define MAX_CIGAR_ITEM 20
+
 
 
 struct GPURead {
@@ -242,37 +242,7 @@ struct GPURead {
     __device__ int size() const { return length; }
 };
 
-struct GPUAlignment {
-    int ref_id{0};
-    int ref_start{0};
-    //my_vector<uint32_t> cigar;
-    int edit_distance{0};
-    int global_ed{0};
-    int score{0};
-    int length{0};
-    bool is_rc{0};
-    bool is_unaligned{false};
-    // Whether a gapped alignment function was used to obtain this alignment
-    // (even if true, the alignment can still be without gaps)
-    bool gapped{false};
-    //__device__ void move_to(GPUAlignment& dest) {
-    //    dest.ref_id = ref_id;
-    //    dest.ref_start = ref_start;
-    //    //dest.cigar.move_from(cigar);
-    //    dest.edit_distance = edit_distance;
-    //    dest.global_ed = global_ed;
-    //    dest.score = score;
-    //    dest.length = length;
-    //    dest.is_rc = is_rc;
-    //    dest.is_unaligned = is_unaligned;
-    //    dest.gapped = gapped;
-    //}
 
-};
-
-struct CigarData{
-    uint32_t cigar[MAX_CIGAR_ITEM];
-};
 
 struct GPUAlignTmpRes {
     int type;
@@ -1721,12 +1691,6 @@ __device__ static unsigned char gpu_revcomp_table[256] = {
     'N', 'N', 'N', 'N',  'N', 'N', 'N', 'N',  'N', 'N', 'N', 'N',  'N', 'N', 'N', 'N'
 };
 
-struct GPUScoredAlignmentPair {
-    double score;
-    GPUAlignment alignment1;
-    GPUAlignment alignment2;
-};
-
 __device__ void align_PE_part0(
     GPUAlignTmpRes& align_tmp_res,
     const AlignmentParameters& aligner_parameters,
@@ -1958,7 +1922,6 @@ __device__ void align_PE_part4(
     dummy_nam.ref_start = -1;
 
     // Turn pairs of high-scoring NAMs into pairs of alignments
-    //    my_vector<GPUScoredAlignmentPair> high_scores;
     int high_scores_size = 0;
     double max_score = joint_nam_scores[0].score;
     align_tmp_res.type4_loop_size = 0;
@@ -2008,8 +1971,6 @@ __device__ void align_PE_part4(
             bool is_unaligned = gpu_rescue_mate_part(align_tmp_res, aligner_parameters, n1, references, read2, mu, sigma, k);
         }
         high_scores_size++;
-        //        GPUScoredAlignmentPair aln_pair;
-        //        high_scores.push_back(aln_pair);
     }
 
     my_free(rc1);
@@ -3711,9 +3672,10 @@ void print_global_align_res(GPUAlignTmpRes* global_align_res, int batch_size) {
 }
 
 void fast_copy_align_res(GPUAlignTmpRes* global_align_res, int batch_size, std::vector<AlignTmpRes>& align_tmp_results) {
-    assert(align_tmp_results.size() == 0);
+//    assert(align_tmp_results.size() == 0);
     uint64_t cigar_size = 0;
     uint64_t mx_cigar_size = 0;
+//    printf("align size %d\n", align_tmp_results.size());
     for (int i = 0; i < batch_size; ++i) {
         const GPUAlignTmpRes& tmp = global_align_res[i];
         AlignTmpRes align_tmp_res;
@@ -3830,6 +3792,595 @@ struct ThreadContext {
     }
 };
 
+#define batch_size1 60000ll
+#define batch_size2 60000ll
+#define batch_seq_szie batch_size2 * 160ll
+
+void GPU_part2_rescue_mate_get_str(
+    std::vector<std::string>& todo_querys,
+    std::vector<std::string>& todo_refs,
+    GPUAlignTmpRes& align_tmp_res,
+    int j,
+    Read read1,
+    Read read2,
+    const References& references,
+    const Aligner& aligner,
+    float mu,
+    float sigma
+) {
+    Nam nam = align_tmp_res.todo_nams[j];
+    Read read = align_tmp_res.is_read1[j] ? read1 : read2;
+    int a, b;
+    std::string r_tmp;
+    auto read_len = read.size();
+
+    if (nam.is_rc) {
+        r_tmp = read.seq;
+        a = nam.ref_start - nam.query_start - (mu + 5 * sigma);
+        b = nam.ref_start - nam.query_start + read_len / 2;  // at most half read overlap
+    } else {
+        r_tmp = read.rc;                                              // mate is rc since fr orientation
+        a = nam.ref_end + (read_len - nam.query_end) - read_len / 2;  // at most half read overlap
+        b = nam.ref_end + (read_len - nam.query_end) + (mu + 5 * sigma);
+    }
+
+    auto ref_len = static_cast<int>(references.lengths[nam.ref_id]);
+    auto ref_start = std::max(0, std::min(a, ref_len));
+    auto ref_end = std::min(ref_len, std::max(0, b));
+
+    std::string ref_segm = references.sequences[nam.ref_id].substr(ref_start, ref_end - ref_start);
+    todo_querys.push_back(r_tmp);
+    todo_refs.push_back(ref_segm);
+}
+
+void GPU_part2_extend_seed_get_str(
+    std::vector<std::string>& todo_querys,
+    std::vector<std::string>& todo_refs,
+    GPUAlignTmpRes& align_tmp_res,
+    int j,
+    Read read1,
+    Read read2,
+    const References& references,
+    const Aligner& aligner
+) {
+    Nam nam = align_tmp_res.todo_nams[j];
+    Read read = align_tmp_res.is_read1[j] ? read1 : read2;
+    AlignmentInfo info;
+    int result_ref_start;
+    const std::string query = nam.is_rc ? read.rc : read.seq;
+    const std::string& ref = references.sequences[nam.ref_id];
+
+    const auto projected_ref_start = std::max(0, nam.ref_start - nam.query_start);
+    const auto projected_ref_end = std::min(nam.ref_end + query.size() - nam.query_end, ref.size());
+
+    const int diff = std::abs(nam.ref_span() - nam.query_span());
+    const int ext_left = std::min(50, projected_ref_start);
+    const int ref_start = projected_ref_start - ext_left;
+    const int ext_right = std::min(std::size_t(50), ref.size() - nam.ref_end);
+    const auto ref_segm_size = read.size() + diff + ext_left + ext_right;
+    const auto ref_segm = ref.substr(ref_start, ref_segm_size);
+    todo_querys.push_back(query);
+    todo_refs.push_back(ref_segm);
+}
+
+void GPU_part2_extend_seed_store_res(
+    GPUAlignTmpRes& align_tmp_res,
+    int j,
+    Read read1,
+    Read read2,
+    const References& references,
+    const AlignmentInfo info
+) {
+    Nam nam = align_tmp_res.todo_nams[j];
+    Read read = align_tmp_res.is_read1[j] ? read1 : read2;
+    int result_ref_start;
+    const std::string query = nam.is_rc ? read.rc : read.seq;
+    const std::string& ref = references.sequences[nam.ref_id];
+
+    const auto projected_ref_start = std::max(0, nam.ref_start - nam.query_start);
+    const auto projected_ref_end = std::min(nam.ref_end + query.size() - nam.query_end, ref.size());
+
+    const int diff = std::abs(nam.ref_span() - nam.query_span());
+    const int ext_left = std::min(50, projected_ref_start);
+    const int ref_start = projected_ref_start - ext_left;
+    const int ext_right = std::min(std::size_t(50), ref.size() - nam.ref_end);
+    const auto ref_segm_size = read.size() + diff + ext_left + ext_right;
+    result_ref_start = ref_start + info.ref_start;
+    int softclipped = info.query_start + (query.size() - info.query_end);
+    GPUAlignment& alignment = align_tmp_res.align_res[j];
+//    alignment.cigar = std::move(info.cigar);
+    alignment.edit_distance = info.edit_distance;
+    alignment.global_ed = info.edit_distance + softclipped;
+    alignment.score = info.sw_score;
+    alignment.ref_start = result_ref_start;
+    alignment.length = info.ref_span();
+    alignment.is_rc = nam.is_rc;
+    alignment.is_unaligned = false;
+    alignment.ref_id = nam.ref_id;
+    alignment.gapped = true;
+
+    align_tmp_res.cigar_info[j].cigar[0] = info.cigar.m_ops.size();
+    for (int k = 0; k < info.cigar.m_ops.size(); k++) {
+            align_tmp_res.cigar_info[j].cigar[k + 1] = info.cigar.m_ops[k];
+    }
+}
+
+void GPU_part2_rescue_mate_store_res(
+    GPUAlignTmpRes& align_tmp_res,
+    int j,
+    Read read1,
+    Read read2,
+    const References& references,
+    const AlignmentInfo& info,
+    float mu,
+    float sigma
+) {
+    Nam nam = align_tmp_res.todo_nams[j];
+    Read read = align_tmp_res.is_read1[j] ? read1 : read2;
+    int a, b;
+    std::string r_tmp;
+    auto read_len = read.size();
+
+    if (nam.is_rc) {
+        r_tmp = read.seq;
+        a = nam.ref_start - nam.query_start - (mu + 5 * sigma);
+        b = nam.ref_start - nam.query_start + read_len / 2;  // at most half read overlap
+    } else {
+        r_tmp = read.rc;                                              // mate is rc since fr orientation
+        a = nam.ref_end + (read_len - nam.query_end) - read_len / 2;  // at most half read overlap
+        b = nam.ref_end + (read_len - nam.query_end) + (mu + 5 * sigma);
+    }
+
+    auto ref_len = static_cast<int>(references.lengths[nam.ref_id]);
+    auto ref_start = std::max(0, std::min(a, ref_len));
+    auto ref_end = std::min(ref_len, std::max(0, b));
+
+    GPUAlignment& alignment = align_tmp_res.align_res[j];
+//    alignment.cigar = info.cigar;
+    alignment.edit_distance = info.edit_distance;
+    alignment.score = info.sw_score;
+    alignment.ref_start = ref_start + info.ref_start;
+    alignment.is_rc = !nam.is_rc;
+    alignment.ref_id = nam.ref_id;
+    alignment.is_unaligned = info.cigar.empty();
+    alignment.length = info.ref_span();
+
+    align_tmp_res.cigar_info[j].cigar[0] = info.cigar.m_ops.size();
+    for (int k = 0; k < info.cigar.m_ops.size(); k++) {
+        align_tmp_res.cigar_info[j].cigar[k + 1] = info.cigar.m_ops[k];
+    }
+
+}
+
+struct GPUScoredAlignmentPair {
+    double score;
+    std::pair<GPUAlignment, CigarData> alignment1;
+    std::pair<GPUAlignment, CigarData> alignment2;
+};
+
+static inline float GPU_normal_pdf(float x, float mu, float sigma) {
+    static const float inv_sqrt_2pi = 0.3989422804014327;
+    const float a = (x - mu) / sigma;
+    
+    return inv_sqrt_2pi / sigma * std::exp(-0.5f * a * a);
+}
+
+static inline std::vector<GPUScoredAlignmentPair> GPU_get_best_scoring_pairs(
+    const std::vector<std::pair<GPUAlignment, CigarData>>& alignments1,
+    const std::vector<std::pair<GPUAlignment, CigarData>>& alignments2,
+    float mu,
+    float sigma
+) {
+    std::vector<GPUScoredAlignmentPair> pairs;
+    for (auto& aa1 : alignments1) {
+        for (auto& aa2 : alignments2) {
+            GPUAlignment a1 = aa1.first;
+            GPUAlignment a2 = aa2.first;
+            float dist = std::abs(a1.ref_start - a2.ref_start);
+            double score = a1.score + a2.score;
+            if ((a1.is_rc ^ a2.is_rc) && (dist < mu + 4 * sigma)) {
+                score += log(GPU_normal_pdf(dist, mu, sigma));
+            } else {  // individual score
+                // 10 corresponds to a value of log(GPU_normal_pdf(dist, mu, sigma)) of more than 4 stddevs away
+                score -= 10;
+            }
+            pairs.push_back(GPUScoredAlignmentPair{score, aa1, aa2});
+        }
+    }
+
+    return pairs;
+}
+
+void GPU_deduplicate_scored_pairs(std::vector<GPUScoredAlignmentPair>& pairs) {
+    int prev_ref_start1 = pairs[0].alignment1.first.ref_start;
+    int prev_ref_start2 = pairs[0].alignment2.first.ref_start;
+    int prev_ref_id1 = pairs[0].alignment1.first.ref_id;
+    int prev_ref_id2 = pairs[0].alignment2.first.ref_id;
+    size_t j = 1;
+    for (size_t i = 1; i < pairs.size(); i++) {
+        int ref_start1 = pairs[i].alignment1.first.ref_start;
+        int ref_start2 = pairs[i].alignment2.first.ref_start;
+        int ref_id1 = pairs[i].alignment1.first.ref_id;
+        int ref_id2 = pairs[i].alignment2.first.ref_id;
+        if (ref_start1 != prev_ref_start1 || ref_start2 != prev_ref_start2 || ref_id1 != prev_ref_id1 ||
+            ref_id2 != prev_ref_id2) {
+            prev_ref_start1 = ref_start1;
+            prev_ref_start2 = ref_start2;
+            prev_ref_id1 = ref_id1;
+            prev_ref_id2 = ref_id2;
+            pairs[j] = pairs[i];
+            j++;
+        }
+    }
+    pairs.resize(j);
+}
+
+static std::pair<int, int> GPU_joint_mapq_from_high_scores(const std::vector<GPUScoredAlignmentPair>& pairs) {
+    if (pairs.size() <= 1) {
+        return std::make_pair(60, 60);
+    }
+    auto score1 = pairs[0].score;
+    auto score2 = pairs[1].score;
+    if (score1 == score2) {
+        return std::make_pair(0, 0);
+    }
+    int mapq;
+    const int diff = score1 - score2;  // (1.0 - (S1 - S2) / S1);
+    //  float log10_p = diff > 6 ? -6.0 : -diff; // Corresponds to: p_error= 0.1^diff // change in sw score times rough illumina error rate. This is highly heauristic, but so seem most computations of mapq scores
+    if (score1 > 0 && score2 > 0) {
+        mapq = std::min(60, diff);
+        //            mapq1 = -10 * log10_p < 60 ? -10 * log10_p : 60;
+    } else if (score1 > 0 && score2 <= 0) {
+        mapq = 60;
+    } else {  // both negative SW one is better
+        mapq = 1;
+    }
+    return std::make_pair(mapq, mapq);
+}
+
+bool GPU_is_proper_pair(const std::pair<GPUAlignment, CigarData>& alignment1, const std::pair<GPUAlignment, CigarData>& alignment2, float mu, float sigma) {
+    const int dist = alignment2.first.ref_start - alignment1.first.ref_start;
+    const bool same_reference = alignment1.first.ref_id == alignment2.first.ref_id;
+    const bool both_aligned = same_reference && !alignment1.first.is_unaligned && !alignment2.first.is_unaligned;
+    const bool r1_r2 = !alignment1.first.is_rc && alignment2.first.is_rc && dist >= 0; // r1 ---> <---- r2
+    const bool r2_r1 = !alignment2.first.is_rc && alignment1.first.is_rc && dist <= 0; // r2 ---> <---- r1
+    const bool rel_orientation_good = r1_r2 || r2_r1;
+    const bool insert_good = std::abs(dist) <= mu + 6 * sigma;
+
+    return both_aligned && insert_good && rel_orientation_good;
+}
+
+void GPU_rescue_read_last(
+    int flag,
+    GPUAlignTmpRes& align_tmp_res,
+    const Read& read2,  // read to be rescued
+    const Read& read1,  // read that has NAMs
+    const Aligner& aligner,
+    const References& references,
+    std::array<Details, 2>& details,
+    float mu,
+    float sigma,
+    size_t max_secondary,
+    double secondary_dropoff,
+    Sam& sam,
+    const klibpp::KSeq& record1,
+    const klibpp::KSeq& record2,
+    bool swap_r1r2,  // TODO get rid of this
+    std::minstd_rand& random_engine
+) {
+    std::vector<std::pair<GPUAlignment, CigarData>> alignments1;
+    std::vector<std::pair<GPUAlignment, CigarData>> alignments2;
+    int res_num = align_tmp_res.todo_nams.size();
+    assert(res_num % 2 == 0);
+    for (int i = 0; i < res_num; i += 2) {
+        alignments1.push_back(std::make_pair(align_tmp_res.align_res[i], align_tmp_res.cigar_info[i]));
+        alignments2.push_back(std::make_pair(align_tmp_res.align_res[i + 1], align_tmp_res.cigar_info[i + 1]));
+        details[1].mate_rescue += !align_tmp_res.align_res[i + 1].is_unaligned;
+        //        fprintf(stderr, "3 a1 score %d\n", align_tmp_res.align_res[i].score);
+        //        fprintf(stderr, "3 a2 score %d\n", align_tmp_res.align_res[i + 1].score);
+    }
+    std::sort(alignments1.begin(), alignments1.end(),
+              [](const std::pair<GPUAlignment, CigarData>& a,
+                 const std::pair<GPUAlignment, CigarData>& b) {
+                  return a.first.score > b.first.score;
+              });
+    std::sort(alignments2.begin(), alignments2.end(),
+              [](const std::pair<GPUAlignment, CigarData>& a,
+                 const std::pair<GPUAlignment, CigarData>& b) {
+                  return a.first.score > b.first.score;
+              });
+
+    // Calculate best combined score here
+    auto high_scores = GPU_get_best_scoring_pairs(alignments1, alignments2, mu, sigma);
+
+    std::sort(high_scores.begin(), high_scores.end(),
+              [](const GPUScoredAlignmentPair& a,
+                 const GPUScoredAlignmentPair& b) {
+                  return a.score > b.score;
+              });
+    GPU_deduplicate_scored_pairs(high_scores);
+//    pick_random_top_pair(high_scores, random_engine);
+
+    auto [mapq1, mapq2] = GPU_joint_mapq_from_high_scores(high_scores);
+
+    // append both alignments to string here
+    if (max_secondary == 0) {
+        auto best_aln_pair = high_scores[0];
+        std::pair<GPUAlignment, CigarData> alignment1 = best_aln_pair.alignment1;
+        std::pair<GPUAlignment, CigarData> alignment2 = best_aln_pair.alignment2;
+        if (swap_r1r2) {
+            sam.add_pair(
+                alignment2, alignment1, record2, record1, read2.rc, read1.rc, mapq2, mapq1,
+                GPU_is_proper_pair(alignment2, alignment1, mu, sigma), true, details
+            );
+        } else {
+            sam.add_pair(
+                alignment1, alignment2, record1, record2, read1.rc, read2.rc, mapq1, mapq2,
+                GPU_is_proper_pair(alignment1, alignment2, mu, sigma), true, details
+            );
+        }
+    } else {
+        auto max_out = std::min(high_scores.size(), (size_t)max_secondary);
+        bool is_primary = true;
+        auto best_aln_pair = high_scores[0];
+        auto s_max = best_aln_pair.score;
+        for (size_t i = 0; i < max_out; ++i) {
+            if (i > 0) {
+                is_primary = false;
+                mapq1 = 0;
+                mapq2 = 0;
+            }
+            auto aln_pair = high_scores[i];
+            auto s_score = aln_pair.score;
+            auto alignment1 = aln_pair.alignment1;
+            auto alignment2 = aln_pair.alignment2;
+            if (s_max - s_score < secondary_dropoff) {
+                if (swap_r1r2) {
+                    bool is_proper = GPU_is_proper_pair(alignment2, alignment1, mu, sigma);
+                    std::array<Details, 2> swapped_details{details[1], details[0]};
+                    sam.add_pair(
+                        alignment2, alignment1, record2, record1, read2.rc, read1.rc, mapq2, mapq1,
+                        is_proper, is_primary, swapped_details
+                    );
+                } else {
+                    bool is_proper = GPU_is_proper_pair(alignment1, alignment2, mu, sigma);
+                    sam.add_pair(
+                        alignment1, alignment2, record1, record2, read1.rc, read2.rc, mapq1, mapq2,
+                        is_proper, is_primary, details
+                    );
+                }
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+void GPU_align_PE_read_last(
+    GPUAlignTmpRes& align_tmp_res,
+    const klibpp::KSeq& record1,
+    const klibpp::KSeq& record2,
+    Sam& sam,
+    std::string& outstring,
+    AlignmentStatistics& statistics,
+    InsertSizeDistribution& isize_est,
+    const Aligner& aligner,
+    const MappingParameters& map_param,
+    const IndexParameters& index_parameters,
+    const References& references,
+    const StrobemerIndex& index,
+    std::minstd_rand& random_engine
+) {
+    std::array<Details, 2> details;
+    const auto mu = isize_est.mu;
+    const auto sigma = isize_est.sigma;
+    Read read1(record1.seq);
+    Read read2(record2.seq);
+    double secondary_dropoff = 2 * aligner.parameters.mismatch + aligner.parameters.gap_open;
+
+    Timer extend_timer;
+    //    fprintf(stderr, "type %d\n", align_tmp_res.type);
+    if (align_tmp_res.type == 0) {
+        // None of the reads have any NAMs
+        sam.add_unmapped_pair(record1, record2);
+    } else if (align_tmp_res.type == 1) {
+        GPU_rescue_read_last(
+            1, align_tmp_res, read2, read1, aligner, references, details, mu,
+            sigma, map_param.max_secondary, secondary_dropoff, sam, record1, record2, false, random_engine
+        );
+    } else if (align_tmp_res.type == 2) {
+        GPU_rescue_read_last(
+            2, align_tmp_res, read1, read2, aligner, references, details, mu,
+            sigma, map_param.max_secondary, secondary_dropoff, sam, record2, record1, true, random_engine
+        );
+    } else if (align_tmp_res.type == 3) {
+        assert(align_tmp_res.todo_nams.size() == 2);
+        int mapq1 = align_tmp_res.mapq1;
+        int mapq2 = align_tmp_res.mapq2;
+        std::pair<GPUAlignment, CigarData> alignment1 = std::make_pair(align_tmp_res.align_res[0], align_tmp_res.cigar_info[0]);
+        std::pair<GPUAlignment, CigarData> alignment2 = std::make_pair(align_tmp_res.align_res[1], align_tmp_res.cigar_info[1]);
+        bool is_proper = GPU_is_proper_pair(alignment1, alignment2, mu, sigma);
+        bool is_primary = true;
+        sam.add_pair(
+            alignment1, alignment2, record1, record2, read1.rc, read2.rc, mapq1, mapq2, is_proper, is_primary,
+            details
+        );
+        //TODO update
+        //if ((isize_est.sample_size < 400) && (alignment1.edit_distance + alignment2.edit_distance < 3) &&
+        //    is_proper) {
+        //    isize_est.update(std::abs(alignment1.ref_start - alignment2.ref_start));
+        //}
+
+    } else if (align_tmp_res.type == 4) {
+        int pos = 0;
+        robin_hood::unordered_map<int, std::pair<GPUAlignment, CigarData>> is_aligned1;
+        robin_hood::unordered_map<int, std::pair<GPUAlignment, CigarData>> is_aligned2;
+
+        std::pair<GPUAlignment, CigarData> a1_indv_max, a2_indv_max;
+        {
+
+            auto n1_max = align_tmp_res.todo_nams[pos];
+            //            fprintf(stderr, "get n1 %d from %d\n", n1_max.nam_id, pos);
+            a1_indv_max = std::make_pair(align_tmp_res.align_res[pos], align_tmp_res.cigar_info[pos]);
+            is_aligned1[n1_max.nam_id] = a1_indv_max;
+
+            pos++;
+
+            auto n2_max = align_tmp_res.todo_nams[pos];
+            //            fprintf(stderr, "get n2 %d from %d\n", n2_max.nam_id, pos);
+            a2_indv_max = std::make_pair(align_tmp_res.align_res[pos], align_tmp_res.cigar_info[pos]);
+            is_aligned2[n2_max.nam_id] = a2_indv_max;
+
+            pos++;
+        }
+
+        std::vector<GPUScoredAlignmentPair> high_scores;
+        assert(align_tmp_res.type4_loop_size * 2 == align_tmp_res.type4_nams.size());
+
+        for(int i = 0; i < align_tmp_res.type4_loop_size; i++) {
+            Nam n1 = align_tmp_res.type4_nams[i * 2];
+            Nam n2 = align_tmp_res.type4_nams[i * 2 + 1];
+            //            fprintf(stderr, "n1 %d, n2 %d\n", n1.nam_id, n2.nam_id);
+
+            std::pair<GPUAlignment, CigarData> a1;
+            // ref_start == -1 is a marker for a dummy NAM
+            if (n1.ref_start >= 0) {
+                if (is_aligned1.find(n1.nam_id) != is_aligned1.end()) {
+                    //                    fprintf(stderr, "find n1 %d\n", n1.nam_id);
+                    a1 = is_aligned1[n1.nam_id];
+                } else {
+                    //                    fprintf(stderr, "get n1 %d from %d\n", n1.nam_id, pos);
+                    a1 = std::make_pair(align_tmp_res.align_res[pos], align_tmp_res.cigar_info[pos]);
+                    assert(n1.nam_id == align_tmp_res.todo_nams[pos].nam_id);
+                    pos++;
+                    is_aligned1[n1.nam_id] = a1;
+                }
+            } else {
+                //                fprintf(stderr, "get gg n1 %d from %d\n", n1.nam_id, pos);
+                a1 = std::make_pair(align_tmp_res.align_res[pos], align_tmp_res.cigar_info[pos]);
+                assert(n2.nam_id == align_tmp_res.todo_nams[pos].nam_id);
+                pos++;
+                details[0].mate_rescue += !a1.first.is_unaligned;
+            }
+            if (a1.first.score > a1_indv_max.first.score) {
+                a1_indv_max = a1;
+            }
+
+            std::pair<GPUAlignment, CigarData> a2;
+            // ref_start == -1 is a marker for a dummy NAM
+            if (n2.ref_start >= 0) {
+                if (is_aligned2.find(n2.nam_id) != is_aligned2.end()) {
+                    //                    fprintf(stderr, "find n2 %d\n", n2.nam_id);
+                    a2 = is_aligned2[n2.nam_id];
+                } else {
+                    //                    fprintf(stderr, "get n2 %d from %d\n", n2.nam_id, pos);
+                    a2 = std::make_pair(align_tmp_res.align_res[pos], align_tmp_res.cigar_info[pos]);
+                    assert(n2.nam_id == align_tmp_res.todo_nams[pos].nam_id);
+                    pos++;
+                    is_aligned2[n2.nam_id] = a2;
+                }
+            } else {
+                //                fprintf(stderr, "get gg n2 %d from %d\n", n2.nam_id, pos);
+                a2 = std::make_pair(align_tmp_res.align_res[pos], align_tmp_res.cigar_info[pos]);
+                assert(n1.nam_id == align_tmp_res.todo_nams[pos].nam_id);
+                pos++;
+                details[1].mate_rescue += !a2.first.is_unaligned;
+            }
+            if (a2.first.score > a2_indv_max.first.score) {
+                a2_indv_max = a2;
+            }
+
+            bool r1_r2 = a2.first.is_rc && (a1.first.ref_start <= a2.first.ref_start) &&
+                         ((a2.first.ref_start - a1.first.ref_start) < mu + 10 * sigma);  // r1 ---> <---- r2
+            bool r2_r1 = a1.first.is_rc && (a2.first.ref_start <= a1.first.ref_start) &&
+                         ((a1.first.ref_start - a2.first.ref_start) < mu + 10 * sigma);  // r2 ---> <---- r1
+
+            double combined_score;
+            if (r1_r2 || r2_r1) {
+                // Treat a1/a2 as a pair
+                float x = std::abs(a1.first.ref_start - a2.first.ref_start);
+                combined_score = (double) a1.first.score + (double) a2.first.score +
+                                 std::max(-20.0f + 0.001f, log(GPU_normal_pdf(x, mu, sigma)));
+                //* (1 - s2 / s1) * min_matches * log(s1);
+            } else {
+                // Treat a1/a2 as two single-end reads
+                // 20 corresponds to a value of log(GPU_normal_pdf(x, mu, sigma)) of more than 5 stddevs away (for most reasonable values of stddev)
+                combined_score = (double) a1.first.score + (double) a2.first.score - 20;
+            }
+
+            GPUScoredAlignmentPair aln_pair{combined_score, a1, a2};
+            high_scores.push_back(aln_pair);
+
+        }
+        assert(pos == align_tmp_res.todo_nams.size());
+        //        fprintf(stderr, "111\n");
+
+        // Finally, add highest scores of both mates as individually mapped
+        double combined_score =
+            (double) a1_indv_max.first.score + (double) a2_indv_max.first.score -
+            20;  // 20 corresponds to  a value of log( GPU_normal_pdf(x, mu, sigma ) ) of more than 5 stddevs away (for most reasonable values of stddev)
+        GPUScoredAlignmentPair aln_tuple{combined_score, a1_indv_max, a2_indv_max};
+        high_scores.push_back(aln_tuple);
+
+        std::sort(high_scores.begin(), high_scores.end(),
+                  [](const GPUScoredAlignmentPair& a,
+                     const GPUScoredAlignmentPair& b) {
+                      return a.score > b.score;
+                  });
+        GPU_deduplicate_scored_pairs(high_scores);
+        //        fprintf(stderr, "part4 : ");
+        //        for(auto item : high_scores)
+        //            fprintf(stderr, "%f ,", item.score);
+        //        fprintf(stderr, "\n\n");
+//        pick_random_top_pair(high_scores, random_engine);
+        //        fprintf(stderr, "111\n");
+
+        auto [mapq1, mapq2] = GPU_joint_mapq_from_high_scores(high_scores);
+        auto best_aln_pair = high_scores[0];
+        auto alignment1 = best_aln_pair.alignment1;
+        auto alignment2 = best_aln_pair.alignment2;
+        if (map_param.max_secondary == 0) {
+            bool is_proper = GPU_is_proper_pair(alignment1, alignment2, mu, sigma);
+            //            fprintf(stderr, "111\n");
+
+            sam.add_pair(
+                alignment1, alignment2, record1, record2, read1.rc, read2.rc, mapq1, mapq2, is_proper, true,
+                details
+            );
+            //            fprintf(stderr, "111\n");
+
+        } else {
+            auto max_out = std::min(high_scores.size(), (size_t)map_param.max_secondary);
+            // remove eventual duplicates - comes from, e.g., adding individual best alignments above (if identical to joint best alignment)
+            float s_max = best_aln_pair.score;
+            bool is_primary = true;
+            for (size_t i = 0; i < max_out; ++i) {
+                auto aln_pair = high_scores[i];
+                alignment1 = aln_pair.alignment1;
+                alignment2 = aln_pair.alignment2;
+                float s_score = aln_pair.score;
+                if (i > 0) {
+                    is_primary = false;
+                    mapq1 = 255;
+                    mapq2 = 255;
+                }
+
+                if (s_max - s_score < secondary_dropoff) {
+                    bool is_proper = GPU_is_proper_pair(alignment1, alignment2, mu, sigma);
+                    sam.add_pair(
+                        alignment1, alignment2, record1, record2, read1.rc, read2.rc, mapq1, mapq2, is_proper,
+                        is_primary, details
+                    );
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    statistics.tot_extend += extend_timer.duration();
+    statistics += details[0];
+    statistics += details[1];
+}
 
 void GPU_align_PE(std::vector<klibpp::KSeq> &records1, std::vector<klibpp::KSeq> &records2,
 			 ThreadContext& ctx,
@@ -3842,17 +4393,19 @@ void GPU_align_PE(std::vector<klibpp::KSeq> &records1, std::vector<klibpp::KSeq>
              char *d_seq, int *d_len, int *d_pre_sum, char *d_seq2, int *d_len2, int *d_pre_sum2,
              char *h_seq, int *h_len, int *h_pre_sum, char *h_seq2, int *h_len2, int *h_pre_sum2) {
     assert(records1.size() == records2.size());
-    int l_id = 0, r_id = records1.size();
-    int s_len = r_id - l_id;
-    double t0, t1;
 
+    double t0, t1;
     t0 = GetTime();
+    int l_id, r_id, s_len;
 
     t1 = GetTime();
     uint64_t tot_len = 0;
     uint64_t tot_len2 = 0;
     h_pre_sum[0] = 0;
     h_pre_sum2[0] = 0;
+    l_id = 0;
+    r_id = records1.size();
+    s_len = r_id - l_id;
     for (int i = l_id; i < r_id; i++) {
         tot_len += records1[i].seq.length();
         tot_len2 += records2[i].seq.length();
@@ -3861,312 +4414,347 @@ void GPU_align_PE(std::vector<klibpp::KSeq> &records1, std::vector<klibpp::KSeq>
         h_pre_sum[i + 1 - l_id] = h_pre_sum[i - l_id] + h_len[i - l_id];
         h_pre_sum2[i + 1 - l_id] = h_pre_sum2[i - l_id] + h_len2[i - l_id];
     }
-//#pragma omp parallel for num_threads(4)
     for (int i = l_id; i < r_id; i++) {
         memcpy(h_seq + h_pre_sum[i - l_id], records1[i].seq.c_str(), h_len[i - l_id]);
         memcpy(h_seq2 + h_pre_sum2[i - l_id], records2[i].seq.c_str(), h_len2[i - l_id]);
     }
     gpu_copy1 += GetTime() - t1;
 
-
     t1 = GetTime();
     cudaMemcpy(d_seq, h_seq, tot_len, cudaMemcpyHostToDevice);
     cudaMemcpy(d_len, h_len, s_len * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(d_pre_sum, h_pre_sum, s_len * sizeof(int), cudaMemcpyHostToDevice);
-
     cudaMemcpy(d_seq2, h_seq2, tot_len2, cudaMemcpyHostToDevice);
     cudaMemcpy(d_len2, h_len2, s_len * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(d_pre_sum2, h_pre_sum2, s_len * sizeof(int), cudaMemcpyHostToDevice);
     gpu_copy2 += GetTime() - t1;
 
-    for (int i = 0; i < s_len * 2; i++) {
-        // check infos
-        global_randstrobe_sizes[i] = 0;
-        global_hashes_value[i] = 0;
-        global_hits_num[i] = 0;
-        global_nams_info[i] = 0;
+    for (l_id = 0; l_id < records1.size(); l_id += batch_size1) {
+        r_id = l_id + batch_size1;
+        if (r_id > records1.size()) r_id = records1.size();
+        s_len = r_id - l_id;
+//        printf("small batch size %d-%d, %d\n", l_id, r_id, s_len);
 
-        global_hits_per_ref0s[i].data = nullptr;
-        global_hits_per_ref0s[i].length = 0;
-        global_hits_per_ref1s[i].data = nullptr;
-        global_hits_per_ref1s[i].length = 0;
+//        t1 = GetTime();
+//        uint64_t tot_len = 0;
+//        uint64_t tot_len2 = 0;
+//        h_pre_sum[0] = 0;
+//        h_pre_sum2[0] = 0;
+//        for (int i = l_id; i < r_id; i++) {
+//            tot_len += records1[i].seq.length();
+//            tot_len2 += records2[i].seq.length();
+//            h_len[i - l_id] = records1[i].seq.length();
+//            h_len2[i - l_id] = records2[i].seq.length();
+//            h_pre_sum[i + 1 - l_id] = h_pre_sum[i - l_id] + h_len[i - l_id];
+//            h_pre_sum2[i + 1 - l_id] = h_pre_sum2[i - l_id] + h_len2[i - l_id];
+//        }
+//        for (int i = l_id; i < r_id; i++) {
+//            memcpy(h_seq + h_pre_sum[i - l_id], records1[i].seq.c_str(), h_len[i - l_id]);
+//            memcpy(h_seq2 + h_pre_sum2[i - l_id], records2[i].seq.c_str(), h_len2[i - l_id]);
+//        }
+//        gpu_copy1 += GetTime() - t1;
+//
+//        t1 = GetTime();
+//        cudaMemcpy(d_seq, h_seq, tot_len, cudaMemcpyHostToDevice);
+//        cudaMemcpy(d_len, h_len, s_len * sizeof(int), cudaMemcpyHostToDevice);
+//        cudaMemcpy(d_pre_sum, h_pre_sum, s_len * sizeof(int), cudaMemcpyHostToDevice);
+//        cudaMemcpy(d_seq2, h_seq2, tot_len2, cudaMemcpyHostToDevice);
+//        cudaMemcpy(d_len2, h_len2, s_len * sizeof(int), cudaMemcpyHostToDevice);
+//        cudaMemcpy(d_pre_sum2, h_pre_sum2, s_len * sizeof(int), cudaMemcpyHostToDevice);
+//        gpu_copy2 += GetTime() - t1;
 
-        global_randstrobes[i].data = nullptr;
-        global_randstrobes[i].length = 0;
+        char* local_d_seq = d_seq;
+        char* local_d_seq2 = d_seq2;
+        int* local_d_len = d_len + l_id;
+        int* local_d_len2 = d_len2 + l_id;
+        int* local_d_pre_sum = d_pre_sum + l_id;
+        int* local_d_pre_sum2 = d_pre_sum2 + l_id;
+//        int* local_d_len = d_len;
+//        int* local_d_len2 = d_len2;
+//        int* local_d_pre_sum = d_pre_sum;
+//        int* local_d_pre_sum2 = d_pre_sum2;
 
-        global_nams[i].data = nullptr;
-        global_nams[i].length = 0;
-    }
+        for (int i = 0; i < s_len * 2; i++) {
+            // check infos
+            global_randstrobe_sizes[i] = 0;
+            global_hashes_value[i] = 0;
+            global_hits_num[i] = 0;
+            global_nams_info[i] = 0;
+
+            global_hits_per_ref0s[i].data = nullptr;
+            global_hits_per_ref0s[i].length = 0;
+            global_hits_per_ref1s[i].data = nullptr;
+            global_hits_per_ref1s[i].length = 0;
+
+            global_randstrobes[i].data = nullptr;
+            global_randstrobes[i].length = 0;
+
+            global_nams[i].data = nullptr;
+            global_nams[i].length = 0;
+        }
+
+        t1 = GetTime();
+        int threads_per_block;
+        int reads_per_block;
+        int blocks_per_grid;
+
+        threads_per_block = 32;
+        reads_per_block = threads_per_block * GPU_thread_task_size;
+        blocks_per_grid = (s_len * 2 + reads_per_block - 1) / reads_per_block;
+        gpu_get_randstrobes<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(s_len * 2, local_d_pre_sum, local_d_len, local_d_seq,
+                                                                     local_d_pre_sum2, local_d_len2, local_d_seq2, d_index_para,
+                                                                    global_randstrobe_sizes, global_hashes_value, global_randstrobes);
+        cudaDeviceSynchronize();
+        gpu_cost1 += GetTime() - t1;
+    //    printf("get randstrobe done\n");
+
+        t1 = GetTime();
+
+        double t11 = GetTime();
+        threads_per_block = 32;
+        reads_per_block = threads_per_block * GPU_thread_task_size;
+        blocks_per_grid = (s_len * 2 + reads_per_block - 1) / reads_per_block;
+        gpu_get_hits_pre<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(index.bits, index.filter_cutoff, d_map_param->rescue_cutoff, d_randstrobes, index.randstrobes.size(), d_randstrobe_start_indices,
+                                                                 s_len * 2, d_index_para, global_hits_num, global_randstrobes,
+                                                                 global_hits_per_ref0s, global_hits_per_ref1s);
+        cudaDeviceSynchronize();
+        gpu_cost2_1 += GetTime() - t11;
+    //    printf("get hits pre done\n");
 
 
-    t1 = GetTime();
-    int threads_per_block;
-    int reads_per_block;
-    int blocks_per_grid;
+        t11 = GetTime();
+        threads_per_block = 32;
+        reads_per_block = threads_per_block * GPU_thread_task_size;
+        blocks_per_grid = (s_len * 2 + reads_per_block - 1) / reads_per_block;
+        gpu_get_hits_after<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(index.bits, index.filter_cutoff, d_map_param->rescue_cutoff, d_randstrobes, index.randstrobes.size(), d_randstrobe_start_indices,
+                                                                   s_len * 2, d_index_para, global_hits_num, global_randstrobes,
+                                                                   global_hits_per_ref0s, global_hits_per_ref1s);
+        cudaDeviceSynchronize();
+        gpu_cost2_2 += GetTime() - t11;
+    //    printf("get hits after done\n");
 
-    threads_per_block = 32;
-    reads_per_block = threads_per_block * GPU_thread_task_size;
-    blocks_per_grid = (s_len * 2 + reads_per_block - 1) / reads_per_block;
-    gpu_get_randstrobes<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(s_len * 2, d_pre_sum, d_len, d_seq, d_pre_sum2, d_len2, d_seq2, d_index_para,
-                                                                global_randstrobe_sizes, global_hashes_value, global_randstrobes);
-    cudaDeviceSynchronize();
-    gpu_cost1 += GetTime() - t1;
-//    printf("get randstrobe done\n");
+        gpu_cost2 += GetTime() - t1;
 
-    t1 = GetTime();
+        int todo_cnt = 0;
+        for (int i = 0; i < s_len * 2; i++) {
+            if (global_randstrobes[i].data == nullptr) { // pass filter
+                global_todo_ids[todo_cnt] = i;
+                todo_cnt++;
+                assert(global_hits_per_ref0s[i].data != nullptr);
+                assert(global_hits_per_ref1s[i].data != nullptr);
+            } else {
+                assert(global_hits_per_ref0s[i].data == nullptr);
+                assert(global_hits_per_ref1s[i].data == nullptr);
+            }
+        }
+    //    printf("normal read num %d\n", todo_cnt);
 
-    double t11 = GetTime();
-    threads_per_block = 32;
-    reads_per_block = threads_per_block * GPU_thread_task_size;
-    blocks_per_grid = (s_len * 2 + reads_per_block - 1) / reads_per_block;
-    gpu_get_hits_pre<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(index.bits, index.filter_cutoff, d_map_param->rescue_cutoff, d_randstrobes, index.randstrobes.size(), d_randstrobe_start_indices,
-                                                             s_len * 2, d_index_para, global_hits_num, global_randstrobes,
-                                                             global_hits_per_ref0s, global_hits_per_ref1s);
-    cudaDeviceSynchronize();
-    gpu_cost2_1 += GetTime() - t11;
-//    printf("get hits pre done\n");
+        t1 = GetTime();
+        threads_per_block = 32;
+        reads_per_block = threads_per_block * GPU_thread_task_size;
+        blocks_per_grid = (todo_cnt + reads_per_block - 1) / reads_per_block;
+        gpu_sort_hits<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(todo_cnt, global_hits_per_ref0s, global_hits_per_ref1s, global_todo_ids);
+        cudaDeviceSynchronize();
+        gpu_cost3 += GetTime() - t1;
+    //    printf("sort hits done\n");
+
+        t1 = GetTime();
+        threads_per_block = 32;
+        reads_per_block = threads_per_block * GPU_thread_task_size;
+        blocks_per_grid = (todo_cnt + reads_per_block - 1) / reads_per_block;
+        gpu_merge_hits_get_nams<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(todo_cnt, d_index_para, global_nams_info,
+                                                                        global_hits_per_ref0s, global_hits_per_ref1s, global_nams, global_todo_ids);
+        cudaDeviceSynchronize();
+        gpu_cost4 += GetTime() - t1;
+    //    printf("merge hits done\n");
 
 
-    t11 = GetTime();
-    threads_per_block = 32;
-    reads_per_block = threads_per_block * GPU_thread_task_size;
-    blocks_per_grid = (s_len * 2 + reads_per_block - 1) / reads_per_block;
-    gpu_get_hits_after<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(index.bits, index.filter_cutoff, d_map_param->rescue_cutoff, d_randstrobes, index.randstrobes.size(), d_randstrobe_start_indices,
-                                                               s_len * 2, d_index_para, global_hits_num, global_randstrobes,
-                                                               global_hits_per_ref0s, global_hits_per_ref1s);
-    cudaDeviceSynchronize();
-    gpu_cost2_2 += GetTime() - t11;
-//    printf("get hits after done\n");
+        for (size_t i = 0; i < s_len * 2; ++i) {
+            size_tot += global_randstrobe_sizes[i];
+            check_sum += global_hashes_value[i];
+            global_hits_num12 += global_hits_num[i];
+            global_nams_info12 += global_nams_info[i];
+        }
 
-    gpu_cost2 += GetTime() - t1;
+        todo_cnt = 0;
+        for(int i = 0; i < s_len * 2; i++) {
+            if (global_randstrobes[i].data != nullptr) {
+                global_todo_ids[todo_cnt] = i;
+                todo_cnt++;
+            }
+        }
 
-    int todo_cnt = 0;
-    for (int i = 0; i < s_len * 2; i++) {
-        if (global_randstrobes[i].data == nullptr) { // pass filter
-            global_todo_ids[todo_cnt] = i;
-            todo_cnt++;
-            assert(global_hits_per_ref0s[i].data != nullptr);
-            assert(global_hits_per_ref1s[i].data != nullptr);
-        } else {
+    //    printf("rescue read num %d\n", todo_cnt);
+
+        for (int i = 0; i < s_len * 2; i++) {
+            global_hits_num[i] = 0;
+            global_nams_info[i] = 0;
             assert(global_hits_per_ref0s[i].data == nullptr);
             assert(global_hits_per_ref1s[i].data == nullptr);
+
+            global_hits_per_ref0s[i].data = nullptr;
+            global_hits_per_ref0s[i].length = 0;
+            global_hits_per_ref1s[i].data = nullptr;
+            global_hits_per_ref1s[i].length = 0;
         }
-    }
-//    printf("normal read num %d\n", todo_cnt);
 
-    t1 = GetTime();
-    threads_per_block = 32;
-    reads_per_block = threads_per_block * GPU_thread_task_size;
-    blocks_per_grid = (todo_cnt + reads_per_block - 1) / reads_per_block;
-    gpu_sort_hits<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(todo_cnt, global_hits_per_ref0s, global_hits_per_ref1s, global_todo_ids);
-    cudaDeviceSynchronize();
-    gpu_cost3 += GetTime() - t1;
-//    printf("sort hits done\n");
+        t1 = GetTime();
+        threads_per_block = 32;
+        reads_per_block = threads_per_block * GPU_thread_task_size;
+        blocks_per_grid = (todo_cnt + reads_per_block - 1) / reads_per_block;
+        gpu_rescue_get_hits<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(index.bits, index.filter_cutoff, d_map_param->rescue_cutoff, d_randstrobes, index.randstrobes.size(), d_randstrobe_start_indices,
+                                                                    todo_cnt, d_index_para, global_hits_num, global_randstrobes,
+                                                                    global_hits_per_ref0s, global_hits_per_ref1s, global_todo_ids);
+        cudaDeviceSynchronize();
+        gpu_cost5 += GetTime() - t1;
+    //    printf("rescue get hits done\n");
 
-    t1 = GetTime();
-    threads_per_block = 32;
-    reads_per_block = threads_per_block * GPU_thread_task_size;
-    blocks_per_grid = (todo_cnt + reads_per_block - 1) / reads_per_block;
-    gpu_merge_hits_get_nams<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(todo_cnt, d_index_para, global_nams_info,
-                                                                    global_hits_per_ref0s, global_hits_per_ref1s, global_nams, global_todo_ids);
-    cudaDeviceSynchronize();
-    gpu_cost4 += GetTime() - t1;
-//    printf("merge hits done\n");
+        t1 = GetTime();
+        threads_per_block = 32;
+        reads_per_block = threads_per_block * GPU_thread_task_size;
+        blocks_per_grid = (todo_cnt + reads_per_block - 1) / reads_per_block;
+        gpu_rescue_sort_hits<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(todo_cnt, global_hits_per_ref0s, global_hits_per_ref1s, global_todo_ids);
+        cudaDeviceSynchronize();
+        gpu_cost6 += GetTime() - t1;
+    //    printf("rescue sort hits done\n");
 
 
-    for (size_t i = 0; i < s_len * 2; ++i) {
-        size_tot += global_randstrobe_sizes[i];
-        check_sum += global_hashes_value[i];
-        global_hits_num12 += global_hits_num[i];
-        global_nams_info12 += global_nams_info[i];
-    }
+        t1 = GetTime();
+        threads_per_block = 32;
+        reads_per_block = threads_per_block * GPU_thread_task_size;
+        blocks_per_grid = (todo_cnt + reads_per_block - 1) / reads_per_block;
+        gpu_rescue_merge_hits_get_nams<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(todo_cnt, d_index_para, global_nams_info,
+                                                                               global_hits_per_ref0s, global_hits_per_ref1s, global_nams, global_todo_ids);
+        cudaDeviceSynchronize();
+        gpu_cost7 += GetTime() - t1;
+    //    printf("rescue merge hits done\n");
 
-    todo_cnt = 0;
-    for(int i = 0; i < s_len * 2; i++) {
-        if (global_randstrobes[i].data != nullptr) {
-            global_todo_ids[todo_cnt] = i;
-            todo_cnt++;
+        for (int i = 0; i < s_len; i++) {
+            global_align_info[i] = 0;
         }
-    }
 
-//    printf("rescue read num %d\n", todo_cnt);
+        t1 = GetTime();
+        threads_per_block = 32;
+        reads_per_block = threads_per_block * GPU_thread_task_size;
+        blocks_per_grid = (s_len * 2 + reads_per_block - 1) / reads_per_block;
+        gpu_sort_nams<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(s_len * 2, global_nams, d_map_param);
+        cudaDeviceSynchronize();
+        gpu_cost8 += GetTime() - t1;
+    //    printf("sort nams done\n");
 
-    for (int i = 0; i < s_len * 2; i++) {
-        global_hits_num[i] = 0;
-        global_nams_info[i] = 0;
-        assert(global_hits_per_ref0s[i].data == nullptr);
-        assert(global_hits_per_ref1s[i].data == nullptr);
+        t1 = GetTime();
+        threads_per_block = 32;
+        reads_per_block = threads_per_block * GPU_thread_task_size;
+        blocks_per_grid = (s_len + reads_per_block - 1) / reads_per_block;
+        gpu_pre_cal_type<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(s_len, d_map_param->dropoff_threshold, global_nams, global_todo_ids);
+        cudaDeviceSynchronize();
+        gpu_cost9 += GetTime() - t1;
 
-        global_hits_per_ref0s[i].data = nullptr;
-        global_hits_per_ref0s[i].length = 0;
-        global_hits_per_ref1s[i].data = nullptr;
-        global_hits_per_ref1s[i].length = 0;
-    }
+        std::vector<int> types[5];
+        for (int i = 0; i < s_len; i++) {
+            assert(global_todo_ids[i] <= 4);
+            types[global_todo_ids[i]].push_back(i);
+            global_align_res[i].type = global_todo_ids[i];
+            global_align_res[i].mapq1 = 0;
+            global_align_res[i].mapq2 = 0;
+            global_align_res[i].type4_loop_size = 0;
+            global_align_res[i].is_extend_seed.length = 0;
+            global_align_res[i].consistent_nam.length = 0;
+            global_align_res[i].is_read1.length = 0;
+            global_align_res[i].type4_nams.length = 0;
+            global_align_res[i].todo_nams.length = 0;
+            global_align_res[i].done_align.length = 0;
+            global_align_res[i].align_res.length = 0;
+            global_align_res[i].cigar_info.length = 0;
+        }
+        //printf("types: %d %d %d %d %d\n", types[0].size(), types[1].size(), types[2].size(), types[3].size(), types[4].size());
 
-    t1 = GetTime();
-    threads_per_block = 32;
-    reads_per_block = threads_per_block * GPU_thread_task_size;
-    blocks_per_grid = (todo_cnt + reads_per_block - 1) / reads_per_block;
-    gpu_rescue_get_hits<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(index.bits, index.filter_cutoff, d_map_param->rescue_cutoff, d_randstrobes, index.randstrobes.size(), d_randstrobe_start_indices,
-                                                                todo_cnt, d_index_para, global_hits_num, global_randstrobes,
-                                                                global_hits_per_ref0s, global_hits_per_ref1s, global_todo_ids);
-    cudaDeviceSynchronize();
-    gpu_cost5 += GetTime() - t1;
-//    printf("rescue get hits done\n");
+        t1 = GetTime();
 
-    t1 = GetTime();
-    threads_per_block = 32;
-    reads_per_block = threads_per_block * GPU_thread_task_size;
-    blocks_per_grid = (todo_cnt + reads_per_block - 1) / reads_per_block;
-    gpu_rescue_sort_hits<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(todo_cnt, global_hits_per_ref0s, global_hits_per_ref1s, global_todo_ids);
-    cudaDeviceSynchronize();
-    gpu_cost6 += GetTime() - t1;
-//    printf("rescue sort hits done\n");
+        t11 = GetTime();
+        for (int i = 0; i < types[0].size(); i++) {
+            global_todo_ids[i] = types[0][i];
+        }
+        threads_per_block = 32;
+        reads_per_block = threads_per_block * GPU_thread_task_size;
+        blocks_per_grid = (types[0].size() + reads_per_block - 1) / reads_per_block;
+        gpu_align_PE0<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(types[0].size(), s_len, d_index_para, global_align_info, d_aligner, local_d_pre_sum, local_d_len, local_d_seq, local_d_pre_sum2, local_d_len2, local_d_seq2,
+                                                              global_references, d_map_param, global_nams, global_todo_ids, global_align_res);
+        cudaDeviceSynchronize();
+        gpu_cost10_0 += GetTime() - t11;
 
+        t11 = GetTime();
+        for (int i = 0; i < types[1].size(); i++) {
+            global_todo_ids[i] = types[1][i];
+        }
+        threads_per_block = 4;
+        reads_per_block = threads_per_block * GPU_thread_task_size;
+        blocks_per_grid = (types[1].size() + reads_per_block - 1) / reads_per_block;
+        gpu_align_PE1<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(types[1].size(), s_len, d_index_para, global_align_info, d_aligner, local_d_pre_sum, local_d_len, local_d_seq, local_d_pre_sum2, local_d_len2, local_d_seq2,
+                                                              global_references, d_map_param, global_nams, global_todo_ids, global_align_res);
+        cudaDeviceSynchronize();
+        gpu_cost10_1 += GetTime() - t11;
 
-    t1 = GetTime();
-    threads_per_block = 32;
-    reads_per_block = threads_per_block * GPU_thread_task_size;
-    blocks_per_grid = (todo_cnt + reads_per_block - 1) / reads_per_block;
-    gpu_rescue_merge_hits_get_nams<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(todo_cnt, d_index_para, global_nams_info,
-                                                                           global_hits_per_ref0s, global_hits_per_ref1s, global_nams, global_todo_ids);
-    cudaDeviceSynchronize();
-    gpu_cost7 += GetTime() - t1;
-//    printf("rescue merge hits done\n");
+        t11 = GetTime();
+        for (int i = 0; i < types[2].size(); i++) {
+            global_todo_ids[i] = types[2][i];
+        }
+        threads_per_block = 4;
+        reads_per_block = threads_per_block * GPU_thread_task_size;
+        blocks_per_grid = (types[2].size() + reads_per_block - 1) / reads_per_block;
+        gpu_align_PE2<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(types[2].size(), s_len, d_index_para, global_align_info, d_aligner, local_d_pre_sum, local_d_len, local_d_seq, local_d_pre_sum2, local_d_len2, local_d_seq2,
+                                                              global_references, d_map_param, global_nams, global_todo_ids, global_align_res);
+        cudaDeviceSynchronize();
+        gpu_cost10_2 += GetTime() - t11;
 
-    for (int i = 0; i < s_len; i++) {
-        global_align_info[i] = 0;
-    }
+        t11 = GetTime();
+        for (int i = 0; i < types[3].size(); i++) {
+            global_todo_ids[i] = types[3][i];
+        }
+        threads_per_block = 4;
+        reads_per_block = threads_per_block * GPU_thread_task_size;
+        blocks_per_grid = (types[3].size() + reads_per_block - 1) / reads_per_block;
+        gpu_align_PE3<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(types[3].size(), s_len, d_index_para, global_align_info, d_aligner, local_d_pre_sum, local_d_len, local_d_seq, local_d_pre_sum2, local_d_len2, local_d_seq2,
+                                                              global_references, d_map_param, global_nams, global_todo_ids, global_align_res);
+        cudaDeviceSynchronize();
+        gpu_cost10_3 += GetTime() - t11;
 
-    t1 = GetTime();
-    threads_per_block = 32;
-    reads_per_block = threads_per_block * GPU_thread_task_size;
-    blocks_per_grid = (s_len * 2 + reads_per_block - 1) / reads_per_block;
-    gpu_sort_nams<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(s_len * 2, global_nams, d_map_param);
-    cudaDeviceSynchronize();
-    gpu_cost8 += GetTime() - t1;
-//    printf("sort nams done\n");
+        t11 = GetTime();
+        std::vector<std::pair<int, int>> nams_id;
+        for (int i = 0; i < types[4].size(); i++) {
+            int id1 = types[4][i];
+            int id2 = types[4][i] + s_len;
+            nams_id.push_back(std::make_pair(global_nams[id1].length + global_nams[id2].length, types[4][i]));
+        }
+        std::sort(nams_id.begin(), nams_id.end());
+        for (int i = 0; i < types[4].size(); i++) {
+            global_todo_ids[i] = nams_id[i].second;
+        }
+        threads_per_block = 4;
+        reads_per_block = threads_per_block * GPU_thread_task_size;
+        blocks_per_grid = (types[4].size() + reads_per_block - 1) / reads_per_block;
+        gpu_align_PE4<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(types[4].size(), s_len, d_index_para, global_align_info, d_aligner, d_pre_sum, local_d_len, local_d_seq, local_d_pre_sum2, local_d_len2, local_d_seq2,
+                                                              global_references, d_map_param, global_nams, global_todo_ids, global_align_res);
+        cudaDeviceSynchronize();
+        gpu_cost10_4 += GetTime() - t11;
 
-    t1 = GetTime();
-    threads_per_block = 32;
-    reads_per_block = threads_per_block * GPU_thread_task_size;
-    blocks_per_grid = (s_len + reads_per_block - 1) / reads_per_block;
-    gpu_pre_cal_type<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(s_len, d_map_param->dropoff_threshold, global_nams, global_todo_ids);
-    cudaDeviceSynchronize();
-    gpu_cost9 += GetTime() - t1;
+        gpu_cost10 += GetTime() - t1;
+        //printf("align done\n");
 
-    std::vector<int> types[5];
-    for (int i = 0; i < s_len; i++) {
-        assert(global_todo_ids[i] <= 4);
-        types[global_todo_ids[i]].push_back(i);
-        global_align_res[i].type = global_todo_ids[i];
-        global_align_res[i].mapq1 = 0;
-        global_align_res[i].mapq2 = 0;
-        global_align_res[i].type4_loop_size = 0;
-        global_align_res[i].is_extend_seed.length = 0;
-        global_align_res[i].consistent_nam.length = 0;
-        global_align_res[i].is_read1.length = 0;
-        global_align_res[i].type4_nams.length = 0;
-        global_align_res[i].todo_nams.length = 0;
-        global_align_res[i].done_align.length = 0;
-        global_align_res[i].align_res.length = 0;
-        global_align_res[i].cigar_info.length = 0;
-    }
-    //printf("types: %d %d %d %d %d\n", types[0].size(), types[1].size(), types[2].size(), types[3].size(), types[4].size());
+    //    print_global_align_res(global_align_res, s_len);
 
-    t1 = GetTime();
+        t1 = GetTime();
+//        fast_copy_align_res(global_align_res, s_len, align_tmp_results);
+        gpu_cost11 += GetTime() - t1;
+        //printf("copy done\n");
 
-    t11 = GetTime();
-    for (int i = 0; i < types[0].size(); i++) {
-        global_todo_ids[i] = types[0][i];
-    }
-    threads_per_block = 32;
-    reads_per_block = threads_per_block * GPU_thread_task_size;
-    blocks_per_grid = (types[0].size() + reads_per_block - 1) / reads_per_block;
-    gpu_align_PE0<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(types[0].size(), s_len, d_index_para, global_align_info, d_aligner, d_pre_sum, d_len, d_seq, d_pre_sum2, d_len2, d_seq2,
-                                                          global_references, d_map_param, global_nams, global_todo_ids, global_align_res);
-    cudaDeviceSynchronize();
-    gpu_cost10_0 += GetTime() - t11;
-
-    t11 = GetTime();
-    for (int i = 0; i < types[1].size(); i++) {
-        global_todo_ids[i] = types[1][i];
-    }
-    threads_per_block = 4;
-    reads_per_block = threads_per_block * GPU_thread_task_size;
-    blocks_per_grid = (types[1].size() + reads_per_block - 1) / reads_per_block;
-    gpu_align_PE1<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(types[1].size(), s_len, d_index_para, global_align_info, d_aligner, d_pre_sum, d_len, d_seq, d_pre_sum2, d_len2, d_seq2,
-                                                          global_references, d_map_param, global_nams, global_todo_ids, global_align_res);
-    cudaDeviceSynchronize();
-    gpu_cost10_1 += GetTime() - t11;
-
-    t11 = GetTime();
-    for (int i = 0; i < types[2].size(); i++) {
-        global_todo_ids[i] = types[2][i];
-    }
-    threads_per_block = 4;
-    reads_per_block = threads_per_block * GPU_thread_task_size;
-    blocks_per_grid = (types[2].size() + reads_per_block - 1) / reads_per_block;
-    gpu_align_PE2<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(types[2].size(), s_len, d_index_para, global_align_info, d_aligner, d_pre_sum, d_len, d_seq, d_pre_sum2, d_len2, d_seq2,
-                                                          global_references, d_map_param, global_nams, global_todo_ids, global_align_res);
-    cudaDeviceSynchronize();
-    gpu_cost10_2 += GetTime() - t11;
-
-    t11 = GetTime();
-    for (int i = 0; i < types[3].size(); i++) {
-        global_todo_ids[i] = types[3][i];
-    }
-    threads_per_block = 4;
-    reads_per_block = threads_per_block * GPU_thread_task_size;
-    blocks_per_grid = (types[3].size() + reads_per_block - 1) / reads_per_block;
-    gpu_align_PE3<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(types[3].size(), s_len, d_index_para, global_align_info, d_aligner, d_pre_sum, d_len, d_seq, d_pre_sum2, d_len2, d_seq2,
-                                                          global_references, d_map_param, global_nams, global_todo_ids, global_align_res);
-    cudaDeviceSynchronize();
-    gpu_cost10_3 += GetTime() - t11;
-
-    t11 = GetTime();
-    std::vector<std::pair<int, int>> nams_id;
-    for (int i = 0; i < types[4].size(); i++) {
-        int id1 = types[4][i];
-        int id2 = types[4][i] + s_len;
-        nams_id.push_back(std::make_pair(global_nams[id1].length + global_nams[id2].length, types[4][i]));
-    }
-    std::sort(nams_id.begin(), nams_id.end());
-    for (int i = 0; i < types[4].size(); i++) {
-        global_todo_ids[i] = nams_id[i].second;
-    }
-    threads_per_block = 4;
-    reads_per_block = threads_per_block * GPU_thread_task_size;
-    blocks_per_grid = (types[4].size() + reads_per_block - 1) / reads_per_block;
-    gpu_align_PE4<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(types[4].size(), s_len, d_index_para, global_align_info, d_aligner, d_pre_sum, d_len, d_seq, d_pre_sum2, d_len2, d_seq2,
-                                                          //gpu_align_PE4_single<<<1, 1, 0, ctx.stream>>>(types[4].size(), s_len, d_index_para, global_align_info, d_aligner, d_pre_sum, d_len, d_seq, d_pre_sum2, d_len2, d_seq2,
-                                                          global_references, d_map_param, global_nams, global_todo_ids, global_align_res);
-    cudaDeviceSynchronize();
-    gpu_cost10_4 += GetTime() - t11;
-
-    gpu_cost10 += GetTime() - t1;
-    //printf("align done\n");
-
-//    print_global_align_res(global_align_res, s_len);
-
-    t1 = GetTime();
-    fast_copy_align_res(global_align_res, s_len, align_tmp_results);
-//    copy_align_res(global_align_res, s_len, align_tmp_results);
-    gpu_cost11 += GetTime() - t1;
-    //printf("copy done\n");
-
-//    threads_per_block = 1;
-//    reads_per_block = threads_per_block * GPU_thread_task_size;
-//    blocks_per_grid = (s_len + reads_per_block - 1) / reads_per_block;
-//    gpu_free_align_res<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(s_len, global_align_res);
-//    cudaDeviceSynchronize();
-
-    for (int i = 0; i < s_len * 2; ++i) {
-        global_hits_num3 += global_hits_num[i];
-        global_nams_info3 += global_nams_info[i];
-    }
-    for (int i = 0; i < s_len; i++) {
-        global_align_info123 += global_align_info[i];
+        for (int i = 0; i < s_len * 2; ++i) {
+            global_hits_num3 += global_hits_num[i];
+            global_nams_info3 += global_nams_info[i];
+        }
+        for (int i = 0; i < s_len; i++) {
+            global_align_info123 += global_align_info[i];
+        }
     }
 
     tot_cost += GetTime() - t0;
@@ -4212,8 +4800,524 @@ void init_mm_safe(uint64_t num_bytes, uint64_t seed, int gpu_id, int thread_id) 
     init_mm(num_bytes, seed);
 }
 
-
 void perform_task_async_pe_fx_GPU(
+    InputBuffer& input_buffer,
+    OutputBuffer& output_buffer,
+    AlignmentStatistics& statistics,
+    int& done,
+    const AlignmentParameters& aln_params,
+    MappingParameters map_param,
+    const IndexParameters& index_parameters,
+    const References& references,
+    const StrobemerIndex& index,
+    const std::string& read_group_id,
+    const int thread_id,
+    rabbit::fq::FastqDataPool& fastqPool,
+    rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq,
+    bool use_good_numa,
+    const int gpu_id,
+    const int cpu_num
+) {
+
+    //map_param.max_tries = 2;
+    printf("thread %d--%d\n", thread_id, gpu_id);
+    ThreadContext ctx(thread_id, gpu_id);
+
+    bool eof = false;
+    Aligner aligner{aln_params};
+    std::minstd_rand random_engine;
+    std::minstd_rand pre_random_engine;
+    std::vector<klibpp::KSeq> records1;
+    std::vector<klibpp::KSeq> records2;
+    std::vector<klibpp::KSeq> records3;
+    size_t chunk_index = 0;
+    std::vector<AlignTmpRes> align_tmp_results;
+    thread_local double time_tot = 0;
+    thread_local double time0 = 0;
+    thread_local double time1 = 0;    //time except extend and output
+    thread_local double time1_1 = 0;    //time except extend and output
+    thread_local double time1_2 = 0;    //time except extend and output
+    thread_local double time2_1 = 0;  //time to filter nams and get todo_strings
+    thread_local double time2_2 = 0;  //time to do ssw on gpu
+    thread_local double time2_3 = 0;  //time to post-process the gpu results
+    thread_local double time2_4 = 0;  //time to store ssw results
+    thread_local double time3_1 = 0;  //time to construct sam
+    thread_local double time3_2 = 0;  //time to output
+    thread_local double time4 = 0;
+
+    double t_0, t_1, t_2;
+
+    rabbit::int64 id = 0;
+    std::vector<neoReference> data1;
+    std::vector<neoReference> data2;
+    rabbit::fq::FastqDataPairChunk *fqdatachunk = new rabbit::fq::FastqDataPairChunk;
+
+
+    t_1 = GetTime();
+    // init device memory pool
+    uint64_t num_bytes = 24 * 1024ll * 1024ll * 1024ll;
+    uint64_t seed = 13;
+
+    std::call_once(init_flag_pool[gpu_id], init_mm_safe, num_bytes, seed, gpu_id, thread_id);
+//    printf("Gallatin global allocator initialized with %lu bytes.\n", num_bytes);
+
+
+    // copy host data to device
+    t_0 = GetTime();
+    AlignmentParameters *d_aligner;
+    cudaMallocManaged(&d_aligner, sizeof(AlignmentParameters));
+    cudaMemcpy(d_aligner, &aln_params, sizeof(AlignmentParameters), cudaMemcpyHostToDevice);
+    MappingParameters* d_map_param;
+    cudaMallocManaged(&d_map_param, sizeof(MappingParameters));
+    cudaMemcpy(d_map_param, &map_param, sizeof(MappingParameters), cudaMemcpyHostToDevice);
+    IndexParameters *d_index_para;
+    cudaMallocManaged(&d_index_para, sizeof(IndexParameters));
+    cudaMemcpy(d_index_para, &index_parameters, sizeof(IndexParameters), cudaMemcpyHostToDevice);
+
+    std::call_once(init_flag_ref[gpu_id], init_shared_data, references, index, gpu_id, thread_id);
+
+    my_vector<QueryRandstrobe> *global_randstrobes;
+    cudaMallocManaged(&global_randstrobes, batch_size2 * 2 * sizeof(my_vector<QueryRandstrobe>));
+    int *global_todo_ids;
+    cudaMallocManaged(&global_todo_ids, batch_size2 * 2 * sizeof(int));
+    int *global_randstrobe_sizes;
+    cudaMallocManaged(&global_randstrobe_sizes, batch_size2 * 2 * sizeof(int));
+    uint64_t * global_hashes_value;
+    cudaMallocManaged(&global_hashes_value, batch_size2 * 2 * sizeof(uint64_t));
+    my_vector<my_pair<int, Hit>> *global_hits_per_ref0s;
+    cudaMallocManaged(&global_hits_per_ref0s, batch_size2 * 2 * sizeof(my_vector<my_pair<int, Hit>>));
+    my_vector<my_pair<int, Hit>> *global_hits_per_ref1s;
+    cudaMallocManaged(&global_hits_per_ref1s, batch_size2 * 2 * sizeof(my_vector<my_pair<int, Hit>>));
+    my_vector<Nam> *global_nams;
+    cudaMallocManaged(&global_nams, batch_size2 * 2 * sizeof(my_vector<Nam>));
+    GPUAlignTmpRes *global_align_res;
+    cudaMallocManaged(&global_align_res, batch_size2 * 2 * sizeof(GPUAlignTmpRes));
+
+    uint64_t pre_vec_size = 4 * sizeof(int) + 2 * sizeof(Nam) + sizeof(GPUAlignment) + sizeof(CigarData);
+    uint64_t global_align_res_data_size = batch_size2 * MAX_TRIES_LIMIT2 * pre_vec_size;
+//    printf("global_align_res_data_size %llu\n", global_align_res_data_size);
+    char *global_align_res_data;
+    cudaMallocManaged(&global_align_res_data, global_align_res_data_size);
+
+    
+    for (int i = 0; i < batch_size2; i++) {
+        GPUAlignTmpRes *tmp = global_align_res + i;
+        tmp->type = 0, tmp->mapq1 = 0, tmp->mapq2 = 0, tmp->type4_loop_size = 0;
+        char* base_ptr = global_align_res_data + i * MAX_TRIES_LIMIT2 * pre_vec_size;
+
+        tmp->is_extend_seed.data = (int*)base_ptr;
+        tmp->is_extend_seed.length = 0;
+        tmp->is_extend_seed.capacity = MAX_TRIES_LIMIT2;
+        base_ptr += MAX_TRIES_LIMIT2 * sizeof(int);
+
+        tmp->consistent_nam.data = (int*)base_ptr;
+        tmp->consistent_nam.length = 0;
+        tmp->consistent_nam.capacity = MAX_TRIES_LIMIT2;
+        base_ptr += MAX_TRIES_LIMIT2 * sizeof(int);
+
+        tmp->is_read1.data = (int*)base_ptr;
+        tmp->is_read1.length = 0;
+        tmp->is_read1.capacity = MAX_TRIES_LIMIT2;
+        base_ptr += MAX_TRIES_LIMIT2 * sizeof(int);
+
+        tmp->type4_nams.data = (Nam*)base_ptr;
+        tmp->type4_nams.length = 0;
+        tmp->type4_nams.capacity = MAX_TRIES_LIMIT2;
+        base_ptr += MAX_TRIES_LIMIT2 * sizeof(Nam);
+
+        tmp->todo_nams.data = (Nam*)base_ptr;
+        tmp->todo_nams.length = 0;
+        tmp->todo_nams.capacity = MAX_TRIES_LIMIT2;
+        base_ptr += MAX_TRIES_LIMIT2 * sizeof(Nam);
+
+        tmp->done_align.data = (int*)base_ptr;
+        tmp->done_align.length = 0;
+        tmp->done_align.capacity = MAX_TRIES_LIMIT2;
+        base_ptr += MAX_TRIES_LIMIT2 * sizeof(int);
+
+        tmp->align_res.data = (GPUAlignment*)base_ptr;
+        tmp->align_res.length = 0;
+        tmp->align_res.capacity = MAX_TRIES_LIMIT2;
+        base_ptr += MAX_TRIES_LIMIT2 * sizeof(GPUAlignment);
+
+        tmp->cigar_info.data = (CigarData*)base_ptr;
+        tmp->cigar_info.length = 0;
+        tmp->cigar_info.capacity = MAX_TRIES_LIMIT2;
+        base_ptr += MAX_TRIES_LIMIT2 * sizeof(CigarData);
+
+        assert(base_ptr - global_align_res_data == (i + 1) * MAX_TRIES_LIMIT2 * pre_vec_size);
+    }
+
+    
+    char *d_seq;
+    int *d_len;
+    int *d_pre_sum;
+    cudaMallocHost(&d_seq, batch_seq_szie);
+    cudaMemset(d_seq, 0, batch_seq_szie);
+    cudaMalloc(&d_len, batch_size2 * sizeof(int));
+    cudaMemset(d_len, 0, batch_size2 * sizeof(int));
+    cudaMalloc(&d_pre_sum, batch_size2 * sizeof(int));
+    cudaMemset(d_pre_sum, 0, batch_size2 * sizeof(int));
+
+    
+    char *d_seq2;
+    int *d_len2;
+    int *d_pre_sum2;
+    cudaMallocHost(&d_seq2, batch_seq_szie);
+    cudaMemset(d_seq2, 0, batch_seq_szie);
+    cudaMalloc(&d_len2, batch_size2 * sizeof(int));
+    cudaMemset(d_len2, 0, batch_size2 * sizeof(int));
+    cudaMalloc(&d_pre_sum2, batch_size2 * sizeof(int));
+    cudaMemset(d_pre_sum2, 0, batch_size2 * sizeof(int));
+
+    
+    int *h_len = new int[batch_size2];
+    int *h_pre_sum = new int[batch_size2 + 1];
+    char *h_seq = new char[batch_seq_szie];
+
+    int *h_len2 = new int[batch_size2];
+    int *h_pre_sum2 = new int[batch_size2 + 1];
+    char *h_seq2 = new char[batch_seq_szie];
+
+    uint64_t * global_hits_num;
+    cudaMallocManaged(&global_hits_num, batch_size2 * 2 * sizeof(uint64_t));
+
+    uint64_t * global_nams_info;
+    cudaMallocManaged(&global_nams_info, batch_size2 * 2 * sizeof(uint64_t));
+
+    uint64_t * global_align_info;
+    cudaMallocManaged(&global_align_info, batch_size2 * sizeof(uint64_t));
+
+    time0 += GetTime() - t_1;
+
+
+    while (!eof) {
+        std::vector<std::string> todo_querys;
+        std::vector<std::string> todo_refs;
+        std::vector<AlignmentInfo> info_results;
+        std::vector<gasal_tmp_res> gasal_results_tmp;
+        std::vector<gasal_tmp_res> gasal_results;
+//        align_tmp_results.clear();
+        
+
+        InsertSizeDistribution isize_est;
+        //find nams
+        {
+            t_1 = GetTime();
+            Timer timer;
+            bool res = dq.Pop(id, fqdatachunk);
+            t_2 = GetTime();
+            records1.clear();
+            records2.clear();
+            if(res) {
+                data1.clear();
+                data2.clear();
+                rabbit::fq::chunkFormat((rabbit::fq::FastqDataChunk*)(fqdatachunk->left_part), data1);
+                rabbit::fq::chunkFormat((rabbit::fq::FastqDataChunk*)(fqdatachunk->right_part), data2);
+//                printf("thread %d--%d, id = %lu, data1.size() = %lu, data2.size() = %lu\n", thread_id, gpu_id, id, data1.size(), data2.size());
+                assert(data1.size() == data2.size());
+                for(int i = 0; i < data1.size(); i++) {
+                    auto item1 = data1[i];
+                    auto item2 = data2[i];
+                    records1.push_back(gpu_ConvertNeo2KSeq(item1));
+                    records2.push_back(gpu_ConvertNeo2KSeq(item2));
+                }
+                fastqPool.Release(fqdatachunk->left_part);
+                fastqPool.Release(fqdatachunk->right_part);
+            }
+            time1_1 += GetTime() - t_2;
+
+            t_2 = GetTime();
+            chunk_index = id;
+            statistics.tot_read_file += timer.duration();
+            assert(records1.size() == records2.size());
+//            printf("size %d %d, flag %d\n", records1.size(), records2.size(), res);
+            if (records1.empty() && records3.empty() && res == 0) {
+                eof = true;
+            }
+            if (eof) break;
+            // Use chunk index as random seed for reproducibility
+            random_engine.seed(chunk_index);
+//            assert(align_tmp_results.size() == 0);
+//            printf("thread %d--%d, records1.size() = %lu, records2.size() = %lu\n", thread_id, gpu_id, records1.size(), records2.size());
+            GPU_align_PE(records1, records2,
+                         ctx,
+                         align_tmp_results,
+                         global_hits_num, global_nams_info, global_align_info,
+                         index, d_aligner, d_map_param, d_index_para,
+                         global_references[gpu_id], d_randstrobes[gpu_id], d_randstrobe_start_indices[gpu_id],
+                         global_randstrobes, global_todo_ids, global_randstrobe_sizes, global_hashes_value,
+                         global_hits_per_ref0s, global_hits_per_ref1s, global_nams, global_align_res,
+                         d_seq, d_len, d_pre_sum, d_seq2, d_len2, d_pre_sum2,
+                         h_seq, h_len, h_pre_sum, h_seq2, h_len2, h_pre_sum2);
+            statistics.n_reads += records1.size() * 2;
+            time1_2 += GetTime() - t_2;
+
+            time1 += GetTime() - t_1;
+        }
+//        printf("align tmp size %d\n", align_tmp_results.size());
+
+
+        //process todo_nams
+        {
+            Timer extend_timer1;
+
+            // step1 : filter nams and get todo_strings
+            t_1 = GetTime();
+            for (size_t i = 0; i < records1.size(); i++) {
+                auto record1 = records1[i];
+                auto record2 = records2[i];
+                to_uppercase(record1.seq);
+                to_uppercase(record2.seq);
+                Read read1(record1.seq);
+                Read read2(record2.seq);
+                const auto mu = isize_est.mu;
+                const auto sigma = isize_est.sigma;
+                GPUAlignTmpRes& align_tmp_res = global_align_res[i];
+                size_t todo_size = align_tmp_res.todo_nams.size();
+                assert(todo_size == align_tmp_res.done_align.size());
+                assert(todo_size == align_tmp_res.align_res.size());
+                if (align_tmp_res.type == 1 || align_tmp_res.type == 2) {
+                    assert(todo_size % 2 == 0);
+                    for (size_t j = 0; j < todo_size; j += 2) {
+                        assert(align_tmp_res.is_extend_seed[j]);
+                        if (align_tmp_res.type == 1)
+                            assert(align_tmp_res.is_read1[j]);
+                        else
+                            assert(!align_tmp_res.is_read1[j]);
+                        if (!align_tmp_res.done_align[j]) {
+                            GPU_part2_extend_seed_get_str(
+                                todo_querys, todo_refs, align_tmp_res, j, read1, read2, references, aligner
+                            );
+                        }
+                        assert(!align_tmp_res.is_extend_seed[j + 1]);
+                        if (align_tmp_res.type == 1)
+                            assert(!align_tmp_res.is_read1[j + 1]);
+                        else
+                            assert(align_tmp_res.is_read1[j + 1]);
+                        if (!align_tmp_res.done_align[j + 1]) {
+                            GPU_part2_rescue_mate_get_str(
+                                todo_querys, todo_refs, align_tmp_res, j + 1, read1, read2, references,
+                                aligner, mu, sigma
+                            );
+                        }
+                    }
+                } else if (align_tmp_res.type == 3) {
+                    assert(todo_size == 2);
+                    assert(align_tmp_res.is_extend_seed[0]);
+                    assert(align_tmp_res.is_read1[0]);
+                    if (!align_tmp_res.done_align[0]) {
+                        GPU_part2_extend_seed_get_str(
+                            todo_querys, todo_refs, align_tmp_res, 0, read1, read2, references, aligner
+                        );
+                    }
+                    assert(align_tmp_res.is_extend_seed[1]);
+                    assert(!align_tmp_res.is_read1[1]);
+                    if (!align_tmp_res.done_align[1]) {
+                        GPU_part2_extend_seed_get_str(
+                            todo_querys, todo_refs, align_tmp_res, 1, read1, read2, references, aligner
+                        );
+                    }
+                    //TODO
+                    //                bool is_proper = gpu_is_proper_pair(align_tmp_res.align_res[0], align_tmp_res.align_res[1], mu, sigma);
+                    //                if ((isize_est.sample_size < 400) && (align_tmp_res.align_res[0].edit_distance + align_tmp_res.align_res[1].edit_distance < 3) && is_proper) {
+                    //                    isize_est.update(std::abs(align_tmp_res.align_res[0].ref_start - align_tmp_res.align_res[1].ref_start));
+                    //                }
+                } else if (align_tmp_res.type == 4) {
+                    for (size_t j = 0; j < todo_size; j++) {
+                        if (!align_tmp_res.done_align[j]) {
+                            if (align_tmp_res.is_extend_seed[j]) {
+                                GPU_part2_extend_seed_get_str(
+                                    todo_querys, todo_refs, align_tmp_res, j, read1, read2, references,
+                                    aligner
+                                );
+                            } else {
+                                GPU_part2_rescue_mate_get_str(
+                                    todo_querys, todo_refs, align_tmp_res, j, read1, read2, references,
+                                    aligner, mu, sigma
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            assert(todo_refs.size() == todo_querys.size());
+//            assert(align_tmp_results.size() == records1.size());
+            time2_1 += GetTime() - t_1;
+
+            // step2 : solve todo_strings -- do ssw on gpu -- key step, need async
+            t_1 = GetTime();
+
+            for (size_t i = 0; i + STREAM_BATCH_SIZE <= todo_querys.size(); i += STREAM_BATCH_SIZE) {
+                auto query_start = todo_querys.begin() + i;
+                auto query_end = query_start + STREAM_BATCH_SIZE;
+                std::vector<std::string> query_batch(query_start, query_end);
+
+                auto ref_start = todo_refs.begin() + i;
+                auto ref_end = ref_start + STREAM_BATCH_SIZE;
+                std::vector<std::string> ref_batch(ref_start, ref_end);
+
+                solve_ssw_on_gpu(
+                    thread_id + cpu_num, gasal_results_tmp, query_batch, ref_batch, aln_params.match,
+                    aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend
+                );
+                gasal_results.insert(gasal_results.end(), gasal_results_tmp.begin(), gasal_results_tmp.end());
+            }
+            size_t remaining = todo_querys.size() % STREAM_BATCH_SIZE;
+            if (remaining > 0) {
+                auto query_start = todo_querys.end() - remaining;
+                std::vector<std::string> query_batch(query_start, todo_querys.end());
+
+                auto ref_start = todo_refs.end() - remaining;
+                std::vector<std::string> ref_batch(ref_start, todo_refs.end());
+
+                solve_ssw_on_gpu(
+                    thread_id + cpu_num, gasal_results_tmp, query_batch, ref_batch, aln_params.match,
+                    aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend
+                );
+                gasal_results.insert(gasal_results.end(), gasal_results_tmp.begin(), gasal_results_tmp.end());
+            }
+
+
+            time2_2 += GetTime() - t_1;
+
+            statistics.tot_extend += extend_timer1.duration();
+        }
+
+
+        //post-process ssw results and trans to sam
+        {
+            Timer extend_timer2;
+            // step1 : post-process the gpu results, re-ssw for bad results on cpu
+            t_1 = GetTime();
+            info_results.resize(todo_querys.size());
+            for (size_t i = 0; i < todo_querys.size(); i++) {
+                AlignmentInfo info;
+                if (gasal_fail(todo_querys[i], todo_refs[i], gasal_results[i])) {
+                    //if (1) {
+                    info = aligner.align(todo_querys[i], todo_refs[i]);
+                } else {
+                    info = aligner.align_gpu(todo_querys[i], todo_refs[i], gasal_results[i]);
+                }
+                info_results[i] = info;
+            }
+            time2_3 += GetTime() - t_1;
+
+            // step2 : store ssw results
+            t_1 = GetTime();
+            int pos = 0;
+            for (size_t i = 0; i < records1.size(); i++) {
+                auto record1 = records1[i];
+                auto record2 = records2[i];
+                to_uppercase(record1.seq);
+                to_uppercase(record2.seq);
+                Read read1(record1.seq);
+                Read read2(record2.seq);
+                const auto mu = isize_est.mu;
+                const auto sigma = isize_est.sigma;
+                GPUAlignTmpRes& align_tmp_res = global_align_res[i];
+                size_t todo_size = align_tmp_res.todo_nams.size();
+                if (align_tmp_res.type == 1 || align_tmp_res.type == 2) {
+                    for (size_t j = 0; j < todo_size; j += 2) {
+                        if (!align_tmp_res.done_align[j]) {
+                            GPU_part2_extend_seed_store_res(
+                                align_tmp_res, j, read1, read2, references, info_results[pos++]
+                            );
+                        }
+                        if (!align_tmp_res.done_align[j + 1]) {
+                            GPU_part2_rescue_mate_store_res(
+                                align_tmp_res, j + 1, read1, read2, references, info_results[pos++], mu, sigma
+                            );
+                        }
+                    }
+                } else if (align_tmp_res.type == 3) {
+                    if (!align_tmp_res.done_align[0]) {
+                        GPU_part2_extend_seed_store_res(
+                            align_tmp_res, 0, read1, read2, references, info_results[pos++]
+                        );
+                    }
+                    if (!align_tmp_res.done_align[1]) {
+                        GPU_part2_extend_seed_store_res(
+                            align_tmp_res, 1, read1, read2, references, info_results[pos++]
+                        );
+                    }
+                } else if (align_tmp_res.type == 4) {
+                    for (size_t j = 0; j < todo_size; j++) {
+                        if (!align_tmp_res.done_align[j]) {
+                            if (align_tmp_res.is_extend_seed[j]) {
+                                GPU_part2_extend_seed_store_res(
+                                    align_tmp_res, j, read1, read2, references, info_results[pos++]
+                                );
+                            } else {
+                                GPU_part2_rescue_mate_store_res(
+                                    align_tmp_res, j, read1, read2, references, info_results[pos++], mu, sigma
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            time2_4 += GetTime() - t_1;
+
+            // step3 : use ssw results to construct sam
+            t_1 = GetTime();
+            std::string sam_out;
+            sam_out.reserve(7 * map_param.r * (records1.size() + records3.size()));
+            Sam sam{sam_out, references, map_param.cigar_ops, read_group_id, map_param.output_unmapped, map_param.details};
+            for (size_t i = 0; i < records1.size(); ++i) {
+                auto record1 = records1[i];
+                auto record2 = records2[i];
+                to_uppercase(record1.seq);
+                to_uppercase(record2.seq);
+                GPU_align_PE_read_last(
+                    global_align_res[i], record1, record2, sam, sam_out, statistics, isize_est, aligner,
+                    map_param, index_parameters, references, index, random_engine
+                );
+            }
+            time3_1 += GetTime() - t_1;
+            statistics.tot_extend += extend_timer2.duration();
+
+            t_1 = GetTime();
+            output_buffer.output_records(std::move(sam_out), chunk_index);
+            time3_2 += GetTime() - t_1;
+        }
+    }
+    statistics.tot_aligner_calls += aligner.calls_count();
+    done = true;
+
+    std::cout << "gpu cost " << gpu_copy1 << " " << gpu_copy2 << " " << gpu_cost1 << " " << gpu_cost2 << " [" << gpu_cost2_1 << " " << gpu_cost2_2 << "] " << gpu_cost3 << " " << gpu_cost4 << std::endl;
+    std::cout << gpu_cost5 << " " << gpu_cost6 << " " << gpu_cost7 << " " << gpu_cost8 << " " << gpu_cost9 << " " << gpu_cost10 << std::endl;
+    std::cout << "[" << gpu_cost10_0 << " " << gpu_cost10_1 << " " << gpu_cost10_2 << " " << gpu_cost10_3 << " " << gpu_cost10_4 << "]" << std::endl;
+    std::cout << "copy data to host cost " << gpu_cost11 << " [" << gpu_cost11_copy1 << ", " << gpu_cost11_copy2 << "]" << std::endl;
+    std::cout << "total cost " << tot_cost << std::endl;
+    std::cout << "check_sum : " << check_sum << ", size_tot : " << size_tot << std::endl;
+    std::cout << "total_hits12 : " << global_hits_num12 << ", nr_good_hits12 : " << global_nams_info12 << std::endl;
+    std::cout << "total_hits3 : " << global_hits_num3 << ", nr_good_hits3 : " << global_nams_info3 << std::endl;
+    std::cout << "total_align_info123 : " << global_align_info123 << std::endl;
+
+    t_1 = GetTime();
+    cudaFree(d_seq);
+    cudaFree(d_len);
+    cudaFree(d_pre_sum);
+    cudaFree(d_index_para);
+    cudaFree(d_randstrobes);
+    cudaFree(d_randstrobe_start_indices);
+    delete h_seq;
+    delete h_len;
+    delete h_pre_sum;
+    time4 += GetTime() - t_1;
+
+
+    time_tot = GetTime() - t_0;
+    fprintf(
+        stderr, "cost time0:%.2f time1:%.2f(%.2f %.2f) time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), time4:%.2f tot time:%.2f\n", time0, time1, time1_1, time1_2,
+        time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time4, time_tot
+    );
+
+    cudaStreamSynchronize(ctx.stream);
+}
+
+void perform_task_async_pe_fx_GPU2(
 
     InputBuffer& input_buffer,
     OutputBuffer& output_buffer,
@@ -4235,7 +5339,7 @@ void perform_task_async_pe_fx_GPU(
 
     //map_param.max_tries = 2;
     printf("thread %d--%d\n", thread_id, gpu_id);
-	ThreadContext ctx(thread_id, gpu_id);
+    ThreadContext ctx(thread_id, gpu_id);
 
     bool eof = false;
     Aligner aligner{aln_params};
@@ -4271,8 +5375,6 @@ void perform_task_async_pe_fx_GPU(
     std::vector<neoReference> data2;
     rabbit::fq::FastqDataPairChunk *fqdatachunk = new rabbit::fq::FastqDataPairChunk;
 
-#define batch_size 60000ll
-#define batch_seq_szie batch_size * 160ll
 
     t_1 = GetTime();
     // init device memory pool
@@ -4298,28 +5400,28 @@ void perform_task_async_pe_fx_GPU(
     std::call_once(init_flag_ref[gpu_id], init_shared_data, references, index, gpu_id, thread_id);
 
     my_vector<QueryRandstrobe> *global_randstrobes;
-    cudaMallocManaged(&global_randstrobes, batch_size * 2 * sizeof(my_vector<QueryRandstrobe>));
+    cudaMallocManaged(&global_randstrobes, batch_size1 * 2 * sizeof(my_vector<QueryRandstrobe>));
     int *global_todo_ids;
-    cudaMallocManaged(&global_todo_ids, batch_size * 2 * sizeof(int));
+    cudaMallocManaged(&global_todo_ids, batch_size1 * 2 * sizeof(int));
     int *global_randstrobe_sizes;
-    cudaMallocManaged(&global_randstrobe_sizes, batch_size * 2 * sizeof(int));
+    cudaMallocManaged(&global_randstrobe_sizes, batch_size1 * 2 * sizeof(int));
     uint64_t * global_hashes_value;
-    cudaMallocManaged(&global_hashes_value, batch_size * 2 * sizeof(uint64_t));
+    cudaMallocManaged(&global_hashes_value, batch_size1 * 2 * sizeof(uint64_t));
     my_vector<my_pair<int, Hit>> *global_hits_per_ref0s;
-    cudaMallocManaged(&global_hits_per_ref0s, batch_size * 2 * sizeof(my_vector<my_pair<int, Hit>>));
+    cudaMallocManaged(&global_hits_per_ref0s, batch_size1 * 2 * sizeof(my_vector<my_pair<int, Hit>>));
     my_vector<my_pair<int, Hit>> *global_hits_per_ref1s;
-    cudaMallocManaged(&global_hits_per_ref1s, batch_size * 2 * sizeof(my_vector<my_pair<int, Hit>>));
+    cudaMallocManaged(&global_hits_per_ref1s, batch_size1 * 2 * sizeof(my_vector<my_pair<int, Hit>>));
     my_vector<Nam> *global_nams;
-    cudaMallocManaged(&global_nams, batch_size * 2 * sizeof(my_vector<Nam>));
+    cudaMallocManaged(&global_nams, batch_size1 * 2 * sizeof(my_vector<Nam>));
     GPUAlignTmpRes *global_align_res;
-    cudaMallocManaged(&global_align_res, batch_size * 2 * sizeof(GPUAlignTmpRes));
+    cudaMallocManaged(&global_align_res, batch_size1 * 2 * sizeof(GPUAlignTmpRes));
 
     uint64_t pre_vec_size = 4 * sizeof(int) + 2 * sizeof(Nam) + sizeof(GPUAlignment) + sizeof(CigarData);
-    uint64_t global_align_res_data_size = batch_size * MAX_TRIES_LIMIT2 * pre_vec_size;
+    uint64_t global_align_res_data_size = batch_size1 * MAX_TRIES_LIMIT2 * pre_vec_size;
     //printf("global_align_res_data_size %llu\n", global_align_res_data_size);
     char *global_align_res_data;
     cudaMallocManaged(&global_align_res_data, global_align_res_data_size);
-    for (int i = 0; i < batch_size; i++) {
+    for (int i = 0; i < batch_size1; i++) {
         GPUAlignTmpRes *tmp = global_align_res + i;
         tmp->type = 0, tmp->mapq1 = 0, tmp->mapq2 = 0, tmp->type4_loop_size = 0;
         char* base_ptr = global_align_res_data + i * MAX_TRIES_LIMIT2 * pre_vec_size;
@@ -4372,37 +5474,37 @@ void perform_task_async_pe_fx_GPU(
     int *d_pre_sum;
     cudaMallocHost(&d_seq, batch_seq_szie);
     cudaMemset(d_seq, 0, batch_seq_szie);
-    cudaMalloc(&d_len, batch_size * sizeof(int));
-    cudaMemset(d_len, 0, batch_size * sizeof(int));
-    cudaMalloc(&d_pre_sum, batch_size * sizeof(int));
-    cudaMemset(d_pre_sum, 0, batch_size * sizeof(int));
+    cudaMalloc(&d_len, batch_size2 * sizeof(int));
+    cudaMemset(d_len, 0, batch_size2 * sizeof(int));
+    cudaMalloc(&d_pre_sum, batch_size2 * sizeof(int));
+    cudaMemset(d_pre_sum, 0, batch_size2 * sizeof(int));
 
     char *d_seq2;
     int *d_len2;
     int *d_pre_sum2;
     cudaMallocHost(&d_seq2, batch_seq_szie);
     cudaMemset(d_seq2, 0, batch_seq_szie);
-    cudaMalloc(&d_len2, batch_size * sizeof(int));
-    cudaMemset(d_len2, 0, batch_size * sizeof(int));
-    cudaMalloc(&d_pre_sum2, batch_size * sizeof(int));
-    cudaMemset(d_pre_sum2, 0, batch_size * sizeof(int));
+    cudaMalloc(&d_len2, batch_size2 * sizeof(int));
+    cudaMemset(d_len2, 0, batch_size2 * sizeof(int));
+    cudaMalloc(&d_pre_sum2, batch_size2 * sizeof(int));
+    cudaMemset(d_pre_sum2, 0, batch_size2 * sizeof(int));
 
-    int *h_len = new int[batch_size];
-    int *h_pre_sum = new int[batch_size + 1];
+    int *h_len = new int[batch_size2];
+    int *h_pre_sum = new int[batch_size2 + 1];
     char *h_seq = new char[batch_seq_szie];
 
-    int *h_len2 = new int[batch_size];
-    int *h_pre_sum2 = new int[batch_size + 1];
+    int *h_len2 = new int[batch_size2];
+    int *h_pre_sum2 = new int[batch_size2 + 1];
     char *h_seq2 = new char[batch_seq_szie];
 
     uint64_t * global_hits_num;
-    cudaMallocManaged(&global_hits_num, batch_size * 2 * sizeof(uint64_t));
+    cudaMallocManaged(&global_hits_num, batch_size1 * 2 * sizeof(uint64_t));
 
     uint64_t * global_nams_info;
-    cudaMallocManaged(&global_nams_info, batch_size * 2 * sizeof(uint64_t));
+    cudaMallocManaged(&global_nams_info, batch_size1 * 2 * sizeof(uint64_t));
 
     uint64_t * global_align_info;
-    cudaMallocManaged(&global_align_info, batch_size * sizeof(uint64_t));
+    cudaMallocManaged(&global_align_info, batch_size1 * sizeof(uint64_t));
 
     time0 += GetTime() - t_1;
 
@@ -4447,9 +5549,9 @@ void perform_task_async_pe_fx_GPU(
     // Use chunk index as random seed for reproducibility
     pre_random_engine.seed(pre_chunk_index);
     printf("record size %zu\n", pre_records1.size());
-    assert(pre_records1.size() <= batch_size);
+    assert(pre_records1.size() <= batch_size2);
     GPU_align_PE(pre_records1, pre_records2,
-				 ctx,
+                 ctx,
                  pre_align_tmp_results,
                  global_hits_num, global_nams_info, global_align_info,
                  index, d_aligner, d_map_param, d_index_para,

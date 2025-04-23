@@ -120,7 +120,11 @@ void OutputBuffer::output_records(std::string chunk, size_t chunk_index) {
     std::unique_lock<std::mutex> unique_lock(mtx);
 
     // Ensure we print the chunks in the order in which they were read
-    assert(chunks.count(chunk_index) == 0);
+//    assert(chunks.count(chunk_index) == 0);
+    if (chunks.count(chunk_index) > 0) {
+        std::cerr << "Error: chunk already exists! --- " << chunk_index << std::endl;
+        return;
+    }
     chunks.emplace(std::make_pair(chunk_index, chunk));
     while (true) {
         const auto& item = chunks.find(next_chunk_index);

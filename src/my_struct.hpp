@@ -232,7 +232,7 @@ struct my_vector {
         data = (T*)my_malloc(capacity * sizeof(T));
     }
 
-    CUDA_DEV ~my_vector() {
+    CUDA_HOST CUDA_DEV ~my_vector() {
         if (data != nullptr) my_free(data);
         data = nullptr;
     }
@@ -259,22 +259,22 @@ struct my_vector {
         data[length++] = T();
     }
 
-    CUDA_DEV int size() const {
+    CUDA_HOST CUDA_DEV int size() const {
         return length;
     }
 
-    CUDA_DEV void clear() {
+    CUDA_HOST CUDA_DEV void clear() {
         length = 0;
     }
 
-    CUDA_DEV void release() {
+    CUDA_HOST CUDA_DEV void release() {
         if (data != nullptr) my_free(data);
         data = nullptr;
         length = 0;
         capacity = 0;
     }
 
-    CUDA_DEV T& operator[](int index) {
+    CUDA_HOST CUDA_DEV T& operator[](int index) {
         return data[index];
     }
 
@@ -282,11 +282,11 @@ struct my_vector {
         return data[index];
     }
 
-    CUDA_DEV T& back() {
+    CUDA_HOST CUDA_DEV T& back() {
         return data[length - 1];
     }
 
-    CUDA_DEV void move_from(my_vector<T>& src) {
+    CUDA_HOST CUDA_DEV void move_from(my_vector<T>& src) {
         if (data != nullptr) my_free(data);
         data = src.data;
         length = src.length;
@@ -296,7 +296,7 @@ struct my_vector {
         src.capacity = 0;
     }
 
-    CUDA_DEV bool empty() const {
+    CUDA_HOST CUDA_DEV bool empty() const {
         return length == 0;
     }
 };
