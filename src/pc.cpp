@@ -1111,7 +1111,8 @@ void perform_task_async_pe_fx(
     const int thread_id,
     rabbit::fq::FastqDataPool& fastqPool, 
     rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq, 
-    bool use_good_numa
+    bool use_good_numa,
+    int gpu_id
 ) {
     if(use_good_numa) {
         cpu_set_t cpuset;
@@ -1303,6 +1304,8 @@ void perform_task_async_pe_fx(
             // step2 : solve todo_strings -- do ssw on gpu -- key step, need async
             t_1 = GetTime();
             gpu_ssw_async = std::thread([&] (){
+                // TODO
+                cudaSetDevice(gpu_id);
                 for (size_t i = 0; i + STREAM_BATCH_SIZE <= todo_querys.size(); i += STREAM_BATCH_SIZE) {
                     auto query_start = todo_querys.begin() + i;
                     auto query_end = query_start + STREAM_BATCH_SIZE;

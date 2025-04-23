@@ -87,7 +87,7 @@ void perform_task_async_pe_fx(InputBuffer &input_buffer, OutputBuffer &output_bu
                   AlignmentStatistics& statistics, int& done, const AlignmentParameters &aln_params,
                   const MappingParameters &map_param, const IndexParameters& index_parameters, const References& references, const StrobemerIndex& index, const std::string& read_group_id,
                   const int thread_id, rabbit::fq::FastqDataPool& fastqPool,
-                  rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq, bool use_good_numa);
+                  rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq, bool use_good_numa, int gpu_id);
 #endif
 
 

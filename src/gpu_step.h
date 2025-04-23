@@ -19,7 +19,7 @@ void perform_task_async_pe_fx_GPU(
     AlignmentStatistics& statistics,
     int& done,
     const AlignmentParameters& aln_params,
-    const MappingParameters& map_param,
+    MappingParameters map_param,
     const IndexParameters& index_parameters,
     const References& references,
     const StrobemerIndex& index,
@@ -28,6 +28,7 @@ void perform_task_async_pe_fx_GPU(
     rabbit::fq::FastqDataPool& fastqPool,
     rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq,
     bool use_good_numa,
-    int gpu_id
+    int gpu_id,
+    int cpu_num
 );
 #endif  //RABBITSALIGN_GPU_STEP_H
