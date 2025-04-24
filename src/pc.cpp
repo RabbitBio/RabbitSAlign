@@ -1115,13 +1115,14 @@ void perform_task_async_pe_fx(
     const int thread_id,
     rabbit::fq::FastqDataPool& fastqPool, 
     rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq, 
-    bool use_good_numa,
-    int gpu_id
+    const bool use_good_numa,
+    const int gpu_id,
+    const int bind_cpu_id
 ) {
     if(use_good_numa) {
         cpu_set_t cpuset;
         CPU_ZERO(&cpuset);
-        CPU_SET(thread_id, &cpuset);
+        CPU_SET(bind_cpu_id, &cpuset);
         pthread_t current_thread = pthread_self();
         if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
             std::cerr << "Error setting thread affinity" << std::endl;
