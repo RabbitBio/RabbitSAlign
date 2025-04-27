@@ -120,21 +120,19 @@ void OutputBuffer::output_records(std::string chunk, size_t chunk_index) {
     std::unique_lock<std::mutex> unique_lock(mtx);
 
     // Ensure we print the chunks in the order in which they were read
-//    assert(chunks.count(chunk_index) == 0);
-    if (chunks.count(chunk_index) > 0) {
-        std::cerr << "Error: chunk already exists! --- " << chunk_index << std::endl;
-        return;
-    }
-    chunks.emplace(std::make_pair(chunk_index, chunk));
-    while (true) {
-        const auto& item = chunks.find(next_chunk_index);
-        if (item == chunks.end()) {
-            break;
-        }
-        out << item->second;
-        chunks.erase(item);
-        next_chunk_index++;
-    }
+    assert(chunks.count(chunk_index) == 0);
+    out << chunk;
+
+    //chunks.emplace(std::make_pair(chunk_index, chunk));
+    //while (true) {
+    //    const auto& item = chunks.find(next_chunk_index);
+    //    if (item == chunks.end()) {
+    //        break;
+    //    }
+    //    out << item->second;
+    //    chunks.erase(item);
+    //    next_chunk_index++;
+    //}
     unique_lock.unlock();
 }
 
@@ -1115,14 +1113,13 @@ void perform_task_async_pe_fx(
     const int thread_id,
     rabbit::fq::FastqDataPool& fastqPool, 
     rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq, 
-    const bool use_good_numa,
-    const int gpu_id,
-    const int bind_cpu_id
+    bool use_good_numa,
+    int gpu_id
 ) {
     if(use_good_numa) {
         cpu_set_t cpuset;
         CPU_ZERO(&cpuset);
-        CPU_SET(bind_cpu_id, &cpuset);
+        CPU_SET(thread_id, &cpuset);
         pthread_t current_thread = pthread_self();
         if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
             std::cerr << "Error setting thread affinity" << std::endl;
@@ -1310,6 +1307,7 @@ void perform_task_async_pe_fx(
             t_1 = GetTime();
             gpu_ssw_async = std::thread([&] (){
                 // TODO
+                //cudaSetDevice(thread_id / 36);
                 cudaSetDevice(gpu_id);
                 for (size_t i = 0; i + STREAM_BATCH_SIZE <= todo_querys.size(); i += STREAM_BATCH_SIZE) {
                     auto query_start = todo_querys.begin() + i;

@@ -5,6 +5,8 @@ project(RabbitSAlign VERSION 0.0.1)
 find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 find_package(OpenMP REQUIRED)
+#find_package(MPI REQUIRED)
+
 
 option(ENABLE_AVX "Enable AVX2 support" OFF)
 option(USE_RABBITFX "Parse input FASTA with RabbitFX" OFF)
@@ -23,13 +25,13 @@ endif()
 set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Release" "Debug")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
-add_compile_options(-w -Wall -Wextra)
+add_compile_options(-w)
 
 set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -fopenmp")
 set(CMAKE_CUDA_FLAGS_DEBUG "-G -g -O0")
 
 set(CMAKE_CXX_FLAGS_RELEASE "-g -O3 -fopenmp")
-set(CMAKE_CUDA_FLAGS_RELEASE "-O3")
+set(CMAKE_CUDA_FLAGS_RELEASE "-O3 -fopenmp")
 
 if(CLOSE_NUMA_OPT)
     add_compile_definitions(OPT_NUMA_CLOSE)
@@ -42,10 +44,14 @@ if(USE_RABBITFX)
 endif()
 
 include(FetchContent)
+
+set(ZStr_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/ext/zstrgitrepo-src")
+
+
 FetchContent_Declare(ZStrGitRepo
-        GIT_REPOSITORY "git@github.com:mateidavid/zstr.git"
-        GIT_TAG "755da7890ea22478a702e3139092e6c964fab1f5"
+    SOURCE_DIR ${ZStr_SOURCE_DIR}
 )
+
 FetchContent_MakeAvailable(ZStrGitRepo)
 
 configure_file(
@@ -85,6 +91,7 @@ set(SOURCES
         src/gpu_step.cu
 )
 
+#include_directories(src/ src/include ext/ ${PROJECT_BINARY_DIR} ${MPI_C_INCLUDE_DIRS})
 include_directories(src/ src/include ext/ ${PROJECT_BINARY_DIR})
 
 add_executable(rabbitsalign ${SOURCES})
@@ -101,6 +108,7 @@ target_link_libraries(rabbitsalign PUBLIC
         OpenMP::OpenMP_CXX
         ZLIB::ZLIB
         zstr::zstr
+        #${MPI_C_LIBRARIES}
 )
 
 if(USE_RABBITFX)

@@ -292,7 +292,7 @@ namespace rabbit {
         class FastqFileReader {
             private:
                 static const uint32 SwapBufferSize = 1 << 22; 
-                static const uint32 GetNxtBuffSize = 1 << 20;
+                uint32 GetNxtBuffSize = 1 << 20;
 
             public:
                 /**
@@ -303,7 +303,7 @@ namespace rabbit {
                  * @param isZippedNew if true, it will use gzopen to read fileName_ and fileName2_
                  */
                 FastqFileReader(const std::string &fileName_, FastqDataPool &pool_,
-                      bool isZippedNew = false, std::string fileName2_ = "")
+                      bool isZippedNew = false, std::string fileName2_ = "", int getNxtSize_ = 1 << 20)
                     : swapBuffer(SwapBufferSize),
                     swapBuffer2(SwapBufferSize),
                     bufferSize(0),
@@ -312,6 +312,7 @@ namespace rabbit {
                     usesCrlf(false),
                     isZipped(isZippedNew),
                     numParts(0),
+                    GetNxtBuffSize(getNxtSize_),
                     recordsPool(pool_) {
                         mFqReader = new FileReader(fileName_, isZipped);
                         if(fileName2_ != ""){
@@ -326,7 +327,7 @@ namespace rabbit {
                  * @param fileName2_ the second file descriptor if source file is pair-end sequence
                  * @param isZippedNew if true, it will use gzopen to read fd and fd2
                  */
-                FastqFileReader(int fd, FastqDataPool &pool_, bool isZippedNew = false, int fd2 = -1)
+                FastqFileReader(int fd, FastqDataPool &pool_, bool isZippedNew = false, int fd2 = -1, int getNxtSize_ = 1 << 20)
                     : swapBuffer(SwapBufferSize),
                     swapBuffer2(SwapBufferSize),
                     bufferSize(0),
@@ -335,6 +336,7 @@ namespace rabbit {
                     usesCrlf(false),
                     isZipped(isZippedNew),
                     numParts(0),
+                    GetNxtBuffSize(getNxtSize_),
                     recordsPool(pool_) {
                         if (isZippedNew) {
                         } else {

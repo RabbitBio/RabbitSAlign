@@ -592,7 +592,8 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
     const std::vector<Nam>& nams1,
     const std::vector<Nam>& nams2,
     float mu,
-    float sigma
+    float sigma,
+    int max_tries
 ) {
 #ifdef timer1
     thread_local int cnt = 0;
@@ -626,9 +627,9 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
     robin_hood::unordered_set<int> added_n1;
     robin_hood::unordered_set<int> added_n2;
     int best_joint_hits = 0;
-#define use_fast_loop3
+//#define use_fast_loop3
 //#define use_fast_loop2
-//#define use_init_loop
+#define use_init_loop
 //
 
 #ifdef use_fast_loop3
@@ -878,30 +879,11 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
 
     for (auto& nam1 : nams1) {
         for (auto& nam2 : nams2) {
-            cnt0++;
             int joint_hits = nam1.n_hits + nam2.n_hits;
-            if (joint_hits < best_joint_hits / 2) {
+            if (joint_hits < best_joint_hits / 2 || joint_nam_scores.size() >= max_tries * 2) {
                 break;
             }
-            cnt1++;
-            if(nam1.ref_id != nam2.ref_id) continue;
-            cnt2++;
-            if(nam1.is_rc == nam2.is_rc) continue;
-            cnt3++;
-
-            //int a = std::max(0, nam1.ref_start - nam2.query_start);
-            //int b = std::max(0, nam2.ref_start - nam2.query_start);
-
-            //// r1 ---> <---- r2
-            //bool r1_r2 = nam2.is_rc && (a <= b) && (b - a < mu + 10 * sigma);
-            //if(r1_r2) return 1;
-
-            //// r2 ---> <---- r1
-            //bool r2_r1 = nam1.is_rc && (b <= a) && (a - b < mu + 10 * sigma);
-            //if(r2_r1) return 1;
-  
             if (is_proper_nam_pair(nam1, nam2, mu, sigma)) {
-                cnt4++;
                 joint_nam_scores.emplace_back(NamPair{joint_hits, nam1, nam2});
 //                added_n1[nam1.nam_id] = 1;
 //                added_n2[nam2.nam_id] = 1;
@@ -910,6 +892,7 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
                 best_joint_hits = std::max(joint_hits, best_joint_hits);
             }
         }
+        if (joint_nam_scores.size() >= max_tries * 2) break;
     }
 #endif
 
@@ -924,7 +907,9 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
     dummy_nam.ref_start = -1;
     if (!nams1.empty()) {
         int best_joint_hits1 = best_joint_hits > 0 ? best_joint_hits : nams1[0].n_hits;
-        for (auto& nam1 : nams1) {
+        //for (auto& nam1 : nams1) {
+        for (int i = 0; i < std::min(max_tries, (int)nams1.size()); i++) {
+            Nam nam1 = nams1[i];
             if (nam1.n_hits < best_joint_hits1 / 2) {
                 break;
             }
@@ -946,7 +931,9 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
     // Find high-scoring R2 NAMs that are not part of a proper pair
     if (!nams2.empty()) {
         int best_joint_hits2 = best_joint_hits > 0 ? best_joint_hits : nams2[0].n_hits;
-        for (auto& nam2 : nams2) {
+        //for (auto& nam2 : nams2) {
+        for (int i = 0; i < std::min(max_tries, (int)nams2.size()); i++) {
+            Nam nam2 = nams2[i];
             if (nam2.n_hits < best_joint_hits2 / 2) {
                 break;
             }
@@ -1472,7 +1459,9 @@ inline void align_PE_part(
     // Get top hit counts for all locations. The joint hit count is the sum of hits of the two mates. Then align as long as score dropoff or cnt < 20
 
     align_tmp_res.type = 4;
-    std::vector<NamPair> joint_nam_scores = get_best_scoring_nam_pairs(nams1, nams2, mu, sigma);
+    std::vector<NamPair> joint_nam_scores = get_best_scoring_nam_pairs(nams1, nams2, mu, sigma, max_tries);
+    if (joint_nam_scores.size() > max_tries) joint_nam_scores.resize(max_tries);
+    
 
     // Cache for already computed alignments. Maps NAM ids to alignments.
     robin_hood::unordered_map<int, bool> is_aligned1;
@@ -1664,7 +1653,7 @@ inline void align_PE(
     // Do a full search for highest-scoring pair
     // Get top hit counts for all locations. The joint hit count is the sum of hits of the two mates. Then align as long as score dropoff or cnt < 20
 
-    std::vector<NamPair> joint_nam_scores = get_best_scoring_nam_pairs(nams1, nams2, mu, sigma);
+    std::vector<NamPair> joint_nam_scores = get_best_scoring_nam_pairs(nams1, nams2, mu, sigma, max_tries);
 
     // Cache for already computed alignments. Maps NAM ids to alignments.
     robin_hood::unordered_map<int, Alignment> is_aligned1;
@@ -1831,7 +1820,7 @@ inline void get_best_map_location(
     Nam& best_nam2
 ) {
     std::vector<NamPair> joint_nam_scores =
-        get_best_scoring_nam_pairs(nams1, nams2, isize_est.mu, isize_est.sigma);
+        get_best_scoring_nam_pairs(nams1, nams2, isize_est.mu, isize_est.sigma, 0);
     Nam n1_joint_max, n2_joint_max, n1_indiv_max, n2_indiv_max;
     float score_joint = 0;
     float score_indiv = 0;

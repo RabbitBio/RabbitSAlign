@@ -28,9 +28,7 @@ void perform_task_async_pe_fx_GPU(
     rabbit::fq::FastqDataPool& fastqPool,
     rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq,
     const bool use_good_numa,
-    const int gpu_id,
-    const int cpu_num,
-    const int bind_cpu_id
+    const int gpu_id
 );
 
 void init_shared_data(const References& references, const StrobemerIndex& index, const int gpu_id, int thread_id);

@@ -966,10 +966,10 @@ std::vector<Nam> find_nams_rescue(
     std::array<robin_hood::unordered_map<unsigned int, std::vector<Hit>>, 2> hits_per_ref;
     std::vector<RescueHit> hits_fw;
     std::vector<RescueHit> hits_rc;
-    hits_per_ref[0].reserve(100);
-    hits_per_ref[1].reserve(100);
-    hits_fw.reserve(5000);
-    hits_rc.reserve(5000);
+    //hits_per_ref[0].reserve(100);
+    //hits_per_ref[1].reserve(100);
+    //hits_fw.reserve(5000);
+    //hits_rc.reserve(5000);
 
     for (auto &qr : query_randstrobes) {
         size_t position = index.find(qr.hash);
@@ -991,7 +991,7 @@ std::vector<Nam> find_nams_rescue(
     for (auto& rescue_hits : {hits_fw, hits_rc}) {
         int cnt = 0;
         for (auto &rh : rescue_hits) {
-            if ((rh.count > rescue_cutoff && cnt >= 5) || rh.count > 1000) {
+            if ((rh.count > rescue_cutoff && cnt >= 5) || rh.count > 100) {
                 break;
             }
             rhs[is_revcomp].push_back(rh);
@@ -1019,10 +1019,10 @@ std::vector<Nam> find_nams_rescue(
 //    std::array<std::map<unsigned int, std::vector<Hit>>, 2> hits_per_ref;
     std::vector<RescueHit> hits_fw;
     std::vector<RescueHit> hits_rc;
-    hits_per_ref[0].reserve(100);
-    hits_per_ref[1].reserve(100);
-    hits_fw.reserve(5000);
-    hits_rc.reserve(5000);
+    //hits_per_ref[0].reserve(100);
+    //hits_per_ref[1].reserve(100);
+    //hits_fw.reserve(5000);
+    //hits_rc.reserve(5000);
 
     for (auto &qr : query_randstrobes) {
         size_t position = index.find(qr.hash);
@@ -1044,7 +1044,7 @@ std::vector<Nam> find_nams_rescue(
     for (auto& rescue_hits : {hits_fw, hits_rc}) {
         int cnt = 0;
         for (auto &rh : rescue_hits) {
-            if ((rh.count > rescue_cutoff && cnt >= 5) || rh.count > 1000) {
+            if ((rh.count > rescue_cutoff && cnt >= 5) || rh.count > 100) {
                 break;
             }
             add_to_hits_per_ref(hits_per_ref[is_revcomp], rh.query_start, rh.query_end, index, rh.position);
