@@ -40,13 +40,13 @@ else
 fi
 
 # Update CMakeLists.txt with the correct CUDA path
-sed -i "s|-L/usr/local/cuda/targets/x86_64-linux/lib|-L$CUDA_PATH/targets/x86_64-linux/lib|g" CMakeLists.txt
+sed -i "s|/usr/local/cuda|$CUDA_PATH|g" CMakeLists.txt
 
 # Compile the main project
 echo "Compiling the main project..."
 mkdir -p build
 cd build
-cmake .. -DCMAKE_C_FLAGS="-march=native" -DCMAKE_CXX_FLAGS="-march=native" -DUSE_RABBITFX=ON -DCLOSE_NUMA_OPT=ON
+cmake .. -DENABLE_AVX=ON -DUSE_RABBITFX=ON -DCLOSE_NUMA_OPT=OFF -DCMAKE_BUILD_TYPE=release
 make -j8
 
 echo "build successfully."

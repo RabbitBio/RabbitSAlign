@@ -43,6 +43,13 @@ CUDA_DEV static unsigned char gpu_seq_nt4_table[256] = {
     4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
     4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4
 };
+/*
+ * A -- 65 -- 0
+ * C -- 67 -- 1
+ * G -- 71 -- 2
+ * T -- 84 -- 3
+ * U -- 85 -- 3
+ */
 
 template <typename T>
 CUDA_HOST CUDA_DEV T my_max(T a, T b) {

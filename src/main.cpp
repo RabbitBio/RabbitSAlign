@@ -244,7 +244,7 @@ struct ThreadAssignment {
     int cpu_core;
     int numa_node;
     int gpu_id;
-    int flag;  // 新增字段：标记 0 或 1
+    int flag;
 };
 
 std::vector<ThreadAssignment> assign_threads_fixed_with_flags() {
@@ -296,11 +296,11 @@ std::vector<ThreadAssignment> assign_threads_fixed_with_flags() {
     
     for (int base = 0; base < 72; base += 18) {
         if (base + 0 < 144) assignments[base + 0].flag = 1;
-        //if (base + 12 < 144) assignments[base + 12].flag = 1;
+        if (base + 12 < 144) assignments[base + 12].flag = 1;
     }
     for (int base = 72; base < 144; base += 18) {
         if (base + 4 < 144) assignments[base + 4].flag = 1;
-        //if (base + 16 < 144) assignments[base + 16].flag = 1;
+        if (base + 16 < 144) assignments[base + 16].flag = 1;
     }
 
     return assignments;
@@ -386,7 +386,7 @@ int run_rabbitsalign(int argc, char **argv) {
 
     std::vector<ThreadAssignment> assignments = assign_threads_fixed_with_flags();
 
-    assert(opt.n_threads == 144);
+    //assert(opt.n_threads == 144);
     for (int i = 0; i < opt.n_threads; i++) {
         cudaSetDevice(assignments[i].gpu_id);
         solve_ssw_on_gpu(i, gasal_results_tmp, query_batch, ref_batch, aln_params.match, 
