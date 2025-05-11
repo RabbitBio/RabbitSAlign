@@ -5,6 +5,11 @@
 #include <stdexcept>
 #include <cassert>
 
+#include "FastxStream.h"
+#include "FastxChunk.h"
+#include "DataQueue.h"
+#include "Formater.h"
+
 #ifdef __CUDACC__
 #define CUDA_HOST __host__
 #define CUDA_DEV __device__
@@ -50,6 +55,12 @@ CUDA_DEV static unsigned char gpu_seq_nt4_table[256] = {
  * T -- 84 -- 3
  * U -- 85 -- 3
  */
+
+struct neoRcRef{
+    neoReference read;
+    char* rc;
+};
+
 
 template <typename T>
 CUDA_HOST CUDA_DEV T my_max(T a, T b) {

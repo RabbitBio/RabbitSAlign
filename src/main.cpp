@@ -375,7 +375,7 @@ int run_rabbitsalign(int argc, char **argv) {
 
     const int gpu_num = 4;
 
-	std::vector<gasal_tmp_res> gasal_results_tmp;
+    std::vector<gasal_tmp_res> gasal_results_tmp;
     std::vector<std::string> query_batch;
     std::vector<std::string> ref_batch;
     std::string query_test = "AAA\n";

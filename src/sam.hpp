@@ -59,7 +59,7 @@ enum SamFlags {
     SUPPLEMENTARY = 0x800,
 };
 
-#define MAX_CIGAR_ITEM 20
+#define MAX_CIGAR_ITEM 60
 
 struct GPUAlignment {
     int ref_id{0};
@@ -136,22 +136,35 @@ public:
     void add(const std::pair<GPUAlignment, CigarData>& alignment, const klibpp::KSeq& record, const std::string& sequence_rc, uint8_t mapq, bool is_primary, const Details& details);
     void add(const Alignment& alignment, const klibpp::KSeq& record, const std::string& sequence_rc, uint8_t mapq, bool is_primary, const Details& details);
     void add_pair(const Alignment& alignment1, const Alignment& alignment2, const klibpp::KSeq& record1, const klibpp::KSeq& record2, const std::string& read1_rc, const std::string& read2_rc, uint8_t mapq1, uint8_t mapq2, bool is_proper, bool is_primary, const std::array<Details, 2>& details);
+    void add_pair(const std::pair<GPUAlignment, CigarData>& alignment1, const std::pair<GPUAlignment, CigarData>& alignment2, const neoReference& record1, const neoReference& record2, const char* read1_rc, const char* read2_rc, uint8_t mapq1, uint8_t mapq2, bool is_proper, bool is_primary, const std::array<Details, 2>& details);
     void add_pair(const std::pair<GPUAlignment, CigarData>& alignment1, const std::pair<GPUAlignment, CigarData>& alignment2, const klibpp::KSeq& record1, const klibpp::KSeq& record2, const std::string& read1_rc, const std::string& read2_rc, uint8_t mapq1, uint8_t mapq2, bool is_proper, bool is_primary, const std::array<Details, 2>& details);
     void add_unmapped(const klibpp::KSeq& record, uint16_t flags = UNMAP);
+    void add_unmapped(const neoReference& record, uint16_t flags = UNMAP);
     void add_unmapped_pair(const klibpp::KSeq& r1, const klibpp::KSeq& r2);
+    void add_unmapped_pair(const neoReference& r1, const neoReference& r2);
     void add_unmapped_mate(const klibpp::KSeq& record, uint16_t flags, const std::string& mate_reference_name, uint32_t mate_pos);
+    void add_unmapped_mate(const neoReference& record, uint16_t flags, const std::string& mate_reference_name, uint32_t mate_pos);
 
 private:
     void add_record(const std::string& query_name, uint16_t flags, const std::string& reference_name, uint32_t pos, uint8_t mapq, const Cigar& cigar, const std::string& mate_reference_name, uint32_t mate_pos, int32_t template_len, const std::string& query_sequence, const std::string& query_sequence_rc, const std::string& qual, int ed, int aln_score, const Details& details);
     void add_record(const std::string& query_name, uint16_t flags, const std::string& reference_name, uint32_t pos, uint8_t mapq, const CigarData& cigar, const std::string& mate_reference_name, uint32_t mate_pos, int32_t template_len, const std::string& query_sequence, const std::string& query_sequence_rc, const std::string& qual, int ed, int aln_score, const Details& details);
+    void add_record(const char* query_name, int name_len, uint16_t flags, const std::string& reference_name, uint32_t pos, uint8_t mapq, const CigarData& cigar, const std::string& mate_reference_name, uint32_t mate_pos, int32_t template_len,
+                    const char* query_sequence, const char* query_sequence_rc, int seq_len, const char* qual, int qual_len, int ed, int aln_score, const Details& details);
 
     void append_seq(const std::string& seq) {
         sam_string.append(seq.empty() ? "*" : seq);
+    }
+    void append_seq(const char* seq, int len) {
+        sam_string.append(len == 0 ? "*" : std::string(seq, len));
     }
 
     void append_qual(const std::string& qual) {
         sam_string.append("\t");
         sam_string.append(qual.empty() ? "*" : qual);
+    }
+    void append_qual(const char* qual, int len) {
+        sam_string.append("\t");
+        sam_string.append(len == 0 ? "*" : std::string(qual, len));
     }
     void append_details(const Details& details);
     void append_paired_details(const Details& details);
