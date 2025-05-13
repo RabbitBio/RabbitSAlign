@@ -43,6 +43,8 @@ struct gpu_batch {                     //a struct to hold data structures of a s
     int batch_start;   //starting index of batch
 };
 
+void solve_ssw_on_gpu2(int thread_id, std::vector<gasal_tmp_res> &gasal_results, std::vector<std::string_view> &todo_querys, std::vector<std::string_view> &todo_refs,
+                      int match_score = 2, int mismatch_score = 8, int gap_open_score = 12, int gap_extend_score = 1);
 void solve_ssw_on_gpu(int thread_id, std::vector<gasal_tmp_res> &gasal_results, std::vector<std::string> &todo_querys, std::vector<std::string> &todo_refs,
                       int match_score = 2, int mismatch_score = 8, int gap_open_score = 12, int gap_extend_score = 1);
 #endif  //STROBEALIGN_GASAL2_SSW_H

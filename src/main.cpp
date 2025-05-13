@@ -296,11 +296,11 @@ std::vector<ThreadAssignment> assign_threads_fixed_with_flags() {
     
     for (int base = 0; base < 72; base += 18) {
         if (base + 0 < 144) assignments[base + 0].flag = 1;
-        if (base + 12 < 144) assignments[base + 12].flag = 1;
+        //if (base + 12 < 144) assignments[base + 12].flag = 1;
     }
     for (int base = 72; base < 144; base += 18) {
-        if (base + 4 < 144) assignments[base + 4].flag = 1;
-        if (base + 16 < 144) assignments[base + 16].flag = 1;
+        //if (base + 4 < 144) assignments[base + 4].flag = 1;
+        //if (base + 16 < 144) assignments[base + 16].flag = 1;
     }
 
     return assignments;
@@ -327,9 +327,9 @@ int run_rabbitsalign(int argc, char **argv) {
     }
 
 #ifdef RABBIT_FX
-    rabbit::fq::FastqDataPool fastqPool(512, 1 << 20);
-    rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> queue_se(512, 1);
-    rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> queue_pe(512, 1);
+    rabbit::fq::FastqDataPool fastqPool(1024, 1 << 20);
+    rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> queue_se(1024, 1);
+    rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> queue_pe(1024, 1);
     std::thread *producer;
     if(!opt.only_gen_index) {
         if(opt.is_SE) {
@@ -378,10 +378,16 @@ int run_rabbitsalign(int argc, char **argv) {
     std::vector<gasal_tmp_res> gasal_results_tmp;
     std::vector<std::string> query_batch;
     std::vector<std::string> ref_batch;
+    std::vector<std::string_view> query_batch_v;
+    std::vector<std::string_view> ref_batch_v;
     std::string query_test = "AAA\n";
     std::string ref_test = "AAA\n";
-    query_batch.push_back(query_test);
-    ref_batch.push_back(ref_test);
+    for (int i = 0; i < STREAM_BATCH_SIZE; i++) {
+        query_batch.push_back(query_test);
+        ref_batch.push_back(ref_test);
+        query_batch_v.push_back(std::string_view(query_test));
+        ref_batch_v.push_back(std::string_view(ref_test));
+    }
     printf("init gasal2\n");
 
     std::vector<ThreadAssignment> assignments = assign_threads_fixed_with_flags();
@@ -389,8 +395,13 @@ int run_rabbitsalign(int argc, char **argv) {
     //assert(opt.n_threads == 144);
     for (int i = 0; i < opt.n_threads; i++) {
         cudaSetDevice(assignments[i].gpu_id);
-        solve_ssw_on_gpu(i, gasal_results_tmp, query_batch, ref_batch, aln_params.match, 
-            aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend);
+        if(assignments[i].flag) {
+            solve_ssw_on_gpu2(i, gasal_results_tmp, query_batch_v, ref_batch_v, aln_params.match,
+                             aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend);
+        } else {
+            solve_ssw_on_gpu(i, gasal_results_tmp, query_batch, ref_batch, aln_params.match,
+                             aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend);
+        }
     }
     printf("init done\n");
 

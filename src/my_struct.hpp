@@ -29,6 +29,17 @@ CUDA_DEV static const uint8_t gpu_nt2int_mod8[8] = {
     2  // 7 → 'G'
 };
 
+CUDA_HOST CUDA_DEV static const char rc_gpu_nt2int_mod8[8] = {
+    'A', // 0
+    'T', // 1 → 'A'
+    'A', // 2
+    'G', // 3 → 'C'
+    'A', // 4 → 'T'
+    'A', // 5
+    'A', // 6
+    'C'  // 7 → 'G'
+};
+
 
 CUDA_DEV static unsigned char gpu_seq_nt4_table[256] = {
     0, 1, 2, 3,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
