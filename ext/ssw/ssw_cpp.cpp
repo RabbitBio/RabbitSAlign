@@ -428,6 +428,79 @@ uint16_t Aligner::Align_gpu(gasal_tmp_res &gasal_res, const char* query, const c
     return align_flag;
 }
 
+uint16_t Aligner::Align_gpu(gasal_tmp_res &gasal_res, const char* query, const int query_len, const char* ref, const int ref_len,
+                            const Filter& filter, Alignment* alignment, const int32_t maskLen) const
+{
+    if (!translation_matrix_) return false;
+
+    if (query_len == 0) return false;
+    int8_t* translated_query = NULL;
+
+    // calculate the valid length
+    int valid_ref_len = ref_len;
+    int8_t* translated_ref = NULL;
+
+
+    s_profile* profile = NULL;
+
+    uint8_t flag = 0;
+    SetFlag(filter, &flag);
+    s_align* s_al = my_ssw_align(profile, translated_ref, valid_ref_len,
+                                 static_cast<int>(gap_opening_penalty_),
+                                 static_cast<int>(gap_extending_penalty_),
+                                 flag, filter.score_filter, filter.distance_filter, maskLen,
+                                 gasal_res.score, gasal_res.query_start, gasal_res.ref_start,
+                                 gasal_res.query_end, gasal_res.ref_end, gasal_res.cigar_str.c_str());
+
+    alignment->Clear();
+    ConvertAlignment(*s_al, query_len, alignment);
+    alignment->mismatches = CalculateNumberMismatchOnly(&*alignment, query_len);
+    uint16_t align_flag = s_al->flag;
+
+    align_destroy(s_al);
+
+    return align_flag;
+}
+
+uint16_t Aligner::Align(const char* query, const int query_len,  const char* ref, const int ref_len,
+                        const Filter& filter, Alignment* alignment, const int32_t maskLen) const
+{
+    if (!translation_matrix_) return false;
+
+    if (query_len == 0) return false;
+    int8_t* translated_query = new int8_t[query_len];
+    TranslateBase(query, query_len, translated_query);
+
+    // calculate the valid length
+    int valid_ref_len = ref_len;
+    int8_t* translated_ref = new int8_t[valid_ref_len];
+    TranslateBase(ref, valid_ref_len, translated_ref);
+
+
+    const int8_t score_size = 2;
+    s_profile* profile = ssw_init(translated_query, query_len, score_matrix_,
+                                  score_matrix_size_, score_size);
+
+    uint8_t flag = 0;
+    SetFlag(filter, &flag);
+    s_align* s_al = ssw_align(profile, translated_ref, valid_ref_len,
+                              static_cast<int>(gap_opening_penalty_),
+                              static_cast<int>(gap_extending_penalty_),
+                              flag, filter.score_filter, filter.distance_filter, maskLen);
+
+    alignment->Clear();
+    ConvertAlignment(*s_al, query_len, alignment);
+    alignment->mismatches = CalculateNumberMismatch(&*alignment, translated_ref, translated_query, query_len);
+    uint16_t align_flag = s_al->flag;
+
+    // Free memory
+    delete [] translated_query;
+    delete [] translated_ref;
+    align_destroy(s_al);
+    init_destroy(profile);
+
+    return align_flag;
+}
 
 uint16_t Aligner::Align(const char* query, const char* ref, const int& ref_len,
                         const Filter& filter, Alignment* alignment, const int32_t maskLen) const

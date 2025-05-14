@@ -39,6 +39,9 @@ public:
     AlignmentInfo align(const std::string &query, const std::string &ref) const;
     AlignmentInfo align_gpu(const std::string &query, const std::string &ref, gasal_tmp_res &gasal_res) const;
 
+    AlignmentInfo align(const std::string_view &query, const std::string_view &ref) const;
+    AlignmentInfo align_gpu(const std::string_view &query, const std::string_view &ref, gasal_tmp_res &gasal_res) const;
+
     AlignmentParameters parameters;
 
     mutable unsigned m_align_calls{0};  // no. of calls to the align() method

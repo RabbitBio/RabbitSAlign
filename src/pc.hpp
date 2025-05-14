@@ -115,7 +115,8 @@ void part2_extend_seed_get_str(
     const Aligner& aligner
 );
 
-bool gasal_fail(std::string& query_str, std::string& ref_str, gasal_tmp_res gasal_res);
+bool gasal_fail(const std::string& query_str, const std::string& ref_str, gasal_tmp_res gasal_res);
+bool gasal_fail(const std::string_view& query_str, const std::string_view& ref_str, gasal_tmp_res gasal_res);
 
 void part2_extend_seed_store_res(
     AlignTmpRes& align_tmp_res,

@@ -465,7 +465,7 @@ int calculate_cigar_length(const char* cigar) {
 }
 
 // check if gasal_res is good, include cigar length is valid.
-bool gasal_fail(std::string& query_str, std::string& ref_str, gasal_tmp_res gasal_res) {
+bool gasal_fail(const std::string& query_str, const std::string& ref_str, gasal_tmp_res gasal_res) {
     bool gg_res = gasal_res.cigar_str.empty() || gasal_res.score == 0 || gasal_res.query_start < 0 ||
                   gasal_res.query_end < 0 || gasal_res.ref_start < 0 || gasal_res.ref_end < 0 ||
                   gasal_res.query_end >= query_str.length() || gasal_res.ref_end >= ref_str.length();
@@ -479,6 +479,19 @@ bool gasal_fail(std::string& query_str, std::string& ref_str, gasal_tmp_res gasa
     return false;
 }
 
+bool gasal_fail(const std::string_view& query_str, const std::string_view& ref_str, gasal_tmp_res gasal_res) {
+    bool gg_res = gasal_res.cigar_str.empty() || gasal_res.score == 0 || gasal_res.query_start < 0 ||
+                  gasal_res.query_end < 0 || gasal_res.ref_start < 0 || gasal_res.ref_end < 0 ||
+                  gasal_res.query_end >= query_str.length() || gasal_res.ref_end >= ref_str.length();
+    if (gg_res)
+        return true;
+    const char* cigar_str = gasal_res.cigar_str.c_str();
+    int seq_length = calculate_cigar_length(cigar_str);
+    if (seq_length != gasal_res.query_end - gasal_res.query_start + 1) {
+        return true;
+    }
+    return false;
+}
 
 #ifdef RABBIT_FX
 

@@ -153,10 +153,26 @@ void gasal_aln_async(gasal_gpu_storage_t *gpu_storage, const uint32_t actual_que
 	while (current != NULL)
 	{
 		//gasal_host_batch_printall(current);
+//                cudaPointerAttributes attr;
+//                cudaPointerGetAttributes(&attr, current->data);
+//                switch (attr.type) {
+//                    case cudaMemoryTypeHost:
+//                        printf("current->data is Host memory\n");
+//                        break;
+//                    case cudaMemoryTypeDevice:
+//                        printf("current->data is Device memory\n");
+//                        break;
+//                    case cudaMemoryTypeManaged:
+//                        printf("current->data is Unified Memory\n");
+//                        break;
+//                    default:
+//                        printf("Unknown memory type\n");
+//                }
 		CHECKCUDAERROR(cudaMemcpyAsync( &(gpu_storage->unpacked_query_batch[current->offset]), 
 										current->data, 
 										current->data_size,
-										cudaMemcpyHostToDevice, 
+                                                                                cudaMemcpyHostToDevice,
+//                                                                                cudaMemcpyDeviceToDevice,
 										gpu_storage->str ) );
 
 		current = current->next;
@@ -168,7 +184,8 @@ void gasal_aln_async(gasal_gpu_storage_t *gpu_storage, const uint32_t actual_que
 		CHECKCUDAERROR(cudaMemcpyAsync( &(gpu_storage->unpacked_target_batch[current->offset]), 
 										current->data, 
 										current->data_size,
-										cudaMemcpyHostToDevice, 
+                                                                                cudaMemcpyHostToDevice,
+//                                                                                cudaMemcpyDeviceToDevice,
 										gpu_storage->str ) );
 
 		current = current->next;

@@ -161,6 +161,12 @@ class Aligner {
   uint16_t Align_gpu(gasal_tmp_res &gasal_res, const char* query, const char* ref, const int& ref_len,
                  const Filter& filter, Alignment* alignment, const int32_t maskLen) const;
 
+  uint16_t Align(const char* query, const int query_len, const char* ref, const int ref_len,
+                 const Filter& filter, Alignment* alignment, const int32_t maskLen) const;
+
+  uint16_t Align_gpu(gasal_tmp_res &gasal_res, const char* query, const int query_len, const char* ref, const int ref_len,
+                     const Filter& filter, Alignment* alignment, const int32_t maskLen) const;
+
   // @function Clear up all containers and thus the aligner is disabled.
   //             To rebuild the aligner please use Build functions.
   void Clear(void);
