@@ -2,6 +2,7 @@
 // Created by ylf9811 on 2024/1/4.
 //
 #include "gasal2_ssw.h"
+#include <sys/time.h>
 
 void writeToFasta(
     const std::vector<std::string>& sequences,
@@ -16,6 +17,17 @@ void writeToFasta(
     file.close();
 }
 
+inline double GetTime() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (double) tv.tv_sec + (double) tv.tv_usec / 1000000;
+}
+
+double time_pre = 0;
+double time_fill = 0;
+double time_fill1 = 0;
+double time_cal = 0;
+
 void solve_ssw_on_gpu(
     int thread_id,
     std::vector<gasal_tmp_res>& gasal_results,
@@ -26,6 +38,9 @@ void solve_ssw_on_gpu(
     int gap_open_score,
     int gap_extend_score
 ) {
+
+    double t0;
+    t0 = GetTime();
     static int cnt[THREAD_NUM_MAX] = {0};
     cnt[thread_id]++;
     assert(query_seqs.size() == target_seqs.size());
@@ -111,6 +126,10 @@ void solve_ssw_on_gpu(
     uint32_t target_batch_idx = 0;
     int gpu_batch_arr_idx = 0;
 
+    time_pre += GetTime() - t0;
+
+    t0 = GetTime();
+
     for (int i = 0; i < total_seqs; i++) {
         gpu_batch_arr[gpu_batch_arr_idx].gpu_storage->current_n_alns++;
 
@@ -141,6 +160,11 @@ void solve_ssw_on_gpu(
 
     gasal_op_fill(gpu_batch_arr[gpu_batch_arr_idx].gpu_storage, query_seq_mod, total_seqs, QUERY);
     gasal_op_fill(gpu_batch_arr[gpu_batch_arr_idx].gpu_storage, target_seq_mod, total_seqs, TARGET);
+
+
+    time_fill += GetTime() - t0;
+
+    t0 = GetTime();
 
     gpu_batch_arr[gpu_batch_arr_idx].n_seqs_batch = total_seqs;
     uint32_t query_batch_bytes = query_batch_idx;
@@ -248,6 +272,13 @@ void solve_ssw_on_gpu(
         usleep(100);
     }
 
+    time_cal += GetTime() - t0;
+
+    //if (cnt[thread_id] % 100 == 0) {
+    //    printf("gasal2 main timer : %.2f %.2f %.2f\n", time_pre, time_fill, time_cal);
+    //}
+
+
 
 //    gasal_destroy_streams(&(gpu_storage_vecs[thread_id]), args[thread_id]);
 //    gasal_destroy_gpu_storage_v(&(gpu_storage_vecs[thread_id]));
@@ -265,6 +296,9 @@ void solve_ssw_on_gpu2(
     int gap_open_score,
     int gap_extend_score
 ) {
+
+    double t0;
+    t0 = GetTime();
     static int cnt[THREAD_NUM_MAX] = {0};
     cnt[thread_id]++;
     assert(query_seqs.size() == target_seqs.size());
@@ -350,6 +384,10 @@ void solve_ssw_on_gpu2(
     uint32_t target_batch_idx = 0;
     int gpu_batch_arr_idx = 0;
 
+    time_pre += GetTime() - t0;
+
+    t0 = GetTime();
+
     for (int i = 0; i < total_seqs; i++) {
         gpu_batch_arr[gpu_batch_arr_idx].gpu_storage->current_n_alns++;
 
@@ -364,6 +402,7 @@ void solve_ssw_on_gpu2(
         (gpu_batch_arr[gpu_batch_arr_idx].gpu_storage)->host_query_batch_offsets[i] = query_batch_idx;
         (gpu_batch_arr[gpu_batch_arr_idx].gpu_storage)->host_target_batch_offsets[i] = target_batch_idx;
 
+        double t1 = GetTime();
         query_batch_idx = gasal_host_batch_fill(
             gpu_batch_arr[gpu_batch_arr_idx].gpu_storage, query_batch_idx, query_seqs[i].data(),
             query_seqs[i].size(), QUERY
@@ -373,6 +412,7 @@ void solve_ssw_on_gpu2(
             gpu_batch_arr[gpu_batch_arr_idx].gpu_storage, target_batch_idx, target_seqs[i].data(),
             target_seqs[i].size(), TARGET
         );
+        time_fill1 += GetTime() - t1;
 
         (gpu_batch_arr[gpu_batch_arr_idx].gpu_storage)->host_query_batch_lens[i] = query_seqs[i].size();
         (gpu_batch_arr[gpu_batch_arr_idx].gpu_storage)->host_target_batch_lens[i] = target_seqs[i].size();
@@ -380,6 +420,10 @@ void solve_ssw_on_gpu2(
 
     gasal_op_fill(gpu_batch_arr[gpu_batch_arr_idx].gpu_storage, query_seq_mod, total_seqs, QUERY);
     gasal_op_fill(gpu_batch_arr[gpu_batch_arr_idx].gpu_storage, target_seq_mod, total_seqs, TARGET);
+
+    time_fill += GetTime() - t0;
+
+    t0 = GetTime();
 
     gpu_batch_arr[gpu_batch_arr_idx].n_seqs_batch = total_seqs;
     uint32_t query_batch_bytes = query_batch_idx;
@@ -487,6 +531,11 @@ void solve_ssw_on_gpu2(
         usleep(100);
     }
 
+    time_cal += GetTime() - t0;
+
+    //if (cnt[thread_id] % 100 == 0) {
+    //    printf("gasal2 main timer : %.2f %.2f[%.2f] %.2f\n", time_pre, time_fill, time_fill1, time_cal);
+    //}
 
     //    gasal_destroy_streams(&(gpu_storage_vecs[thread_id]), args[thread_id]);
     //    gasal_destroy_gpu_storage_v(&(gpu_storage_vecs[thread_id]));

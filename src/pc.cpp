@@ -1226,6 +1226,7 @@ void perform_task_async_pe_fx(
         std::vector<gasal_tmp_res> gasal_results_tmp;
         std::vector<gasal_tmp_res> gasal_results;
 
+        double gpu_thread_time = 0;
         std::thread gpu_ssw_async;
         //chunk0_part2
         //process todo_nams
@@ -1317,11 +1318,13 @@ void perform_task_async_pe_fx(
             time2_1 += GetTime() - t_1;
 
             // step2 : solve todo_strings -- do ssw on gpu -- key step, need async
-            t_1 = GetTime();
+            //t_1 = GetTime();
             gpu_ssw_async = std::thread([&] (){
+                auto start_gpu = GetTime();
                 // TODO
                 //cudaSetDevice(thread_id / 36);
                 cudaSetDevice(gpu_id);
+                //cudaSetDevice(0);
                 for (size_t i = 0; i + STREAM_BATCH_SIZE <= todo_querys.size(); i += STREAM_BATCH_SIZE) {
                     auto query_start = todo_querys.begin() + i;
                     auto query_end = query_start + STREAM_BATCH_SIZE;
@@ -1351,10 +1354,12 @@ void perform_task_async_pe_fx(
                     );
                     gasal_results.insert(gasal_results.end(), gasal_results_tmp.begin(), gasal_results_tmp.end());
                 }
+                auto end_gpu = GetTime();
+                gpu_thread_time = end_gpu - start_gpu;
             });
-//            gpu_ssw_async.join();
+            //gpu_ssw_async.join();
 
-            time2_2 += GetTime() - t_1;
+            //time2_2 += GetTime() - t_1;
 
             statistics.tot_extend += extend_timer1.duration();
         }
@@ -1413,6 +1418,7 @@ void perform_task_async_pe_fx(
         if (gpu_ssw_async.joinable()) {
             gpu_ssw_async.join();
         }
+        time2_2 += gpu_thread_time;
 
 
         //chunk0_part3

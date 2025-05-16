@@ -5,7 +5,7 @@
 #include "gasal_kernels.h"
 #include "host_batch.h"
 
-
+//#define use_device_mem
 
 inline void gasal_kernel_launcher(int32_t N_BLOCKS, int32_t BLOCKDIM, algo_type algo, comp_start start, gasal_gpu_storage_t *gpu_storage, int32_t actual_n_alns, int32_t k_band, data_source semiglobal_skipping_head, data_source semiglobal_skipping_tail, Bool secondBest)
 {
@@ -171,8 +171,11 @@ void gasal_aln_async(gasal_gpu_storage_t *gpu_storage, const uint32_t actual_que
 		CHECKCUDAERROR(cudaMemcpyAsync( &(gpu_storage->unpacked_query_batch[current->offset]), 
 										current->data, 
 										current->data_size,
+#ifdef use_device_mem
+                                                                                cudaMemcpyDeviceToDevice,
+#else
                                                                                 cudaMemcpyHostToDevice,
-//                                                                                cudaMemcpyDeviceToDevice,
+#endif
 										gpu_storage->str ) );
 
 		current = current->next;
@@ -184,8 +187,11 @@ void gasal_aln_async(gasal_gpu_storage_t *gpu_storage, const uint32_t actual_que
 		CHECKCUDAERROR(cudaMemcpyAsync( &(gpu_storage->unpacked_target_batch[current->offset]), 
 										current->data, 
 										current->data_size,
+#ifdef use_device_mem
+                                                                                cudaMemcpyDeviceToDevice,
+#else
                                                                                 cudaMemcpyHostToDevice,
-//                                                                                cudaMemcpyDeviceToDevice,
+#endif
 										gpu_storage->str ) );
 
 		current = current->next;

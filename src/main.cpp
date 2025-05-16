@@ -250,7 +250,7 @@ struct ThreadAssignment {
 std::vector<ThreadAssignment> assign_threads_fixed_with_flags() {
     std::vector<ThreadAssignment> assignments;
 
-    for (int thread_id = 0; thread_id < 144; ++thread_id) {
+    for (int thread_id = 0; thread_id < 72; ++thread_id) {
         int numa_node = 0;
         int gpu_id = 0;
         
@@ -268,20 +268,6 @@ std::vector<ThreadAssignment> assign_threads_fixed_with_flags() {
             else
                 gpu_id = 3;                   // 54-71 -> GPU3
         }
-        else if (thread_id <= 107) {          // 72-107
-            numa_node = 0;
-            if (thread_id <= 89)
-                gpu_id = 0;                   // 72-89 -> GPU0
-            else
-                gpu_id = 1;                   // 90-107 -> GPU1
-        }
-        else {                                // 108-143
-            numa_node = 1;
-            if (thread_id <= 125)
-                gpu_id = 2;                   // 108-125 -> GPU2
-            else
-                gpu_id = 3;                   // 126-143 -> GPU3
-        }
 
         int cpu_core = thread_id;
 
@@ -289,19 +275,12 @@ std::vector<ThreadAssignment> assign_threads_fixed_with_flags() {
 
         assignments.push_back({thread_id, cpu_core, numa_node, gpu_id, flag});
     }
-    //for (int base = 0; base < 144; base += 18) {
-    //    if (base + 0 < 144) assignments[base + 0].flag = 1;
-    //    if (base + 12 < 144) assignments[base + 12].flag = 1;
-    //}
     
     for (int base = 0; base < 72; base += 18) {
-        if (base + 0 < 144) assignments[base + 0].flag = 1;
-        //if (base + 12 < 144) assignments[base + 12].flag = 1;
+        if (base + 0 < 72) assignments[base + 0].flag = 1;
+//        if (base + 9 < 72) assignments[base + 9].flag = 1;
     }
-    for (int base = 72; base < 144; base += 18) {
-        //if (base + 4 < 144) assignments[base + 4].flag = 1;
-        //if (base + 16 < 144) assignments[base + 16].flag = 1;
-    }
+
 
     return assignments;
 }
@@ -375,6 +354,9 @@ int run_rabbitsalign(int argc, char **argv) {
 
     const int gpu_num = 4;
 
+    std::vector<ThreadAssignment> assignments = assign_threads_fixed_with_flags();
+
+
     std::vector<gasal_tmp_res> gasal_results_tmp;
     std::vector<std::string> query_batch;
     std::vector<std::string> ref_batch;
@@ -390,11 +372,11 @@ int run_rabbitsalign(int argc, char **argv) {
     }
     printf("init gasal2\n");
 
-    std::vector<ThreadAssignment> assignments = assign_threads_fixed_with_flags();
 
     //assert(opt.n_threads == 144);
     for (int i = 0; i < opt.n_threads; i++) {
         cudaSetDevice(assignments[i].gpu_id);
+        //cudaSetDevice(0);
         if(assignments[i].flag) {
             solve_ssw_on_gpu2(i, gasal_results_tmp, query_batch_v, ref_batch_v, aln_params.match,
                              aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend);
@@ -546,9 +528,12 @@ int run_rabbitsalign(int argc, char **argv) {
 
     OutputBuffer output_buffer(out);
 
+    uint64_t num_bytes = 24 * 1024ll * 1024ll * 1024ll;
+    uint64_t seed = 13;
 #ifdef use_gpu_align
     for (int i = 0; i < gpu_num; i++) {
         init_shared_data(references, index, i, 0);
+        init_mm_safe(num_bytes, seed, i);
     }
 #endif
 
@@ -599,7 +584,7 @@ int run_rabbitsalign(int argc, char **argv) {
         if(use_good_numa) {
 
 #ifdef use_gpu_align
-            for (int i = 0; i < opt.n_threads * 1 / 4; ++i) {
+            for (int i = 0; i < opt.n_threads * 1 / 2; ++i) {
                 if (assignments[i].flag) {
                     std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
                             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
@@ -607,6 +592,12 @@ int run_rabbitsalign(int argc, char **argv) {
                             std::ref(index), std::ref(opt.read_group_id), i,
                             std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
                     workers.push_back(std::move(consumer));
+                    //std::thread consumer2(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
+                    //        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                    //        std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                    //        std::ref(index), std::ref(opt.read_group_id), i,
+                    //        std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
+                    //workers.push_back(std::move(consumer2));
                 } else {
                     std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
                             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
@@ -616,7 +607,7 @@ int run_rabbitsalign(int argc, char **argv) {
                     workers.push_back(std::move(consumer));
                 }
             }
-            for (int i = opt.n_threads * 1 / 4; i < opt.n_threads * 2 / 4; ++i) {
+            for (int i = opt.n_threads * 1 / 2; i < opt.n_threads; ++i) {
                 if (assignments[i].flag) {
                     std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
                             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
@@ -624,41 +615,12 @@ int run_rabbitsalign(int argc, char **argv) {
                             std::ref(index2), std::ref(opt.read_group_id), i,
                             std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
                     workers.push_back(std::move(consumer));
-
-                } else {
-                    std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
-                            std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                            std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                            std::ref(index2), std::ref(opt.read_group_id), i,
-                            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
-                    workers.push_back(std::move(consumer));
-                }
-            }
-            for (int i = opt.n_threads * 2 / 4; i < opt.n_threads * 3 / 4; ++i) {
-                if (assignments[i].flag) {
-                    std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
-                            std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                            std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                            std::ref(index), std::ref(opt.read_group_id), i,
-                            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
-                    workers.push_back(std::move(consumer));
-                } else {
-                    std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
-                            std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                            std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                            std::ref(index), std::ref(opt.read_group_id), i,
-                            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
-                    workers.push_back(std::move(consumer));
-                }
-            }
-            for (int i = opt.n_threads * 3 / 4; i < opt.n_threads * 4 / 4; ++i) {
-                if (assignments[i].flag) {
-                    std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
-                            std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                            std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                            std::ref(index2), std::ref(opt.read_group_id), i,
-                            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
-                    workers.push_back(std::move(consumer));
+                    //std::thread consumer2(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
+                    //        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                    //        std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                    //        std::ref(index2), std::ref(opt.read_group_id), i,
+                    //        std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
+                    //workers.push_back(std::move(consumer2));
                 } else {
                     std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
                             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
@@ -669,7 +631,7 @@ int run_rabbitsalign(int argc, char **argv) {
                 }
             }
 #else
-            for (int i = 0; i < opt.n_threads * 1 / 4; ++i) {
+            for (int i = 0; i < opt.n_threads * 1 / 2; ++i) {
                 std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
                         std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
                         std::ref(map_param), std::ref(index_parameters), std::ref(references),
@@ -677,23 +639,7 @@ int run_rabbitsalign(int argc, char **argv) {
                         std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
                 workers.push_back(std::move(consumer));
             }
-            for (int i = opt.n_threads * 1 / 4; i < opt.n_threads * 2 / 4; ++i) {
-                std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
-                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                        std::ref(index2), std::ref(opt.read_group_id), i,
-                        std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
-                workers.push_back(std::move(consumer));
-            }
-            for (int i = opt.n_threads * 2 / 4; i < opt.n_threads * 3 / 4; ++i) {
-                std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
-                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                        std::ref(index), std::ref(opt.read_group_id), i,
-                        std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
-                workers.push_back(std::move(consumer));
-            }
-            for (int i = opt.n_threads * 3 / 4; i < opt.n_threads * 4 / 4; ++i) {
+            for (int i = opt.n_threads * 1 / 2; i < opt.n_threads; ++i) {
                 std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
                         std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
                         std::ref(map_param), std::ref(index_parameters), std::ref(references),

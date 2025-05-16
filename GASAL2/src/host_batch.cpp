@@ -3,7 +3,7 @@
 #include "interfaces.h"
 #include "host_batch.h"
 
-
+//#define use_device_mem
 
 
 // Functions for host batches handling. 
@@ -45,10 +45,11 @@ host_batch_t *gasal_host_batch_new(uint32_t batch_bytes, uint32_t offset)
     cudaError_t err;
     host_batch_t *res = (host_batch_t *)calloc(1, sizeof(host_batch_t));
 
-//    CHECKCUDAERROR(cudaMallocManaged(&(res->data), batch_bytes * sizeof(uint8_t)));
+#ifdef use_device_mem
+    CHECKCUDAERROR(cudaMalloc(&(res->data), batch_bytes * sizeof(uint8_t)));
+#else
     CHECKCUDAERROR(cudaHostAlloc(&(res->data), batch_bytes * sizeof(uint8_t), cudaHostAllocDefault));
-//    CHECKCUDAERROR(cudaMalloc(&(res->data), batch_bytes * sizeof(uint8_t)));
-
+#endif
 
     res->page_size = batch_bytes;
     res->data_size = 0;
@@ -73,8 +74,11 @@ void gasal_host_batch_destroy(host_batch_t *res)
 
     if (res->data != NULL)
     {
-//        CHECKCUDAERROR(cudaFree(res->data));
+#ifdef use_device_mem
+        CHECKCUDAERROR(cudaFree(res->data));
+#else
         CHECKCUDAERROR(cudaFreeHost(res->data));
+#endif
     }
 
     free(res);
@@ -178,22 +182,24 @@ uint32_t gasal_host_batch_fill(gasal_gpu_storage_t *gpu_storage, uint32_t idx, c
 	if (cur_page->page_size - cur_page->data_size >= size + nbr_N)
 	{
 		// fprintf(stderr, "FILL: "); gasal_host_batch_print(cur_page);
-		memcpy(&(cur_page->data[idx - cur_page->offset]), data, size);
+
+#ifdef use_device_mem
+                cudaMemcpy(&(cur_page->data[idx - cur_page->offset]), data, size, cudaMemcpyDeviceToDevice);
+                static uint8_t* d_temp = nullptr;
+                static int cntt = 0;
+                cntt++;
+                if (cntt == 1) {
+                    cudaMalloc((void**)&d_temp, 8 * sizeof(uint8_t));
+                    cudaMemset(d_temp, N_CODE, 8 * sizeof(uint8_t));
+                }
+                cudaMemcpy(cur_page->data + idx + size - cur_page->offset, d_temp, nbr_N, cudaMemcpyDeviceToDevice);
+#else
+                memcpy(&(cur_page->data[idx - cur_page->offset]), data, size);
                 for(int i = 0; i < nbr_N; i++)
-		{
-			cur_page->data[idx + size - cur_page->offset + i] = N_CODE;
-		}
-
-//                cudaMemcpy(&(cur_page->data[idx - cur_page->offset]), data, size, cudaMemcpyDeviceToDevice);
-//                static uint8_t* d_temp = nullptr;
-//                static int cntt = 0;
-//                cntt++;
-//                if (cntt == 1) {
-//                    cudaMalloc((void**)&d_temp, 8 * sizeof(uint8_t));
-//                    cudaMemset(d_temp, N_CODE, 8 * sizeof(uint8_t));
-//                }
-//                cudaMemcpy(cur_page->data + idx + size - cur_page->offset, d_temp, nbr_N, cudaMemcpyDeviceToDevice);
-
+                {
+                    cur_page->data[idx + size - cur_page->offset + i] = N_CODE;
+                }
+#endif
 		idx = idx + size + nbr_N;
 
 		cur_page->data_size += size + nbr_N;

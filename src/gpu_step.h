@@ -33,4 +33,5 @@ void perform_task_async_pe_fx_GPU(
 
 void init_shared_data(const References& references, const StrobemerIndex& index, const int gpu_id, int thread_id);
 
+void init_mm_safe(uint64_t num_bytes, uint64_t seed, int gpu_id);
 #endif  //RABBITSALIGN_GPU_STEP_H
