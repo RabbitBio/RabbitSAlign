@@ -4856,7 +4856,7 @@ void GPU_align_PE(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &data2s,
         for (int i = 0; i < types[2].size(); i++) {
             global_todo_ids[i + types[1].size()] = types[2][i] * 2 + 1;
         }
-        threads_per_block = 32;
+        threads_per_block = 8;
         reads_per_block = threads_per_block * GPU_thread_task_size;
         blocks_per_grid = (types[1].size() + types[2].size() + reads_per_block - 1) / reads_per_block;
         gpu_align_PE12<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(types[1].size() + types[2].size(), s_len, d_index_para, global_align_info, d_aligner, local_d_pre_sum, local_d_len, local_d_seq,
@@ -4868,7 +4868,7 @@ void GPU_align_PE(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &data2s,
         for (int i = 0; i < types[3].size(); i++) {
             global_todo_ids[i] = types[3][i];
         }
-        threads_per_block = 32;
+        threads_per_block = 8;
         reads_per_block = threads_per_block * GPU_thread_task_size;
         blocks_per_grid = (types[3].size() + reads_per_block - 1) / reads_per_block;
         gpu_align_PE3<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(types[3].size(), s_len, d_index_para, global_align_info, d_aligner, local_d_pre_sum, local_d_len, local_d_seq,
@@ -5185,6 +5185,8 @@ void perform_task_async_pe_fx_GPU(
     while (!eof) {
         todo_querys.clear();
         todo_refs.clear();
+        h_todo_querys.clear();
+        h_todo_refs.clear();
         info_results.clear();
         gasal_results_tmp.clear();
         gasal_results.clear();
@@ -5325,12 +5327,12 @@ void perform_task_async_pe_fx_GPU(
             //std::thread gpu_ssw_async;
             //gpu_ssw_async = std::thread([&] (){
                 //cudaSetDevice(gpu_id);
-                for (size_t i = 0; i + STREAM_BATCH_SIZE <= todo_querys.size(); i += STREAM_BATCH_SIZE) {
+                for (size_t i = 0; i + STREAM_BATCH_SIZE_GPU <= todo_querys.size(); i += STREAM_BATCH_SIZE_GPU) {
                     auto query_start = todo_querys.begin() + i;
-                    auto query_end = query_start + STREAM_BATCH_SIZE;
+                    auto query_end = query_start + STREAM_BATCH_SIZE_GPU;
                     std::vector<std::string_view> query_batch(query_start, query_end);
                     auto ref_start = todo_refs.begin() + i;
-                    auto ref_end = ref_start + STREAM_BATCH_SIZE;
+                    auto ref_end = ref_start + STREAM_BATCH_SIZE_GPU;
                     std::vector<std::string_view> ref_batch(ref_start, ref_end);
                     solve_ssw_on_gpu2(
                         thread_id, gasal_results_tmp, query_batch, ref_batch, aln_params.match,
@@ -5338,7 +5340,7 @@ void perform_task_async_pe_fx_GPU(
                     );
                     gasal_results.insert(gasal_results.end(), gasal_results_tmp.begin(), gasal_results_tmp.end());
                 }
-                size_t remaining = todo_querys.size() % STREAM_BATCH_SIZE;
+                size_t remaining = todo_querys.size() % STREAM_BATCH_SIZE_GPU;
                 if (remaining > 0) {
                     auto query_start = todo_querys.end() - remaining;
                     std::vector<std::string_view> query_batch(query_start, todo_querys.end());

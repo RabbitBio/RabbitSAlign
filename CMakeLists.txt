@@ -89,6 +89,7 @@ set(SOURCES
         src/gasal2_ssw.h
         src/my_struct.cu
         src/gpu_step.cu
+        src/gpu_packing.cu
 )
 
 #include_directories(src/ src/include ext/ ${PROJECT_BINARY_DIR} ${MPI_C_INCLUDE_DIRS})

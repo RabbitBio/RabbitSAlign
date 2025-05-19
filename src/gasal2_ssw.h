@@ -19,10 +19,11 @@
 // this gives each stream HALF of the sequences.
 //#define STREAM_BATCH_SIZE ceil((double)target_seqs.size() / (double)(2))
 
-#define STREAM_BATCH_SIZE 1024  //ceil((double)target_seqs.size() / (double)(2 * 2))
+#define STREAM_BATCH_SIZE 1024
+#define STREAM_BATCH_SIZE_GPU 4096
 
-#define MAX_QUERY_LEN 160
-#define MAX_TARGET_LEN 2000
+#define MAX_QUERY_LEN 300
+#define MAX_TARGET_LEN 1000
 
 #define DEBUG
 

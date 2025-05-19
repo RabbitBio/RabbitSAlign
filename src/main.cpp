@@ -39,6 +39,8 @@
 
 #define use_gpu_align
 
+//#define use_device_mem
+
 #include <sys/time.h>
 inline double GetTime() {
     struct timeval tv;
@@ -278,7 +280,7 @@ std::vector<ThreadAssignment> assign_threads_fixed_with_flags() {
     
     for (int base = 0; base < 72; base += 18) {
         if (base + 0 < 72) assignments[base + 0].flag = 1;
-//        if (base + 9 < 72) assignments[base + 9].flag = 1;
+        if (base + 9 < 72) assignments[base + 9].flag = 1;
     }
 
 
@@ -356,7 +358,6 @@ int run_rabbitsalign(int argc, char **argv) {
 
     std::vector<ThreadAssignment> assignments = assign_threads_fixed_with_flags();
 
-
     std::vector<gasal_tmp_res> gasal_results_tmp;
     std::vector<std::string> query_batch;
     std::vector<std::string> ref_batch;
@@ -367,16 +368,29 @@ int run_rabbitsalign(int argc, char **argv) {
     for (int i = 0; i < STREAM_BATCH_SIZE; i++) {
         query_batch.push_back(query_test);
         ref_batch.push_back(ref_test);
-        query_batch_v.push_back(std::string_view(query_test));
-        ref_batch_v.push_back(std::string_view(ref_test));
     }
     printf("init gasal2\n");
-
 
     //assert(opt.n_threads == 144);
     for (int i = 0; i < opt.n_threads; i++) {
         cudaSetDevice(assignments[i].gpu_id);
-        //cudaSetDevice(0);
+        char* d_seq_demo;
+        char* d_ref_demo;
+        cudaMalloc(&d_seq_demo, 4);
+        cudaMemset(d_seq_demo, 'A', 4);
+        cudaMalloc(&d_ref_demo, 4);
+        cudaMemset(d_ref_demo, 'A', 4);
+        query_batch_v.clear();
+        ref_batch_v.clear();
+        for (int i = 0; i < STREAM_BATCH_SIZE_GPU; i++) {
+#ifdef use_device_mem
+            query_batch_v.push_back(std::string_view(d_seq_demo, 4));
+            ref_batch_v.push_back(std::string_view(d_ref_demo, 4));
+#else
+            query_batch_v.push_back(std::string_view(query_test));
+            ref_batch_v.push_back(std::string_view(ref_test));
+#endif
+        }
         if(assignments[i].flag) {
             solve_ssw_on_gpu2(i, gasal_results_tmp, query_batch_v, ref_batch_v, aln_params.match,
                              aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend);
@@ -384,6 +398,8 @@ int run_rabbitsalign(int argc, char **argv) {
             solve_ssw_on_gpu(i, gasal_results_tmp, query_batch, ref_batch, aln_params.match,
                              aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend);
         }
+        cudaFree(d_seq_demo);
+        cudaFree(d_ref_demo);
     }
     printf("init done\n");
 
@@ -531,7 +547,7 @@ int run_rabbitsalign(int argc, char **argv) {
     uint64_t num_bytes = 24 * 1024ll * 1024ll * 1024ll;
     uint64_t seed = 13;
 #ifdef use_gpu_align
-    for (int i = 0; i < gpu_num; i++) {
+    for (int i = 0; i < gpu_num && i < ceil(opt.n_threads / 18.0); i++) {
         init_shared_data(references, index, i, 0);
         init_mm_safe(num_bytes, seed, i);
     }
@@ -592,12 +608,6 @@ int run_rabbitsalign(int argc, char **argv) {
                             std::ref(index), std::ref(opt.read_group_id), i,
                             std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
                     workers.push_back(std::move(consumer));
-                    //std::thread consumer2(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
-                    //        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                    //        std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                    //        std::ref(index), std::ref(opt.read_group_id), i,
-                    //        std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
-                    //workers.push_back(std::move(consumer2));
                 } else {
                     std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
                             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
@@ -615,12 +625,6 @@ int run_rabbitsalign(int argc, char **argv) {
                             std::ref(index2), std::ref(opt.read_group_id), i,
                             std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
                     workers.push_back(std::move(consumer));
-                    //std::thread consumer2(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
-                    //        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                    //        std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                    //        std::ref(index2), std::ref(opt.read_group_id), i,
-                    //        std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
-                    //workers.push_back(std::move(consumer2));
                 } else {
                     std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
                             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),

@@ -6,8 +6,9 @@
 #include <string.h> // useful for memcpy, strlen
 
 // host data structure methods
-host_batch_t *gasal_host_batch_new(uint32_t batch_bytes, uint32_t offset);
-void gasal_host_batch_destroy(host_batch_t *res); 																		// destructor
+host_batch_t *gasal_host_batch_new(uint32_t batch_bytes, uint32_t offset, int type = 0);
+// destructor
+void gasal_host_batch_destroy(host_batch_t *res, int type = 0);
 host_batch_t *gasal_host_batch_getlast(host_batch_t *arg); 	
 void gasal_host_batch_reset(gasal_gpu_storage_t *gpu_storage);															// get last item of chain
 uint32_t gasal_host_batch_fill(gasal_gpu_storage_t *gpu_storage, uint32_t idx, const char* data, uint32_t size, data_source SRC); 	// fill the data

@@ -5,7 +5,6 @@
 #include "gasal_kernels.h"
 #include "host_batch.h"
 
-//#define use_device_mem
 
 inline void gasal_kernel_launcher(int32_t N_BLOCKS, int32_t BLOCKDIM, algo_type algo, comp_start start, gasal_gpu_storage_t *gpu_storage, int32_t actual_n_alns, int32_t k_band, data_source semiglobal_skipping_head, data_source semiglobal_skipping_tail, Bool secondBest)
 {
@@ -26,7 +25,7 @@ inline void gasal_kernel_launcher(int32_t N_BLOCKS, int32_t BLOCKDIM, algo_type 
 
 
 //GASAL2 asynchronous (a.k.a non-blocking) alignment function
-void gasal_aln_async(gasal_gpu_storage_t *gpu_storage, const uint32_t actual_query_batch_bytes, const uint32_t actual_target_batch_bytes, const uint32_t actual_n_alns, Parameters *params) {
+void gasal_aln_async(gasal_gpu_storage_t *gpu_storage, const uint32_t actual_query_batch_bytes, const uint32_t actual_target_batch_bytes, const uint32_t actual_n_alns, Parameters *params, int type) {
 
 	cudaError_t err;
 	if (actual_n_alns <= 0) {
@@ -153,46 +152,33 @@ void gasal_aln_async(gasal_gpu_storage_t *gpu_storage, const uint32_t actual_que
 	while (current != NULL)
 	{
 		//gasal_host_batch_printall(current);
-//                cudaPointerAttributes attr;
-//                cudaPointerGetAttributes(&attr, current->data);
-//                switch (attr.type) {
-//                    case cudaMemoryTypeHost:
-//                        printf("current->data is Host memory\n");
-//                        break;
-//                    case cudaMemoryTypeDevice:
-//                        printf("current->data is Device memory\n");
-//                        break;
-//                    case cudaMemoryTypeManaged:
-//                        printf("current->data is Unified Memory\n");
-//                        break;
-//                    default:
-//                        printf("Unknown memory type\n");
-//                }
-		CHECKCUDAERROR(cudaMemcpyAsync( &(gpu_storage->unpacked_query_batch[current->offset]), 
+        if (type == 1) CHECKCUDAERROR(cudaMemcpyAsync( &(gpu_storage->unpacked_query_batch[current->offset]), 
 										current->data, 
 										current->data_size,
-#ifdef use_device_mem
-                                                                                cudaMemcpyDeviceToDevice,
-#else
-                                                                                cudaMemcpyHostToDevice,
-#endif
+                                        cudaMemcpyDeviceToDevice,
 										gpu_storage->str ) );
-
+        else CHECKCUDAERROR(cudaMemcpyAsync( &(gpu_storage->unpacked_query_batch[current->offset]), 
+										current->data, 
+										current->data_size,
+                                        cudaMemcpyHostToDevice,
+										gpu_storage->str ) );
 		current = current->next;
 	}
 
 	current = gpu_storage->extensible_host_unpacked_target_batch;
 	while (current != NULL)
 	{
-		CHECKCUDAERROR(cudaMemcpyAsync( &(gpu_storage->unpacked_target_batch[current->offset]), 
+		if (type == 1) CHECKCUDAERROR(cudaMemcpyAsync( &(gpu_storage->unpacked_target_batch[current->offset]), 
 										current->data, 
 										current->data_size,
-#ifdef use_device_mem
-                                                                                cudaMemcpyDeviceToDevice,
-#else
-                                                                                cudaMemcpyHostToDevice,
-#endif
+                                        cudaMemcpyDeviceToDevice,
 										gpu_storage->str ) );
+        else CHECKCUDAERROR(cudaMemcpyAsync( &(gpu_storage->unpacked_target_batch[current->offset]), 
+										current->data, 
+										current->data_size,
+                                        cudaMemcpyHostToDevice,
+										gpu_storage->str ) );
+  
 
 		current = current->next;
 	}
