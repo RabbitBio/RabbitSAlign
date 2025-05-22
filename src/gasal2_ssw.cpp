@@ -93,11 +93,12 @@ void solve_ssw_on_gpu(
 
     for (size_t i = 0; i < query_seqs.size(); i++) {
         //        query_headers[i] += std::to_string(i);
+        if(query_seqs[i].length() > MAX_QUERY_LEN) query_seqs[i] = query_seqs[i].substr(0, MAX_QUERY_LEN);
         maximum_sequence_length_query = MAX(maximum_sequence_length_query, query_seqs[i].length());
     }
     for (size_t i = 0; i < target_seqs.size(); i++) {
         //        target_headers[i] += std::to_string(i);
-        if(target_seqs[i].length() > MAX_TARGET_LEN) target_seqs[i].substr(0, MAX_TARGET_LEN);
+        if(target_seqs[i].length() > MAX_TARGET_LEN) target_seqs[i] = target_seqs[i].substr(0, MAX_TARGET_LEN);
         maximum_sequence_length_target = MAX(maximum_sequence_length_target, target_seqs[i].length());
     }
 
@@ -258,9 +259,9 @@ void solve_ssw_on_gpu(
 
     time_cal += GetTime() - t0;
 
-    if (cnt[thread_id] % 100 == 0) {
-        printf("gasal2 cpu main timer : %.2f %.2f %.2f\n", time_pre, time_fill, time_cal);
-    }
+//    if (cnt[thread_id] % 100 == 0) {
+//        printf("gasal2 cpu main timer : %.2f %.2f %.2f\n", time_pre, time_fill, time_cal);
+//    }
 
 
 
@@ -353,11 +354,12 @@ void solve_ssw_on_gpu2(
 
     for (size_t i = 0; i < query_seqs.size(); i++) {
         //        query_headers[i] += std::to_string(i);
+        if(query_seqs[i].length() > MAX_QUERY_LEN) query_seqs[i] = query_seqs[i].substr(0, MAX_QUERY_LEN);
         maximum_sequence_length_query = MAX(maximum_sequence_length_query, query_seqs[i].length());
     }
     for (size_t i = 0; i < target_seqs.size(); i++) {
         //        target_headers[i] += std::to_string(i);
-        if(target_seqs[i].length() > MAX_TARGET_LEN) target_seqs[i].substr(0, MAX_TARGET_LEN);
+        if(target_seqs[i].length() > MAX_TARGET_LEN) target_seqs[i] = target_seqs[i].substr(0, MAX_TARGET_LEN);
         maximum_sequence_length_target = MAX(maximum_sequence_length_target, target_seqs[i].length());
     }
 
@@ -634,9 +636,9 @@ void solve_ssw_on_gpu2(
 
     time_cal += GetTime() - t0;
 
-    if (cnt[thread_id] % 100 == 0) {
-        printf("gasal2 gpu main timer : %.2f %.2f[%.2f %.2f] %.2f\n", time_pre, time_fill, time_fill1, time_fill2, time_cal);
-    }
+//    if (cnt[thread_id] % 100 == 0) {
+//        printf("gasal2 gpu main timer : %.2f %.2f[%.2f %.2f] %.2f\n", time_pre, time_fill, time_fill1, time_fill2, time_cal);
+//    }
 
 
 

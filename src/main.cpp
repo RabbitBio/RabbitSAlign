@@ -247,6 +247,7 @@ struct ThreadAssignment {
     int numa_node;
     int gpu_id;
     int flag;
+    int pass;
 };
 
 std::vector<ThreadAssignment> assign_threads_fixed_with_flags() {
@@ -273,14 +274,20 @@ std::vector<ThreadAssignment> assign_threads_fixed_with_flags() {
 
         int cpu_core = thread_id;
 
-        int flag = 0;
-
-        assignments.push_back({thread_id, cpu_core, numa_node, gpu_id, flag});
+        assignments.push_back({thread_id, cpu_core, numa_node, gpu_id, 0, 0});
     }
     
     for (int base = 0; base < 72; base += 18) {
         if (base + 0 < 72) assignments[base + 0].flag = 1;
         if (base + 9 < 72) assignments[base + 9].flag = 1;
+        if (base + 1 < 72) {
+            assignments[base + 1].flag = 1;
+            assignments[base + 1].pass = 1;
+        }
+        if (base + 10 < 72) {
+            assignments[base + 10].flag = 1;
+            assignments[base + 10].pass = 1;
+        }
     }
 
 
@@ -308,9 +315,9 @@ int run_rabbitsalign(int argc, char **argv) {
     }
 
 #ifdef RABBIT_FX
-    rabbit::fq::FastqDataPool fastqPool(1024, 1 << 20);
-    rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> queue_se(1024, 1);
-    rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> queue_pe(1024, 1);
+    rabbit::fq::FastqDataPool fastqPool(4096, 1 << 20);
+    rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> queue_se(4096, 1);
+    rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> queue_pe(4096, 1);
     std::thread *producer;
     if(!opt.only_gen_index) {
         if(opt.is_SE) {
@@ -551,6 +558,11 @@ int run_rabbitsalign(int argc, char **argv) {
         init_shared_data(references, index, i, 0);
         init_mm_safe(num_bytes, seed, i);
     }
+    for (int i = 0; i < opt.n_threads; i++) {
+        if (assignments[i].flag == 1 && assignments[i].pass == 0) {
+            init_global_big_data(i, assignments[i].gpu_id, map_param.max_tries);
+        }
+    }
 #endif
 
     double tt0 = GetTime();
@@ -602,6 +614,7 @@ int run_rabbitsalign(int argc, char **argv) {
 #ifdef use_gpu_align
             for (int i = 0; i < opt.n_threads * 1 / 2; ++i) {
                 if (assignments[i].flag) {
+                    if (assignments[i].pass) continue;
                     std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
                             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
                             std::ref(map_param), std::ref(index_parameters), std::ref(references),
@@ -619,6 +632,7 @@ int run_rabbitsalign(int argc, char **argv) {
             }
             for (int i = opt.n_threads * 1 / 2; i < opt.n_threads; ++i) {
                 if (assignments[i].flag) {
+                    if (assignments[i].pass) continue;
                     std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
                             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
                             std::ref(map_param), std::ref(index_parameters), std::ref(references),

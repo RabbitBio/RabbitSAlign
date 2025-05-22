@@ -4,11 +4,9 @@
 
 
 __device__ void* my_malloc(size_t size) {
-    //if(size < 128) size = 128;
-    //assert(size <= 65536);
     void* ptr = gallatin::allocators::global_malloc(size);
     if (ptr == nullptr) {
-        printf("mm_memory allocation failed %d\n", size);
+        printf("gallatin malloc failed - %zu\n", size);
         assert(false);
     }
     return ptr;
