@@ -39,7 +39,7 @@
 
 #define use_gpu_align
 
-//#define use_device_mem
+#define use_device_mem
 
 #include <sys/time.h>
 inline double GetTime() {
@@ -243,6 +243,7 @@ int producer_se_fastq_task(std::string file, rabbit::fq::FastqDataPool& fastqPoo
 
 struct ThreadAssignment {
     int thread_id;
+    int async_thread_id;
     int cpu_core;
     int numa_node;
     int gpu_id;
@@ -274,12 +275,56 @@ std::vector<ThreadAssignment> assign_threads_fixed_with_flags() {
 
         int cpu_core = thread_id;
 
-        assignments.push_back({thread_id, cpu_core, numa_node, gpu_id, 0, 0});
+        assignments.push_back({thread_id, thread_id, cpu_core, numa_node, gpu_id, 0, 0});
     }
     
-    for (int base = 0; base < 72; base += 18) {
-        if (base + 0 < 72) assignments[base + 0].flag = 1;
-        if (base + 9 < 72) assignments[base + 9].flag = 1;
+//    for (int base = 0; base < 72; base += 36) {
+//        if (base + 0 < 72) {
+//            assignments[base + 0].flag = 1;
+//            assignments[base + 0].async_thread_id = base + 1;
+//        }
+//        if (base + 9 < 72) {
+//            assignments[base + 9].flag = 1;
+//            assignments[base + 9].async_thread_id = base + 10;
+//        }
+//        if (base + 18 < 72) {
+//            assignments[base + 18].flag = 1;
+//            assignments[base + 18].async_thread_id = base + 1;
+//        }
+//        if (base + 27 < 72) {
+//            assignments[base + 27].flag = 1;
+//            assignments[base + 27].async_thread_id = base + 10;
+//        }
+//        if (base + 1 < 72) {
+//            assignments[base + 1].flag = 1;
+//            assignments[base + 1].pass = 1;
+//        }
+//        if (base + 10 < 72) {
+//            assignments[base + 10].flag = 1;
+//            assignments[base + 10].pass = 1;
+//        }
+//    }
+
+
+
+    for (int base = 0; base < 72; base += 36) {
+        if (base + 0 < 72) {
+            assignments[base + 0].flag = 1;
+            assignments[base + 0].async_thread_id = base + 1;
+        }
+        if (base + 9 < 72) {
+            assignments[base + 9].flag = 1;
+            assignments[base + 9].async_thread_id = base + 10;
+        }
+        if (base + 18 < 72) {
+            assignments[base + 18].flag = 1;
+            assignments[base + 18].async_thread_id = base + 19;
+        }
+        if (base + 27 < 72) {
+            assignments[base + 27].flag = 1;
+            assignments[base + 27].async_thread_id = base + 28;
+        }
+
         if (base + 1 < 72) {
             assignments[base + 1].flag = 1;
             assignments[base + 1].pass = 1;
@@ -287,6 +332,14 @@ std::vector<ThreadAssignment> assign_threads_fixed_with_flags() {
         if (base + 10 < 72) {
             assignments[base + 10].flag = 1;
             assignments[base + 10].pass = 1;
+        }
+        if (base + 19 < 72) {
+            assignments[base + 19].flag = 1;
+            assignments[base + 19].pass = 1;
+        }
+        if (base + 28 < 72) {
+            assignments[base + 28].flag = 1;
+            assignments[base + 28].pass = 1;
         }
     }
 
@@ -634,12 +687,15 @@ int run_rabbitsalign(int argc, char **argv) {
 #ifdef use_gpu_align
             for (int i = 0; i < opt.n_threads * 1 / 2; ++i) {
                 if (assignments[i].flag) {
-                    if (assignments[i].pass) continue;
+                    if (assignments[i].pass) {
+                        printf("gpu thread %d skip\n", i);
+                        continue;
+                    }
                     std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
                             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
                             std::ref(map_param), std::ref(index_parameters), std::ref(references),
                             std::ref(index), std::ref(opt.read_group_id), i,
-                            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
+                            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id);
                     workers.push_back(std::move(consumer));
                 } else {
                     std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
@@ -652,12 +708,15 @@ int run_rabbitsalign(int argc, char **argv) {
             }
             for (int i = opt.n_threads * 1 / 2; i < opt.n_threads; ++i) {
                 if (assignments[i].flag) {
-                    if (assignments[i].pass) continue;
+                    if (assignments[i].pass) {
+                        printf("gpu thread %d skip\n", i);
+                        continue;
+                    }
                     std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
                             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
                             std::ref(map_param), std::ref(index_parameters), std::ref(references),
                             std::ref(index2), std::ref(opt.read_group_id), i,
-                            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
+                            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id);
                     workers.push_back(std::move(consumer));
                 } else {
                     std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),

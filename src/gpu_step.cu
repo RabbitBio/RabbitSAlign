@@ -37,7 +37,7 @@
 
 #define rescue_threshold 100
 
-//#define use_device_mem
+#define use_device_mem
 
 inline double GetTime() {
     struct timeval tv;
@@ -4923,6 +4923,7 @@ void init_global_big_data(int thread_id, int gpu_id, int max_tries) {
     cudaMemset(g_pre_global_align_res_data[thread_id], 0, global_align_res_data_size);
 }
 
+std::mutex group_mutex[256];
 
 void perform_task_async_pe_fx_GPU(
         InputBuffer& input_buffer,
@@ -4938,8 +4939,9 @@ void perform_task_async_pe_fx_GPU(
         const int thread_id,
         rabbit::fq::FastqDataPool& fastqPool,
         rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq,
-        bool use_good_numa,
-        int gpu_id
+        const bool use_good_numa,
+        const int gpu_id,
+        const int async_thread_id
 ) {
 
     if(use_good_numa) {
@@ -5234,8 +5236,8 @@ void perform_task_async_pe_fx_GPU(
                 const auto& h_query_seq = is_read1 ? (is_rc ? pre_data1s[i].rc : (char*)pre_data1s[i].read.base + pre_data1s[i].read.pseq) :
                                                    (is_rc ? pre_data2s[i].rc : (char*)pre_data2s[i].read.base + pre_data2s[i].read.pseq);
                 const auto& h_ref_seq = references.sequences[todo_info.ref_id];
-                h_todo_querys.push_back(std::string_view(h_query_seq + q_begin, q_len));
-                h_todo_refs.push_back(std::string_view(h_ref_seq.c_str() + todo_info.r_begin, todo_info.r_len));
+                pre_h_todo_querys.push_back(std::string_view(h_query_seq + q_begin, q_len));
+                pre_h_todo_refs.push_back(std::string_view(h_ref_seq.c_str() + todo_info.r_begin, todo_info.r_len));
 #else
                 const auto& h_query_seq = is_read1 ? (is_rc ? pre_data1s[i].rc : (char*)pre_data1s[i].read.base + pre_data1s[i].read.pseq) :
                                           (is_rc ? pre_data2s[i].rc : (char*)pre_data2s[i].read.base + pre_data2s[i].read.pseq);
@@ -5263,7 +5265,7 @@ void perform_task_async_pe_fx_GPU(
                 auto ref_start = pre_todo_refs.begin() + i;
                 auto ref_end = ref_start + STREAM_BATCH_SIZE_GPU;
                 std::vector<std::string_view> ref_batch(ref_start, ref_end);
-                solve_ssw_on_gpu(
+                solve_ssw_on_gpu_lock_1_fast(
                         thread_id, gasal_results_tmp, query_batch, ref_batch, aln_params.match,
                         aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend
                 );
@@ -5275,7 +5277,7 @@ void perform_task_async_pe_fx_GPU(
                 std::vector<std::string_view> query_batch(query_start, pre_todo_querys.end());
                 auto ref_start = pre_todo_refs.end() - remaining;
                 std::vector<std::string_view> ref_batch(ref_start, pre_todo_refs.end());
-                solve_ssw_on_gpu(
+                solve_ssw_on_gpu_lock_1_fast(
                         thread_id, gasal_results_tmp, query_batch, ref_batch, aln_params.match,
                         aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend
                 );
@@ -5305,125 +5307,131 @@ void perform_task_async_pe_fx_GPU(
 
     int real_chunk_num;
     int chunk_num;
+    std::thread cpu_gpu_async;
+    printf("thread %d bind to %d - %d\n", thread_id, thread_id, async_thread_id);
 
     while (!eof) {
 
-        auto cpu_gpu_async = std::thread([&] () {
-            double t_start;
-            unset_thread_affinity();
-            set_thread_affinity(thread_id + 1);
-            cudaSetDevice(gpu_id);
-            //post-process ssw results and trans to sam
-            {
-                info_results.clear();
-                // step1 : post-process the gpu results, re-ssw for bad results on cpu
-                t_start = GetTime();
-                for (size_t i = 0; i < pre_todo_querys.size(); i++) {
-                    AlignmentInfo info;
-#ifdef use_device_mem
-                    const auto& todo_q = pre_h_todo_querys[i];
-                    const auto& todo_r = pre_h_todo_refs[i];
-#else
-                    const auto &todo_q = pre_todo_querys[i];
-                    const auto &todo_r = pre_todo_refs[i];
-#endif
-                    if (gasal_fail(todo_q, todo_r, pre_gasal_results[i])) {
-                        double ta = GetTime();
-                        info = aligner.align(todo_q, todo_r);
-                        time2_3_1 += GetTime() - ta;
-                    } else {
-                        double ta = GetTime();
-                        info = aligner.align_gpu(todo_q, todo_r, pre_gasal_results[i]);
-                        time2_3_2 += GetTime() - ta;
-                    }
-                    info_results.push_back(info);
-                }
-                time2_3 += GetTime() - t_start;
 
-                // step2 : store ssw results
-                t_start = GetTime();
-                int pos = 0;
+        {
+            std::lock_guard<std::mutex> lock(group_mutex[async_thread_id]);
+            cpu_gpu_async = std::thread([&] () {
+                double t_start;
+                unset_thread_affinity();
+                set_thread_affinity(async_thread_id);
+                cudaSetDevice(gpu_id);
+                //post-process ssw results and trans to sam
+                {
+                    info_results.clear();
+                    // step1 : post-process the gpu results, re-ssw for bad results on cpu
+                    t_start = GetTime();
+                    for (size_t i = 0; i < pre_todo_querys.size(); i++) {
+                        AlignmentInfo info;
+#ifdef use_device_mem
+                        const auto& todo_q = pre_h_todo_querys[i];
+                        const auto& todo_r = pre_h_todo_refs[i];
+#else
+                        const auto &todo_q = pre_todo_querys[i];
+                        const auto &todo_r = pre_todo_refs[i];
+#endif
+                        if (gasal_fail(todo_q, todo_r, pre_gasal_results[i])) {
+                            double ta = GetTime();
+                            info = aligner.align(todo_q, todo_r);
+                            time2_3_1 += GetTime() - ta;
+                        } else {
+                            double ta = GetTime();
+                            info = aligner.align_gpu(todo_q, todo_r, pre_gasal_results[i]);
+                            time2_3_2 += GetTime() - ta;
+                        }
+                        info_results.push_back(info);
+                    }
+                    time2_3 += GetTime() - t_start;
+
+                    // step2 : store ssw results
+                    t_start = GetTime();
+                    int pos = 0;
 //                printf("info %d\n", info_results.size());
-                for (size_t i = 0; i < pre_data1s.size(); i++) {
-                    const auto mu = isize_est.mu;
-                    const auto sigma = isize_est.sigma;
-                    GPUAlignTmpRes &align_tmp_res = pre_global_align_res[i];
-                    size_t todo_size = align_tmp_res.todo_nams.size();
+                    for (size_t i = 0; i < pre_data1s.size(); i++) {
+                        const auto mu = isize_est.mu;
+                        const auto sigma = isize_est.sigma;
+                        GPUAlignTmpRes &align_tmp_res = pre_global_align_res[i];
+                        size_t todo_size = align_tmp_res.todo_nams.size();
 //                    printf("read %d todo size %d\n", i, todo_size);
-                    if (align_tmp_res.type == 1 || align_tmp_res.type == 2) {
-                        for (size_t j = 0; j < todo_size; j += 2) {
-                            if (!align_tmp_res.done_align[j]) {
-                                GPU_part2_extend_seed_store_res(
-                                        align_tmp_res, j, pre_data1s[i], pre_data2s[i], references, info_results[pos++]
-                                );
-                            }
-                            if (!align_tmp_res.done_align[j + 1]) {
-                                GPU_part2_rescue_mate_store_res(
-                                        align_tmp_res, j + 1, pre_data1s[i], pre_data2s[i], references,
-                                        info_results[pos++], mu, sigma
-                                );
-                            }
-                        }
-                    } else if (align_tmp_res.type == 3) {
-                        if (!align_tmp_res.done_align[0]) {
-                            GPU_part2_extend_seed_store_res(
-                                    align_tmp_res, 0, pre_data1s[i], pre_data2s[i], references, info_results[pos++]
-                            );
-                        }
-                        if (!align_tmp_res.done_align[1]) {
-                            GPU_part2_extend_seed_store_res(
-                                    align_tmp_res, 1, pre_data1s[i], pre_data2s[i], references, info_results[pos++]
-                            );
-                        }
-                    } else if (align_tmp_res.type == 4) {
-                        for (size_t j = 0; j < todo_size; j++) {
-                            if (!align_tmp_res.done_align[j]) {
-                                if (align_tmp_res.is_extend_seed[j]) {
+                        if (align_tmp_res.type == 1 || align_tmp_res.type == 2) {
+                            for (size_t j = 0; j < todo_size; j += 2) {
+                                if (!align_tmp_res.done_align[j]) {
                                     GPU_part2_extend_seed_store_res(
-                                            align_tmp_res, j, pre_data1s[i], pre_data2s[i], references,
-                                            info_results[pos++]
+                                            align_tmp_res, j, pre_data1s[i], pre_data2s[i], references, info_results[pos++]
                                     );
-                                } else {
+                                }
+                                if (!align_tmp_res.done_align[j + 1]) {
                                     GPU_part2_rescue_mate_store_res(
-                                            align_tmp_res, j, pre_data1s[i], pre_data2s[i], references,
+                                            align_tmp_res, j + 1, pre_data1s[i], pre_data2s[i], references,
                                             info_results[pos++], mu, sigma
                                     );
                                 }
                             }
+                        } else if (align_tmp_res.type == 3) {
+                            if (!align_tmp_res.done_align[0]) {
+                                GPU_part2_extend_seed_store_res(
+                                        align_tmp_res, 0, pre_data1s[i], pre_data2s[i], references, info_results[pos++]
+                                );
+                            }
+                            if (!align_tmp_res.done_align[1]) {
+                                GPU_part2_extend_seed_store_res(
+                                        align_tmp_res, 1, pre_data1s[i], pre_data2s[i], references, info_results[pos++]
+                                );
+                            }
+                        } else if (align_tmp_res.type == 4) {
+                            for (size_t j = 0; j < todo_size; j++) {
+                                if (!align_tmp_res.done_align[j]) {
+                                    if (align_tmp_res.is_extend_seed[j]) {
+                                        GPU_part2_extend_seed_store_res(
+                                                align_tmp_res, j, pre_data1s[i], pre_data2s[i], references,
+                                                info_results[pos++]
+                                        );
+                                    } else {
+                                        GPU_part2_rescue_mate_store_res(
+                                                align_tmp_res, j, pre_data1s[i], pre_data2s[i], references,
+                                                info_results[pos++], mu, sigma
+                                        );
+                                    }
+                                }
+                            }
                         }
                     }
+                    assert(pos == info_results.size());
+                    time2_4 += GetTime() - t_start;
+
+                    // step3 : use ssw results to construct sam
+                    t_start = GetTime();
+                    std::string sam_out;
+                    sam_out.reserve(7 * map_param.r * (pre_data1s.size()));
+                    Sam sam{sam_out, references, map_param.cigar_ops, read_group_id, map_param.output_unmapped,
+                            map_param.details};
+                    for (size_t i = 0; i < pre_data1s.size(); ++i) {
+                        GPU_align_PE_read_last(pre_global_align_res[i], pre_data1s[i], pre_data2s[i], sam, sam_out,
+                                               isize_est, aligner,
+                                               map_param, index_parameters, references, index, random_engine,
+                                               time3_1_1, time3_1_2, time3_1_3, time3_1_4
+                        );
+                    }
+                    time3_1 += GetTime() - t_start;
+
+                    t_start = GetTime();
+                    output_buffer.output_records(std::move(sam_out), chunk_index);
+                    time3_2 += GetTime() - t_start;
                 }
-                assert(pos == info_results.size());
-                time2_4 += GetTime() - t_start;
 
-                // step3 : use ssw results to construct sam
                 t_start = GetTime();
-                std::string sam_out;
-                sam_out.reserve(7 * map_param.r * (pre_data1s.size()));
-                Sam sam{sam_out, references, map_param.cigar_ops, read_group_id, map_param.output_unmapped,
-                        map_param.details};
-                for (size_t i = 0; i < pre_data1s.size(); ++i) {
-                    GPU_align_PE_read_last(pre_global_align_res[i], pre_data1s[i], pre_data2s[i], sam, sam_out,
-                                           isize_est, aligner,
-                                           map_param, index_parameters, references, index, random_engine,
-                                           time3_1_1, time3_1_2, time3_1_3, time3_1_4
-                    );
+                for (int chunk_id = 0; chunk_id < pre_real_chunk_num; chunk_id++) {
+                    fastqPool.Release(pre_fqdatachunks[chunk_id]->left_part);
+                    fastqPool.Release(pre_fqdatachunks[chunk_id]->right_part);
                 }
-                time3_1 += GetTime() - t_start;
-
-                t_start = GetTime();
-                output_buffer.output_records(std::move(sam_out), chunk_index);
-                time3_2 += GetTime() - t_start;
-            }
-
-            t_start = GetTime();
-            for (int chunk_id = 0; chunk_id < pre_real_chunk_num; chunk_id++) {
-                fastqPool.Release(pre_fqdatachunks[chunk_id]->left_part);
-                fastqPool.Release(pre_fqdatachunks[chunk_id]->right_part);
-            }
-            time3_3 += GetTime() - t_start;
-        });
+                time3_3 += GetTime() - t_start;
+            });
 //        cpu_gpu_async.join();
+        }
 
         t_1 = GetTime();
         todo_querys.clear();
@@ -5577,7 +5585,7 @@ void perform_task_async_pe_fx_GPU(
                     auto ref_start = todo_refs.begin() + i;
                     auto ref_end = ref_start + STREAM_BATCH_SIZE_GPU;
                     std::vector<std::string_view> ref_batch(ref_start, ref_end);
-                    solve_ssw_on_gpu(
+                    solve_ssw_on_gpu_lock_1_fast(
                             thread_id, gasal_results_tmp, query_batch, ref_batch, aln_params.match,
                             aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend
                     );
@@ -5589,7 +5597,7 @@ void perform_task_async_pe_fx_GPU(
                     std::vector<std::string_view> query_batch(query_start, todo_querys.end());
                     auto ref_start = todo_refs.end() - remaining;
                     std::vector<std::string_view> ref_batch(ref_start, todo_refs.end());
-                    solve_ssw_on_gpu(
+                    solve_ssw_on_gpu_lock_1_fast(
                             thread_id, gasal_results_tmp, query_batch, ref_batch, aln_params.match,
                             aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend
                     );
