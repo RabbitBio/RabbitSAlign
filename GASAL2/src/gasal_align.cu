@@ -166,14 +166,20 @@ void gasal_aln_async(gasal_gpu_storage_t *gpu_storage, const uint32_t actual_que
 	}
 
 	current = gpu_storage->extensible_host_unpacked_target_batch;
+    int cnt = 0;
 	while (current != NULL)
 	{
-		if (type == 1) CHECKCUDAERROR(cudaMemcpyAsync( &(gpu_storage->unpacked_target_batch[current->offset]), 
-										current->data, 
-										current->data_size,
-                                        cudaMemcpyDeviceToDevice,
-										gpu_storage->str ) );
-        else CHECKCUDAERROR(cudaMemcpyAsync( &(gpu_storage->unpacked_target_batch[current->offset]), 
+        cnt++;
+        if (cnt > 1) printf("round %d, offset %d, data_size %d\n", cnt, current->offset, current->data_size);
+		if (type == 1) {
+            if (current->offset != 0) printf("offset %d != 0, data_size %d\n", current->offset, current->data_size);
+//            CHECKCUDAERROR(cudaMemcpyAsync( &(gpu_storage->unpacked_target_batch[current->offset]),
+//                                            current->data,
+//                                            current->data_size,
+//                                            cudaMemcpyDeviceToDevice,
+//                                            gpu_storage->str ) );
+            gpu_storage->unpacked_target_batch = current->data; // this is a hack, but it works
+        } else CHECKCUDAERROR(cudaMemcpyAsync( &(gpu_storage->unpacked_target_batch[current->offset]),
 										current->data, 
 										current->data_size,
                                         cudaMemcpyHostToDevice,

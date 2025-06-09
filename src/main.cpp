@@ -39,7 +39,6 @@
 
 #define use_gpu_align
 
-#define use_device_mem
 
 #include <sys/time.h>
 inline double GetTime() {
@@ -428,51 +427,6 @@ int run_rabbitsalign(int argc, char **argv) {
 
     std::vector<ThreadAssignment> assignments = assign_threads_fixed_with_flags();
 
-//    std::vector<gasal_tmp_res> gasal_results_tmp;
-//    std::vector<std::string> query_batch;
-//    std::vector<std::string> ref_batch;
-//    std::vector<std::string_view> query_batch_v;
-//    std::vector<std::string_view> ref_batch_v;
-//    std::string query_test = "AAA\n";
-//    std::string ref_test = "AAA\n";
-//    for (int i = 0; i < STREAM_BATCH_SIZE; i++) {
-//        query_batch.push_back(query_test);
-//        ref_batch.push_back(ref_test);
-//    }
-//    printf("init gasal2\n");
-//
-//    //assert(opt.n_threads == 144);
-//    for (int i = 0; i < opt.n_threads; i++) {
-//        cudaSetDevice(assignments[i].gpu_id);
-//        char* d_seq_demo;
-//        char* d_ref_demo;
-//        cudaMalloc(&d_seq_demo, 4);
-//        cudaMemset(d_seq_demo, 'A', 4);
-//        cudaMalloc(&d_ref_demo, 4);
-//        cudaMemset(d_ref_demo, 'A', 4);
-//        query_batch_v.clear();
-//        ref_batch_v.clear();
-//        for (int i = 0; i < STREAM_BATCH_SIZE_GPU; i++) {
-//#ifdef use_device_mem
-//            query_batch_v.push_back(std::string_view(d_seq_demo, 4));
-//            ref_batch_v.push_back(std::string_view(d_ref_demo, 4));
-//#else
-//            query_batch_v.push_back(std::string_view(query_test));
-//            ref_batch_v.push_back(std::string_view(ref_test));
-//#endif
-//        }
-//        if(assignments[i].flag) {
-//            solve_ssw_on_gpu2(i, gasal_results_tmp, query_batch_v, ref_batch_v, aln_params.match,
-//                             aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend);
-//        } else {
-//            solve_ssw_on_gpu(i, gasal_results_tmp, query_batch, ref_batch, aln_params.match,
-//                             aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend);
-//        }
-//        cudaFree(d_seq_demo);
-//        cudaFree(d_ref_demo);
-//    }
-//    printf("init done\n");
-
     log_parameters(index_parameters, map_param, aln_params);
     logger.debug() << "Threads: " << opt.n_threads << std::endl;
 
@@ -621,7 +575,7 @@ int run_rabbitsalign(int argc, char **argv) {
 
     OutputBuffer output_buffer(out);
 
-    uint64_t num_bytes = 24 * 1024ll * 1024ll * 1024ll;
+    uint64_t num_bytes = 20 * 1024ll * 1024ll * 1024ll;
     uint64_t seed = 13;
     for (int i = 0; i < gpu_num && i < ceil(opt.n_threads / 18.0); i++) {
         set_scores(i, aln_params.match, aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend);

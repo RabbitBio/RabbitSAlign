@@ -45,6 +45,9 @@ struct gpu_batch {                     //a struct to hold data structures of a s
     int batch_start;   //starting index of batch
 };
 
+void solve_ssw_on_gpu_pre_copy(int thread_id, std::vector<gasal_tmp_res> &gasal_results, std::vector<int> &todo_querys, std::vector<int> &todo_refs,
+                       int match_score, int mismatch_score, int gap_open_score, int gap_extend_score, char* device_query_ptr, char* device_target_ptr);
+
 void solve_ssw_on_gpu2(int thread_id, std::vector<gasal_tmp_res> &gasal_results, std::vector<std::string_view> &todo_querys, std::vector<std::string_view> &todo_refs,
                       int match_score = 2, int mismatch_score = 8, int gap_open_score = 12, int gap_extend_score = 1);
 
