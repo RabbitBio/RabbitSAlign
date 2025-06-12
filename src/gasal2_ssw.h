@@ -1,7 +1,3 @@
-//
-// Created by ylf9811 on 2024/1/4.
-//
-
 #ifndef STROBEALIGN_GASAL2_SSW_H
 #define STROBEALIGN_GASAL2_SSW_H
 //#include "aligner.hpp"
@@ -14,6 +10,7 @@
 
 #define NB_STREAMS 1
 #define THREAD_NUM_MAX 256
+#define GPU_NUM_MAX 16
 
 //#define STREAM_BATCH_SIZE (262144)
 // this gives each stream HALF of the sequences.
@@ -21,10 +18,23 @@
 
 #define STREAM_BATCH_SIZE 1024
 #define STREAM_BATCH_SIZE_GPU 4096
-//#define STREAM_BATCH_SIZE_GPU 512
 
 #define MAX_QUERY_LEN 300
 #define MAX_TARGET_LEN 1000
+
+#define GPU_BATCH_SIZE 100000ll
+#define GPU_BATCH_SEQ_SIZE (GPU_BATCH_SIZE * MAX_QUERY_LEN)
+
+#define MAX_RABBITFX_CHUNK_NUM 128
+#define SMALL_CHUNK_NUM 16
+
+#define PRINT_GPU_TIMER
+#define PRINT_CPU_TIMER
+
+#define MAX_TODO_SEQ_SIZE (256 << 20)
+
+#define RESCUE_THRESHOLD (MAX_QUERY_LEN / 3)
+
 
 #define DEBUG
 

@@ -276,35 +276,6 @@ std::vector<ThreadAssignment> assign_threads_fixed_with_flags() {
 
         assignments.push_back({thread_id, thread_id, cpu_core, numa_node, gpu_id, 0, 0});
     }
-    
-//    for (int base = 0; base < 72; base += 36) {
-//        if (base + 0 < 72) {
-//            assignments[base + 0].flag = 1;
-//            assignments[base + 0].async_thread_id = base + 1;
-//        }
-//        if (base + 9 < 72) {
-//            assignments[base + 9].flag = 1;
-//            assignments[base + 9].async_thread_id = base + 10;
-//        }
-//        if (base + 18 < 72) {
-//            assignments[base + 18].flag = 1;
-//            assignments[base + 18].async_thread_id = base + 1;
-//        }
-//        if (base + 27 < 72) {
-//            assignments[base + 27].flag = 1;
-//            assignments[base + 27].async_thread_id = base + 10;
-//        }
-//        if (base + 1 < 72) {
-//            assignments[base + 1].flag = 1;
-//            assignments[base + 1].pass = 1;
-//        }
-//        if (base + 10 < 72) {
-//            assignments[base + 10].flag = 1;
-//            assignments[base + 10].pass = 1;
-//        }
-//    }
-
-
 
     for (int base = 0; base < 72; base += 36) {
         if (base + 0 < 72) {
@@ -341,7 +312,6 @@ std::vector<ThreadAssignment> assign_threads_fixed_with_flags() {
             assignments[base + 28].pass = 1;
         }
     }
-
 
     return assignments;
 }
@@ -436,13 +406,6 @@ int run_rabbitsalign(int argc, char **argv) {
     References references;
     Timer read_refs_timer;
     references = References::from_fasta(opt.ref_filename);
-//    for (int i = 0; i < references.size(); i++) {
-//        for (int j = 0; j < references.sequences[i].length(); j++) {
-//            auto c = references.sequences[i][j];
-//            bool res = (c == 'A' || c == 'N' || c == 'C' || c == 'G' || c == 'T');
-//            if (!res) references.sequences[i][j] = 'A';
-//        }
-//    }
     logger.info() << "Time reading reference: " << read_refs_timer.elapsed() << " s\n";
 
     logger.info() << "Reference size: " << references.total_length() / 1E6 << " Mbp ("
@@ -478,9 +441,8 @@ int run_rabbitsalign(int argc, char **argv) {
         Timer read_index_timer;
         std::string sti_path = opt.ref_filename + index_parameters.filename_extension();
         logger.info() << "Reading index from " << sti_path << '\n';
-        //totalCPUs = std::thread::hardware_concurrency();
-        totalCPUs = 72;
-    
+        totalCPUs = std::thread::hardware_concurrency();
+
 		fprintf(stderr, "read index1\n");
         std::thread thread1(readIndexOnCPU, std::ref(index), sti_path, 0);
 
@@ -596,7 +558,6 @@ int run_rabbitsalign(int argc, char **argv) {
 
     std::vector<std::thread> workers;
     std::vector<int> worker_done(opt.n_threads);  // each thread sets its entry to 1 when it’s done
-
 
 
 #ifdef RABBIT_FX

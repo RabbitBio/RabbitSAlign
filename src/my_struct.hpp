@@ -113,40 +113,10 @@ struct Nam {
         return query_end - query_start;
     }
 
-
-    // TODO where use this <
     bool operator < (const Nam& nn) const {
         if(query_end != nn.query_end) return query_end < nn.query_end;
         return nam_id < nn.nam_id;
     }
-
-//    CUDA_HOST CUDA_DEV bool operator < (const Nam& nn) const {
-//        //if(score != nn.score) return score > nn.score;
-//        if(n_hits != nn.n_hits) return n_hits > nn.n_hits;
-//        if(query_end != nn.query_end) return query_end < nn.query_end;
-//        if(query_start != nn.query_start) return query_start < nn.query_start;
-//        if(ref_end != nn.ref_end) return ref_end < nn.ref_end;
-//        if(ref_start != nn.ref_start) return ref_start < nn.ref_start;
-//        if(ref_id != nn.ref_id) return ref_id < nn.ref_id;
-//        return is_rc < nn.is_rc;
-//    }
-
-    // for sort3 algo
-//    CUDA_HOST CUDA_DEV bool operator < (const Nam& nn) const {
-//        if(is_rc != nn.is_rc) return is_rc < nn.is_rc;
-//        if(ref_id != nn.ref_id) return ref_id < nn.ref_id;
-//        int val1 = my_max(0, ref_start - query_start);
-//        int val2 = my_max(0, nn.ref_start - nn.query_start);
-//        if (val1 != val2) return val1 < val2;
-//        //if(score != nn.score) return score > nn.score;
-//        if(n_hits != nn.n_hits) return n_hits > nn.n_hits;
-//        if(query_end != nn.query_end) return query_end < nn.query_end;
-//        if(query_start != nn.query_start) return query_start < nn.query_start;
-//        if(ref_end != nn.ref_end) return ref_end < nn.ref_end;
-//        if(ref_start != nn.ref_start) return ref_start < nn.ref_start;
-//        //return is_rc < nn.is_rc;
-//        return true;
-//    }
 };
 
 struct Hit {
@@ -239,15 +209,11 @@ struct my_string {
 };
 
 
-
-
 template <typename T>
 struct my_vector {
     T* data = nullptr;
     int length;
     int capacity;
-
-//    CUDA_HOST my_vector() : data(nullptr), length(0), capacity(0) {}
 
     CUDA_DEV my_vector(int N = 4) {
         capacity = N;

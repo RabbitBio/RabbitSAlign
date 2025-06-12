@@ -1,6 +1,3 @@
-//
-// Created by ylf9811 on 2024/1/4.
-//
 #include "gasal2_ssw.h"
 #include "gpu_packing.h"
 #include <sys/time.h>
@@ -251,13 +248,6 @@ void solve_ssw_on_gpu(
     //    if (cnt[thread_id] % 100 == 0) {
     //        printf("gasal2 cpu main timer : %.2f %.2f %.2f\n", time_pre, time_fill, time_cal);
     //    }
-
-
-
-    //    gasal_destroy_streams(&(gpu_storage_vecs[thread_id]), args[thread_id]);
-    //    gasal_destroy_gpu_storage_v(&(gpu_storage_vecs[thread_id]));
-    //
-    //    delete args[thread_id];  // closes the files
 }
 
 void solve_ssw_on_gpu(
@@ -485,13 +475,6 @@ void solve_ssw_on_gpu(
     //    if (cnt[thread_id] % 100 == 0) {
     //        printf("gasal2 cpu main timer : %.2f %.2f %.2f\n", time_pre, time_fill, time_cal);
     //    }
-
-
-
-    //    gasal_destroy_streams(&(gpu_storage_vecs[thread_id]), args[thread_id]);
-    //    gasal_destroy_gpu_storage_v(&(gpu_storage_vecs[thread_id]));
-    //
-    //    delete args[thread_id];  // closes the files
 }
 
 void solve_ssw_on_gpu_lock_6(
@@ -851,13 +834,6 @@ void solve_ssw_on_gpu_lock_6(
     if (cnt[thread_id] % 100 == 0) {
         printf("gasal2 gpu %d-%d main timer : %.2f %.2f[%.2f(%.2f %.2f %.2f) %.2f] %.2f\n", thread_id, cnt[thread_id], time_pre[thread_id], time_fill[thread_id], time_fill1[thread_id], time_fill1_1[thread_id], time_fill1_2[thread_id], time_fill1_3[thread_id], time_fill2[thread_id], time_cal[thread_id]);
     }
-
-
-
-    //    gasal_destroy_streams(&(gpu_storage_vecs[thread_id]), args[thread_id]);
-    //    gasal_destroy_gpu_storage_v(&(gpu_storage_vecs[thread_id]));
-    //
-    //    delete args[thread_id];  // closes the files
 }
 
 
@@ -1191,13 +1167,6 @@ void solve_ssw_on_gpu_managed(
     if (cnt[thread_id] % 100 == 0) {
         printf("gasal2 gpu %d-%d main timer : %.2f %.2f[%.2f(%.2f %.2f %.2f) %.2f] %.2f\n", thread_id, cnt[thread_id], time_pre[thread_id], time_fill[thread_id], time_fill1[thread_id], time_fill1_1[thread_id], time_fill1_2[thread_id], time_fill1_3[thread_id], time_fill2[thread_id], time_cal[thread_id]);
     }
-
-
-
-    //    gasal_destroy_streams(&(gpu_storage_vecs[thread_id]), args[thread_id]);
-    //    gasal_destroy_gpu_storage_v(&(gpu_storage_vecs[thread_id]));
-    //
-    //    delete args[thread_id];  // closes the files
 }
 
 
@@ -1555,13 +1524,6 @@ void solve_ssw_on_gpu_lock_1_fast(
     if (cnt[thread_id] % 100 == 0) {
         printf("gasal2 gpu %d-%d main timer : %.2f %.2f[%.2f(%.2f %.2f %.2f) %.2f] %.2f\n", thread_id, cnt[thread_id], time_pre[thread_id], time_fill[thread_id], time_fill1[thread_id], time_fill1_1[thread_id], time_fill1_2[thread_id], time_fill1_3[thread_id], time_fill2[thread_id], time_cal[thread_id]);
     }
-
-
-
-//    gasal_destroy_streams(&(gpu_storage_vecs[thread_id]), args[thread_id]);
-//    gasal_destroy_gpu_storage_v(&(gpu_storage_vecs[thread_id]));
-//
-//    delete args[thread_id];  // closes the files
 }
 
 
@@ -1890,13 +1852,6 @@ void solve_ssw_on_gpu_lock_1(
     if (cnt[thread_id] % 100 == 0) {
         printf("gasal2 gpu %d-%d main timer : %.2f %.2f[%.2f(%.2f %.2f %.2f) %.2f] %.2f\n", thread_id, cnt[thread_id], time_pre[thread_id], time_fill[thread_id], time_fill1[thread_id], time_fill1_1[thread_id], time_fill1_2[thread_id], time_fill1_3[thread_id], time_fill2[thread_id], time_cal[thread_id]);
     }
-
-
-
-//    gasal_destroy_streams(&(gpu_storage_vecs[thread_id]), args[thread_id]);
-//    gasal_destroy_gpu_storage_v(&(gpu_storage_vecs[thread_id]));
-//
-//    delete args[thread_id];  // closes the files
 }
 
 
@@ -2230,13 +2185,6 @@ void solve_ssw_on_gpu2(
     if (cnt[thread_id] % 100 == 0) {
         printf("gasal2 gpu %d-%d main timer : %.2f %.2f[%.2f(%.2f %.2f %.2f) %.2f] %.2f\n", thread_id, cnt[thread_id], time_pre[thread_id], time_fill[thread_id], time_fill1[thread_id], time_fill1_1[thread_id], time_fill1_2[thread_id], time_fill1_3[thread_id], time_fill2[thread_id], time_cal[thread_id]);
     }
-
-
-
-//    gasal_destroy_streams(&(gpu_storage_vecs[thread_id]), args[thread_id]);
-//    gasal_destroy_gpu_storage_v(&(gpu_storage_vecs[thread_id]));
-//
-//    delete args[thread_id];  // closes the files
 }
 
 void solve_ssw_on_gpu_pre_copy(
@@ -2468,14 +2416,7 @@ void solve_ssw_on_gpu_pre_copy(
 
     time_cal[thread_id] += GetTime() - t0;
 
-    if (cnt[thread_id] % 100 == 0) {
-        printf("gasal2 gpu %d-%d main timer : %.2f %.2f[%.2f %.2f] %.2f\n", thread_id, cnt[thread_id], time_pre[thread_id], time_fill[thread_id], time_fill1[thread_id], time_fill2[thread_id], time_cal[thread_id]);
-    }
-
-
-
-//    gasal_destroy_streams(&(gpu_storage_vecs[thread_id]), args[thread_id]);
-//    gasal_destroy_gpu_storage_v(&(gpu_storage_vecs[thread_id]));
-//
-//    delete args[thread_id];  // closes the files
+//    if (cnt[thread_id] % 100 == 0) {
+//        printf("gasal2 gpu %d-%d main timer : %.2f %.2f[%.2f %.2f] %.2f\n", thread_id, cnt[thread_id], time_pre[thread_id], time_fill[thread_id], time_fill1[thread_id], time_fill2[thread_id], time_cal[thread_id]);
+//    }
 }
