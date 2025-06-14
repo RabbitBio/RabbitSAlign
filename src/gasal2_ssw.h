@@ -16,25 +16,36 @@
 // this gives each stream HALF of the sequences.
 //#define STREAM_BATCH_SIZE ceil((double)target_seqs.size() / (double)(2))
 
-#define STREAM_BATCH_SIZE 1024
-#define STREAM_BATCH_SIZE_GPU 4096
+#define STREAM_BATCH_SIZE 1024ll
+#define STREAM_BATCH_SIZE_GPU 4096ll
 
-#define MAX_QUERY_LEN 300
-#define MAX_TARGET_LEN 1000
+#define MAX_QUERY_LEN 300ll
+#define MAX_TARGET_LEN 1000ll
 
-#define GPU_BATCH_SIZE 100000ll
-#define GPU_BATCH_SEQ_SIZE (GPU_BATCH_SIZE * MAX_QUERY_LEN)
+#define MAX_CPU_SSW_SIZE (STREAM_BATCH_SIZE * MAX_QUERY_LEN * MAX_TARGET_LEN / 2 * 1.1)
+#define MAX_GPU_SSW_SIZE (STREAM_BATCH_SIZE_GPU * MAX_QUERY_LEN * MAX_TARGET_LEN / 2 * 1.2)
+
+#define GB_BYTE (1ll << 30)
+
+#define CHUNK_GPU36_SIZE (0.18 * GB_BYTE) // align_res + meta_data + seq_data + device_todo_mem
+
+#define GALLATIN_BASE_SIZE (2.0 * GB_BYTE) // base size of Gallatin GPU memory
+#define GALLATIN_CHUNK_SIZE (0.5 * GB_BYTE) // size of each chunk in Gallatin GPU memory
+
+#define REFERENCE_SIZE (13.66 * GB_BYTE) // references and index size
+
+const int G_num = 2; // number of typeB thread per GPU
 
 #define MAX_RABBITFX_CHUNK_NUM 128
-#define SMALL_CHUNK_NUM 16
+#define BIG_CHUNK_NUM 32
+#define SMALL_CHUNK_NUM 4
+
+#define DEVICE_TODO_SIZE_PER_CHUNK (8 << 20)
 
 #define PRINT_GPU_TIMER
 #define PRINT_CPU_TIMER
 
-#define MAX_TODO_SEQ_SIZE (256 << 20)
-
 #define RESCUE_THRESHOLD (MAX_QUERY_LEN / 3)
-
 
 #define DEBUG
 

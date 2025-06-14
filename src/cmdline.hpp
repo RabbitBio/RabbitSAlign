@@ -7,6 +7,7 @@
 
 struct CommandLineOptions {
     int n_threads { 3 };
+    int n_gpus { 1 };
     int chunk_size { 10000 };
 
     // Input/output

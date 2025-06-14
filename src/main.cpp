@@ -184,7 +184,6 @@ void show_progress_until_done(std::vector<int>& worker_done, std::vector<Alignme
 }
 
 
-int totalCPUs;
 void setThreadAffinity(int cpu_id) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
@@ -225,7 +224,7 @@ int producer_pe_fastq_task(std::string file, std::string file2, rabbit::fq::Fast
 
 int producer_se_fastq_task(std::string file, rabbit::fq::FastqDataPool& fastqPool, rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> &dq){
 	rabbit::fq::FastqFileReader fqFileReader(file, fastqPool, false, "", 1 << 12);
-	rabbit::int64 n_chunks = 0; 
+	rabbit::int64 n_chunks = 0;
 	while(true){ 
 		rabbit::fq::FastqDataChunk* fqdatachunk;// = new rabbit::fq::FastqDataChunk;
 		fqdatachunk = fqFileReader.readNextChunk(); 
@@ -240,81 +239,110 @@ int producer_se_fastq_task(std::string file, rabbit::fq::FastqDataPool& fastqPoo
 }
 #endif
 
+double calculateMemoryUsage(int total_cpu_num, int gpu_num, int chunk_num) {
+    int C_num = total_cpu_num / gpu_num - 2;
+    double SIZE0 = G_num * MAX_GPU_SSW_SIZE + C_num * MAX_CPU_SSW_SIZE;
+    double SIZE1 = G_num * chunk_num * CHUNK_GPU36_SIZE;
+    double SIZE2 = GALLATIN_BASE_SIZE + chunk_num * GALLATIN_CHUNK_SIZE;
+    double SIZE3 = REFERENCE_SIZE;
+//    std::cout << SIZE0 / GB_BYTE << " " << SIZE1 / GB_BYTE << " " << SIZE2 / GB_BYTE << " " << SIZE3 / GB_BYTE << std::endl;
+    double N = SIZE0 + SIZE1 + SIZE2 + SIZE3;
+    return N / GB_BYTE;
+}
+
+int calculateMaxChunkNum(int total_cpu_num, int gpu_num, size_t GPU_mem_size) {
+    printf("Calculating max chunk_num for total_cpu_num: %d, gpu_num: %d, GPU_mem_size: %zu GB\n", total_cpu_num, gpu_num, GPU_mem_size);
+    int chunk_num = 1;
+    while (true) {
+        double memory_usage = calculateMemoryUsage(total_cpu_num, gpu_num, chunk_num) * GB_BYTE;
+        if (memory_usage > GPU_mem_size) {
+            return chunk_num - 1;
+        }
+        chunk_num++;
+    }
+}
+
+
+#include <vector>
+#include <iostream>
+#include <cassert>
+#include <unordered_set>
+#include <cmath>
+
 struct ThreadAssignment {
     int thread_id;
     int async_thread_id;
-    int cpu_core;
     int numa_node;
     int gpu_id;
     int flag;
     int pass;
 };
 
-std::vector<ThreadAssignment> assign_threads_fixed_with_flags() {
+std::vector<int> evenly_select(int total, int count) {
+    std::vector<int> result;
+    if (count == 0) return result;
+    double step = static_cast<double>(total) / count;
+    for (int i = 0; i < count; ++i) {
+        int idx = static_cast<int>(i * step);
+        if (idx >= total) idx = total - 1;
+        result.push_back(idx);
+    }
+    return result;
+}
+
+std::vector<ThreadAssignment> assign_threads_fixed_with_flags(int total_cpu_num, int total_gpu_num, int cpu_num, int gpu_num, int numa_num) {
+
+    std::cout << "total_cpu_num: " << total_cpu_num << ", use " << cpu_num << std::endl;
+    std::cout << "total_gpu_num: " << total_gpu_num << ", use " << gpu_num << std::endl;
+
     std::vector<ThreadAssignment> assignments;
 
-    for (int thread_id = 0; thread_id < 72; ++thread_id) {
-        int numa_node = 0;
-        int gpu_id = 0;
-        
-        if (thread_id <= 35) {               // 0-35
-            numa_node = 0;
-            if (thread_id <= 17)
-                gpu_id = 0;                   // 0-17 -> GPU0
-            else
-                gpu_id = 1;                   // 18-35 -> GPU1
-        }
-        else if (thread_id <= 71) {           // 36-71
-            numa_node = 1;
-            if (thread_id <= 53)
-                gpu_id = 2;                   // 36-53 -> GPU2
-            else
-                gpu_id = 3;                   // 54-71 -> GPU3
-        }
+    // Step 1: 从 total_cpu_num 中均匀选择 cpu_num 个线程
+    std::vector<int> selected_threads = evenly_select(total_cpu_num, cpu_num);
 
-        int cpu_core = thread_id;
+    // Step 2: 在 selected_threads 中均匀选择 gpu_num 个主线程
+    std::vector<int> main_gpu_indices = evenly_select(cpu_num, gpu_num * 2);  // 注意：取的是 selected_threads 的索引
+    std::unordered_set<int> main_gpu_tids;
+    std::unordered_set<int> aux_gpu_tids;
 
-        assignments.push_back({thread_id, thread_id, cpu_core, numa_node, gpu_id, 0, 0});
+    for (int i : main_gpu_indices) {
+        if (i < cpu_num) {
+            int main_tid = selected_threads[i];
+            main_gpu_tids.insert(main_tid);
+            if (i + 1 < cpu_num) {
+                int aux_tid = selected_threads[i + 1];
+                aux_gpu_tids.insert(aux_tid);
+            }
+        }
     }
 
-    for (int base = 0; base < 72; base += 36) {
-        if (base + 0 < 72) {
-            assignments[base + 0].flag = 1;
-            assignments[base + 0].async_thread_id = base + 1;
-        }
-        if (base + 9 < 72) {
-            assignments[base + 9].flag = 1;
-            assignments[base + 9].async_thread_id = base + 10;
-        }
-        if (base + 18 < 72) {
-            assignments[base + 18].flag = 1;
-            assignments[base + 18].async_thread_id = base + 19;
-        }
-        if (base + 27 < 72) {
-            assignments[base + 27].flag = 1;
-            assignments[base + 27].async_thread_id = base + 28;
+    int gpu_id_counter = 0;
+
+    for (int i = 0; i < selected_threads.size(); ++i) {
+        int tid = selected_threads[i];
+        int numa_node = tid / (total_cpu_num / numa_num);
+        int gpu_id = tid / (total_cpu_num / gpu_num);  // 简单映射策略
+
+        ThreadAssignment ta = {tid, -1, numa_node, gpu_id, 0, 0};
+
+        if (main_gpu_tids.count(tid)) {
+            ta.flag = 1;
+            ta.async_thread_id = selected_threads[i + 1];  // 下一个就是aux
+            ta.gpu_id = gpu_id_counter / 2;
+            gpu_id_counter++;
+//            std::cout << "Assign GPU main thread " << tid << " (GPU " << ta.gpu_id << ") with aux " << ta.async_thread_id << "\n";
+        } else if (aux_gpu_tids.count(tid)) {
+            ta.flag = 1;
+            ta.pass = 1;
+//            std::cout << "Assign GPU aux thread " << tid << "\n";
         }
 
-        if (base + 1 < 72) {
-            assignments[base + 1].flag = 1;
-            assignments[base + 1].pass = 1;
-        }
-        if (base + 10 < 72) {
-            assignments[base + 10].flag = 1;
-            assignments[base + 10].pass = 1;
-        }
-        if (base + 19 < 72) {
-            assignments[base + 19].flag = 1;
-            assignments[base + 19].pass = 1;
-        }
-        if (base + 28 < 72) {
-            assignments[base + 28].flag = 1;
-            assignments[base + 28].pass = 1;
-        }
+        assignments.push_back(ta);
     }
 
     return assignments;
 }
+
 
 void set_scores(int gpu_id, int match_score, int mismatch_score, int gap_open_score, int gap_extend_score) {
     cudaSetDevice(gpu_id);
@@ -345,6 +373,9 @@ int run_rabbitsalign(int argc, char **argv) {
         opt.r = estimate_read_length(input_buffer);
         logger.info() << "Estimated read length: " << opt.r << " bp\n";
     }
+
+    int eval_read_len = opt.r;
+    logger.info() << "Evaluated read length: " << eval_read_len << " bp\n";
 
 #ifdef RABBIT_FX
     rabbit::fq::FastqDataPool fastqPool(4096, 1 << 20);
@@ -393,12 +424,10 @@ int run_rabbitsalign(int argc, char **argv) {
     map_param.verify();
 
 
-    const int gpu_num = 4;
-
-    std::vector<ThreadAssignment> assignments = assign_threads_fixed_with_flags();
 
     log_parameters(index_parameters, map_param, aln_params);
-    logger.debug() << "Threads: " << opt.n_threads << std::endl;
+    logger.info() << "CPU Threads: " << opt.n_threads << std::endl;
+    logger.info() << "GPU Numbers: " << opt.n_gpus << std::endl;
 
 //    assert(k <= (w/2)*w_min && "k should be smaller than (w/2)*w_min to avoid creating short strobemers");
 
@@ -435,13 +464,29 @@ int run_rabbitsalign(int argc, char **argv) {
 
     StrobemerIndex index(references, index_parameters, opt.bits);
     StrobemerIndex index2(references, index_parameters, opt.bits);
+    int totalCPUs;
+    totalCPUs = std::thread::hardware_concurrency();
+    int totalGPUs = 0;
+    cudaError_t err = cudaGetDeviceCount(&totalGPUs);
+    if (err != cudaSuccess) {
+        std::cerr << "CUDA error: " << cudaGetErrorString(err) << std::endl;
+        return 1;
+    }
+    size_t free_memory, total_memory;
+    err = cudaMemGetInfo(&free_memory, &total_memory);
+    if (err != cudaSuccess) {
+        std::cerr << "CUDA error: " << cudaGetErrorString(err) << std::endl;
+        return -1;
+    }
+    logger.info() << "Total CPUs: " << totalCPUs << ", Total GPUs: " << totalGPUs << std::endl;
+    logger.info() << "Available memory: " << free_memory / (1024 * 1024) << " MB, Total memory: " << total_memory / (1024 * 1024) << " MB\n";
     if (opt.use_index) {
         // Read the index from a file
         assert(!opt.only_gen_index);
         Timer read_index_timer;
         std::string sti_path = opt.ref_filename + index_parameters.filename_extension();
         logger.info() << "Reading index from " << sti_path << '\n';
-        totalCPUs = std::thread::hardware_concurrency();
+
 
 		fprintf(stderr, "read index1\n");
         std::thread thread1(readIndexOnCPU, std::ref(index), sti_path, 0);
@@ -537,22 +582,41 @@ int run_rabbitsalign(int argc, char **argv) {
 
     OutputBuffer output_buffer(out);
 
-    uint64_t num_bytes = 20 * 1024ll * 1024ll * 1024ll;
-    uint64_t seed = 13;
-    for (int i = 0; i < gpu_num && i < ceil(opt.n_threads / 18.0); i++) {
+    int max_chunk_num = calculateMaxChunkNum(opt.n_threads, opt.n_gpus, free_memory);
+    if (max_chunk_num < 4) {
+        logger.error() << "Not enough memory to run rabbitsalign. "
+            << "Please reduce the number of threads, or increase the available memory.\n";
+        return -1;
+    }
+    int chunk_num = 1 << (int)(log2(max_chunk_num));
+    logger.info() << "Using chunk size: " << chunk_num << std::endl;
+
+    uint64_t gallatin_num_bytes = GALLATIN_BASE_SIZE + chunk_num * GALLATIN_CHUNK_SIZE;
+    logger.info() << "Gallatin memory usage: " << gallatin_num_bytes / (1024 * 1024) << " MB\n";
+    uint64_t gallatin_seed = 13;
+    for (int i = 0; i < opt.n_gpus; i++) {
         set_scores(i, aln_params.match, aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend);
     }
+
+    int batch_read_num = chunk_num * (1ll << 20) / 2 / eval_read_len;
+    int batch_total_read_len = batch_read_num * eval_read_len;
+    logger.info() << "Batch read number: " << batch_read_num << std::endl;
+    logger.info() << "Batch total read length: " << batch_total_read_len << std::endl;
+
 #ifdef use_gpu_align
-    for (int i = 0; i < gpu_num && i < ceil(opt.n_threads / 18.0); i++) {
+    std::vector<ThreadAssignment> assignments = assign_threads_fixed_with_flags(totalCPUs, totalGPUs, opt.n_threads, opt.n_gpus, numa_num);
+
+    for (int i = 0; i < opt.n_gpus; i++) {
         init_shared_data(references, index, i, 0);
-        init_mm_safe(num_bytes, seed, i);
+        init_mm_safe(gallatin_num_bytes, gallatin_seed, i);
     }
     for (int i = 0; i < opt.n_threads; i++) {
         if (assignments[i].flag == 1 && assignments[i].pass == 0) {
-            init_global_big_data(i, assignments[i].gpu_id, map_param.max_tries);
+            init_global_big_data(assignments[i].thread_id, assignments[i].gpu_id, map_param.max_tries, batch_read_num);
         }
     }
 #endif
+
 
     double tt0 = GetTime();
 
@@ -609,14 +673,15 @@ int run_rabbitsalign(int argc, char **argv) {
                     std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
                             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
                             std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                            std::ref(index), std::ref(opt.read_group_id), i,
-                            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id);
+                            std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
+                            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
+                            batch_read_num, batch_total_read_len, chunk_num);
                     workers.push_back(std::move(consumer));
                 } else {
                     std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
                             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
                             std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                            std::ref(index), std::ref(opt.read_group_id), i,
+                            std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
                             std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
                     workers.push_back(std::move(consumer));
                 }
@@ -630,14 +695,15 @@ int run_rabbitsalign(int argc, char **argv) {
                     std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
                             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
                             std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                            std::ref(index2), std::ref(opt.read_group_id), i,
-                            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id);
+                            std::ref(index2), std::ref(opt.read_group_id), assignments[i].thread_id,
+                            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
+                            batch_read_num, batch_total_read_len, chunk_num);
                     workers.push_back(std::move(consumer));
                 } else {
                     std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
                             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
                             std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                            std::ref(index2), std::ref(opt.read_group_id), i,
+                            std::ref(index2), std::ref(opt.read_group_id), assignments[i].thread_id,
                             std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
                     workers.push_back(std::move(consumer));
                 }

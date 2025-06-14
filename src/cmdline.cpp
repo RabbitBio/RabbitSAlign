@@ -20,6 +20,7 @@ CommandLineOptions parse_command_line_arguments(int argc, char **argv) {
 
     // Threading
     args::ValueFlag<int> threads(parser, "INT", "Number of threads [3]", {'t', "threads"});
+    args::ValueFlag<int> gpus(parser, "INT", "Number of gpus [1]", {'g', "gpus"});
     args::ValueFlag<int> chunk_size(parser, "INT", "Number of reads processed by a worker thread at once [10000]", {"chunk-size"}, args::Options::Hidden);
 
     args::Group io(parser, "Input/output:");
@@ -84,6 +85,7 @@ CommandLineOptions parse_command_line_arguments(int argc, char **argv) {
 
     // Threading
     if (threads) { opt.n_threads = args::get(threads); }
+    if (gpus) { opt.n_gpus = args::get(gpus); }
     if (chunk_size) { opt.chunk_size = args::get(chunk_size); }
 
     // Input/output
