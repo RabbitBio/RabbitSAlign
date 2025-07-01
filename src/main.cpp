@@ -37,7 +37,6 @@
 #include "Formater.h"
 #endif
 
-#define use_gpu_align
 
 
 #include <sys/time.h>
@@ -204,7 +203,8 @@ void readIndexOnCPU(StrobemerIndex& index, const std::string& sti_path, int cpu_
 
 int producer_pe_fastq_task(std::string file, std::string file2, rabbit::fq::FastqDataPool &fastqPool, rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq) {
 	rabbit::fq::FastqFileReader *fqFileReader;
-	fqFileReader = new rabbit::fq::FastqFileReader(file, fastqPool, false, file2, 1 << 12);
+	//fqFileReader = new rabbit::fq::FastqFileReader(file, fastqPool, false, file2, 1 << 12);
+	fqFileReader = new rabbit::fq::FastqFileReader(file, fastqPool, false, file2);
 	int n_chunks = 0;
 	int line_sum = 0;
 	while (true) {
@@ -223,7 +223,8 @@ int producer_pe_fastq_task(std::string file, std::string file2, rabbit::fq::Fast
 }
 
 int producer_se_fastq_task(std::string file, rabbit::fq::FastqDataPool& fastqPool, rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> &dq){
-	rabbit::fq::FastqFileReader fqFileReader(file, fastqPool, false, "", 1 << 12);
+	//rabbit::fq::FastqFileReader fqFileReader(file, fastqPool, false, "", 1 << 12);
+	rabbit::fq::FastqFileReader fqFileReader(file, fastqPool, false, "");
 	rabbit::int64 n_chunks = 0;
 	while(true){ 
 		rabbit::fq::FastqDataChunk* fqdatachunk;// = new rabbit::fq::FastqDataChunk;
@@ -377,8 +378,10 @@ int run_rabbitsalign(int argc, char **argv) {
     int eval_read_len = opt.r;
     logger.info() << "Evaluated read length: " << eval_read_len << " bp\n";
 
+    int fx_batch_size = 1 << 22;
+
 #ifdef RABBIT_FX
-    rabbit::fq::FastqDataPool fastqPool(4096, 1 << 20);
+    rabbit::fq::FastqDataPool fastqPool(4096, fx_batch_size);
     rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> queue_se(4096, 1);
     rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> queue_pe(4096, 1);
     std::thread *producer;
@@ -583,7 +586,8 @@ int run_rabbitsalign(int argc, char **argv) {
     OutputBuffer output_buffer(out);
 
     int max_chunk_num = calculateMaxChunkNum(opt.n_threads, opt.n_gpus, free_memory);
-    if (max_chunk_num < 4) {
+    //if (max_chunk_num < 4) {
+    if (max_chunk_num < 1) {
         logger.error() << "Not enough memory to run rabbitsalign. "
             << "Please reduce the number of threads, or increase the available memory.\n";
         return -1;
@@ -598,12 +602,12 @@ int run_rabbitsalign(int argc, char **argv) {
         set_scores(i, aln_params.match, aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend);
     }
 
-    int batch_read_num = chunk_num * (1ll << 20) / 2 / eval_read_len;
+    chunk_num = 1;
+    int batch_read_num = chunk_num * fx_batch_size / 2 / eval_read_len;
     int batch_total_read_len = batch_read_num * eval_read_len;
     logger.info() << "Batch read number: " << batch_read_num << std::endl;
     logger.info() << "Batch total read length: " << batch_total_read_len << std::endl;
 
-#ifdef use_gpu_align
     std::vector<ThreadAssignment> assignments = assign_threads_fixed_with_flags(totalCPUs, totalGPUs, opt.n_threads, opt.n_gpus, numa_num);
 
     for (int i = 0; i < opt.n_gpus; i++) {
@@ -615,7 +619,6 @@ int run_rabbitsalign(int argc, char **argv) {
             init_global_big_data(assignments[i].thread_id, assignments[i].gpu_id, map_param.max_tries, batch_read_num);
         }
     }
-#endif
 
 
     double tt0 = GetTime();
@@ -663,7 +666,6 @@ int run_rabbitsalign(int argc, char **argv) {
 
         if(use_good_numa) {
 
-#ifdef use_gpu_align
             for (int i = 0; i < opt.n_threads * 1 / 2; ++i) {
                 if (assignments[i].flag) {
                     if (assignments[i].pass) {
@@ -708,31 +710,40 @@ int run_rabbitsalign(int argc, char **argv) {
                     workers.push_back(std::move(consumer));
                 }
             }
-#else
-            for (int i = 0; i < opt.n_threads * 1 / 2; ++i) {
-                std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
-                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                        std::ref(index), std::ref(opt.read_group_id), i,
-                        std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
-                workers.push_back(std::move(consumer));
-            }
-            for (int i = opt.n_threads * 1 / 2; i < opt.n_threads; ++i) {
-                std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
-                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                        std::ref(index2), std::ref(opt.read_group_id), i,
-                        std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
-                workers.push_back(std::move(consumer));
-            }
-        
-#endif
         } else {
-#ifdef use_gpu_align
-            assert(false);
-#else
-            assert(false);
-#endif
+            //printf("size %d\n", index.randstrobes.size());
+            for (int i = 0; i < opt.n_threads; ++i) {
+                if (assignments[i].flag) {
+                //if (0) {
+                    if (assignments[i].pass) {
+                        printf("gpu thread %d skip\n", i);
+                        continue;
+                    }
+                    std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
+                            std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                            std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                            std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
+                            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
+                            batch_read_num, batch_total_read_len, chunk_num);
+                    workers.push_back(std::move(consumer));
+                } else {
+                    std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
+                            std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                            std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                            std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
+                            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
+                    workers.push_back(std::move(consumer));
+                }
+            }
+ 
+            //for (int i = 0; i < opt.n_threads; ++i) {
+            //    std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
+            //            std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+            //            std::ref(map_param), std::ref(index_parameters), std::ref(references),
+            //            std::ref(index), std::ref(opt.read_group_id), i,
+            //            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
+            //    workers.push_back(std::move(consumer));
+            //}
         }
     }
     if (opt.show_progress && isatty(2)) {
@@ -778,6 +789,7 @@ int run_rabbitsalign(int argc, char **argv) {
         //PE
         fprintf(stderr, "PE module\n");
         if(use_good_numa) {
+            printf("size %d\n", index.randstrobes.size());
             for (int i = 0; i < opt.n_threads / 2; ++i) {
                 std::thread consumer(perform_task_async_pe, std::ref(input_buffer), std::ref(output_buffer),
                         std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
@@ -793,6 +805,7 @@ int run_rabbitsalign(int argc, char **argv) {
                 workers.push_back(std::move(consumer));
             }
         } else{
+            printf("size %d\n", index.randstrobes.size());
             for (int i = 0; i < opt.n_threads; ++i) {
                 std::thread consumer(perform_task_async_pe, std::ref(input_buffer), std::ref(output_buffer),
                         std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),

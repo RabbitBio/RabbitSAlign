@@ -966,10 +966,10 @@ std::vector<Nam> find_nams_rescue(
     std::array<robin_hood::unordered_map<unsigned int, std::vector<Hit>>, 2> hits_per_ref;
     std::vector<RescueHit> hits_fw;
     std::vector<RescueHit> hits_rc;
-    //hits_per_ref[0].reserve(100);
-    //hits_per_ref[1].reserve(100);
-    //hits_fw.reserve(5000);
-    //hits_rc.reserve(5000);
+    hits_per_ref[0].reserve(100);
+    hits_per_ref[1].reserve(100);
+    hits_fw.reserve(5000);
+    hits_rc.reserve(5000);
 
     for (auto &qr : query_randstrobes) {
         size_t position = index.find(qr.hash);
@@ -1019,10 +1019,10 @@ std::vector<Nam> find_nams_rescue(
 //    std::array<std::map<unsigned int, std::vector<Hit>>, 2> hits_per_ref;
     std::vector<RescueHit> hits_fw;
     std::vector<RescueHit> hits_rc;
-    //hits_per_ref[0].reserve(100);
-    //hits_per_ref[1].reserve(100);
-    //hits_fw.reserve(5000);
-    //hits_rc.reserve(5000);
+    hits_per_ref[0].reserve(100);
+    hits_per_ref[1].reserve(100);
+    hits_fw.reserve(5000);
+    hits_rc.reserve(5000);
 
     for (auto &qr : query_randstrobes) {
         size_t position = index.find(qr.hash);

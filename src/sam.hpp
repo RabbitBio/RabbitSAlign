@@ -90,7 +90,10 @@ struct GPUAlignment {
 };
 
 struct CigarData{
-    uint32_t cigar[MAX_CIGAR_ITEM];
+    uint32_t gpu_cigar[MAX_CIGAR_ITEM];
+    //uint32_t cigar[MAX_CIGAR_ITEM];
+    uint32_t* cigar;
+    int has_realloc{0};
 };
 
 enum struct CigarOps {
