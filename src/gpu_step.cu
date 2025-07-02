@@ -243,6 +243,13 @@ struct TODOInfos {
     int r_len;
 };
 
+struct TmpTODOInfos {
+    int q_len;
+    int r_len;
+    char* q_ptr;
+    char* r_ptr;
+    TODOInfos todo_info;
+};
 
 struct GPUAlignTmpRes {
     int type;
@@ -613,6 +620,115 @@ __device__ void gpu_part2_extend_seed_get_str(
         const GPURead& read2,
         const GPUReferences& references,
         int read_id,
+        my_vector<TmpTODOInfos>& tmp_todo_infos
+) {
+    Nam nam = align_tmp_res.todo_nams[j];
+    GPURead read = align_tmp_res.is_read1[j] ? read1 : read2;
+    const my_string query = nam.is_rc ? my_string(read.rc, read.length) : my_string(read.seq, read.length);
+    const my_string ref = references.sequences[nam.ref_id];
+
+    const auto projected_ref_start = my_max(0, nam.ref_start - nam.query_start);
+    const auto projected_ref_end = my_max(nam.ref_end + query.size() - nam.query_end, ref.size());
+
+    const int diff = my_abs(nam.ref_span() - nam.query_span());
+    const int ext_left = my_min(50, projected_ref_start);
+    const int ref_start = projected_ref_start - ext_left;
+    const int ext_right = my_min(50, ref.size() - nam.ref_end);
+    auto ref_segm_size = read.size() + diff + ext_left + ext_right;
+    if (ref_start + ref_segm_size > references.lengths[nam.ref_id]) ref_segm_size = references.lengths[nam.ref_id] - ref_start;
+    int query_segm_size = read.length;
+    int query_start = 0;
+
+    uint32_t packed = (static_cast<uint32_t>(align_tmp_res.is_read1[j]) << 31) |
+                      (static_cast<uint32_t>(nam.is_rc) << 30) |
+                      (static_cast<uint32_t>(query_start) << 15) |
+                      (static_cast<uint32_t>(query_segm_size));
+
+    tmp_todo_infos.push_back({query_segm_size, ref_segm_size, query.data + query_start, ref.data + ref_start, {0, packed, nam.ref_id, ref_start, ref_segm_size}});
+
+//    int q_len = query_segm_size;
+//    int r_len = ref_segm_size;
+//    q_len = ((q_len + 7) & ~7);
+//    r_len = ((r_len + 7) & ~7);
+//
+//    int global_id = atomicAdd(d_todo_cnt, 1);
+//    int query_offset = atomicAdd(d_query_offset, q_len);
+//    int ref_offset = atomicAdd(d_ref_offset, r_len);
+//
+//    memcpy(d_query_ptr + query_offset, query.data + query_start, query_segm_size);
+//    memcpy(d_ref_ptr + ref_offset, ref.data + ref_start, ref_segm_size);
+//    memset(d_query_ptr + query_offset + query_segm_size, 0x4E, q_len - query_segm_size);
+//    memset(d_ref_ptr + ref_offset + ref_segm_size, 0x4E, r_len - ref_segm_size);
+
+//    align_tmp_res.todo_infos.push_back({global_id, packed, nam.ref_id, ref_start, ref_segm_size});
+}
+
+
+__device__ void gpu_part2_rescue_mate_get_str(
+        GPUAlignTmpRes& align_tmp_res,
+        int j,
+        const GPURead& read1,
+        const GPURead& read2,
+        const GPUReferences& references,
+        float mu,
+        float sigma,
+        int read_id,
+        my_vector<TmpTODOInfos>& tmp_todo_infos
+) {
+    Nam nam = align_tmp_res.todo_nams[j];
+    GPURead read = align_tmp_res.is_read1[j] ? read1 : read2;
+    int a, b;
+    my_string r_tmp;
+    auto read_len = read.size();
+
+    if (nam.is_rc) {
+        r_tmp = my_string(read.seq, read.length);
+        a = nam.ref_start - nam.query_start - (mu + 5 * sigma);
+        b = nam.ref_start - nam.query_start + read_len / 2;  // at most half read overlap
+    } else {
+        r_tmp = my_string(read.rc, read.length);                                              // mate is rc since fr orientation
+        a = nam.ref_end + (read_len - nam.query_end) - read_len / 2;  // at most half read overlap
+        b = nam.ref_end + (read_len - nam.query_end) + (mu + 5 * sigma);
+    }
+
+    auto ref_len = references.lengths[nam.ref_id];
+    auto ref_start = my_max(0, my_min(a, ref_len));
+    auto ref_end = my_min(ref_len, my_max(0, b));
+    int ref_segm_size = ref_end - ref_start;
+    int query_segm_size = read.length;
+    int query_start = 0;
+
+    uint32_t packed = (static_cast<uint32_t>(align_tmp_res.is_read1[j]) << 31) |
+                      (static_cast<uint32_t>(!nam.is_rc) << 30) |
+                      (static_cast<uint32_t>(query_start) << 15) |
+                      (static_cast<uint32_t>(query_segm_size));
+
+    tmp_todo_infos.push_back({query_segm_size, ref_segm_size, r_tmp.data + query_start, references.sequences[nam.ref_id].data + ref_start, {0, packed, nam.ref_id, ref_start, ref_segm_size}});
+
+//    int q_len = query_segm_size;
+//    int r_len = ref_segm_size;
+//    q_len = ((q_len + 7) & ~7);
+//    r_len = ((r_len + 7) & ~7);
+//
+//    int global_id = atomicAdd(d_todo_cnt, 1);
+//    int query_offset = atomicAdd(d_query_offset, q_len);
+//    int ref_offset = atomicAdd(d_ref_offset, r_len);
+//
+//    memcpy(d_query_ptr + query_offset, r_tmp.data + query_start, query_segm_size);
+//    memcpy(d_ref_ptr + ref_offset, references.sequences[nam.ref_id].data + ref_start, ref_segm_size);
+//    memset(d_query_ptr + query_offset + query_segm_size, 0x4E, q_len - query_segm_size);
+//    memset(d_ref_ptr + ref_offset + ref_segm_size, 0x4E, r_len - ref_segm_size);
+
+//    align_tmp_res.todo_infos.push_back({global_id, packed, nam.ref_id, ref_start, ref_segm_size});
+}
+
+__device__ void gpu_part2_extend_seed_get_str(
+        GPUAlignTmpRes& align_tmp_res,
+        int j,
+        const GPURead& read1,
+        const GPURead& read2,
+        const GPUReferences& references,
+        int read_id,
         int* d_todo_cnt,
         char* d_query_ptr, char* d_ref_ptr,
         int* d_query_offset, int* d_ref_offset
@@ -639,13 +755,12 @@ __device__ void gpu_part2_extend_seed_get_str(
                       (static_cast<uint32_t>(query_start) << 15) |
                       (static_cast<uint32_t>(query_segm_size));
 
-    int global_id = atomicAdd(d_todo_cnt, 1);
-
     int q_len = query_segm_size;
     int r_len = ref_segm_size;
     q_len = ((q_len + 7) & ~7);
     r_len = ((r_len + 7) & ~7);
 
+    int global_id = atomicAdd(d_todo_cnt, 1);
     int query_offset = atomicAdd(d_query_offset, q_len);
     int ref_offset = atomicAdd(d_ref_offset, r_len);
 
@@ -699,20 +814,19 @@ __device__ void gpu_part2_rescue_mate_get_str(
                       (static_cast<uint32_t>(query_start) << 15) |
                       (static_cast<uint32_t>(query_segm_size));
 
+    int q_len = query_segm_size;
+    int r_len = ref_segm_size;
+    q_len = ((q_len + 7) & ~7);
+    r_len = ((r_len + 7) & ~7);
+
     int global_id = atomicAdd(d_todo_cnt, 1);
-
-    int q_offset = query_segm_size;
-    int t_offset = ref_segm_size;
-    q_offset = ((q_offset + 7) & ~7);
-    t_offset = ((t_offset + 7) & ~7);
-
-    int query_offset = atomicAdd(d_query_offset, q_offset);
-    int ref_offset = atomicAdd(d_ref_offset, t_offset);
+    int query_offset = atomicAdd(d_query_offset, q_len);
+    int ref_offset = atomicAdd(d_ref_offset, r_len);
 
     memcpy(d_query_ptr + query_offset, r_tmp.data + query_start, query_segm_size);
     memcpy(d_ref_ptr + ref_offset, references.sequences[nam.ref_id].data + ref_start, ref_segm_size);
-    memset(d_query_ptr + query_offset + query_segm_size, 0x4E, q_offset - query_segm_size);
-    memset(d_ref_ptr + ref_offset + ref_segm_size, 0x4E, t_offset - ref_segm_size);
+    memset(d_query_ptr + query_offset + query_segm_size, 0x4E, q_len - query_segm_size);
+    memset(d_ref_ptr + ref_offset + ref_segm_size, 0x4E, r_len - ref_segm_size);
 
     align_tmp_res.todo_infos.push_back({global_id, packed, nam.ref_id, ref_start, ref_segm_size});
 }
@@ -1071,6 +1185,7 @@ __device__ void align_PE_part12(
             type, align_tmp_res, type == 1 ? read2 : read1, type == 1 ? read1 : read2, aligner_parameters, references, type == 1 ? nams1 : nams2, max_tries, dropoff, k, mu,
             sigma, max_secondary, secondary_dropoff, type == 1 ? false : true
     );
+    my_vector<TmpTODOInfos> tmp_todo_infos;
     for (size_t j = 0; j < align_tmp_res.todo_nams.size(); j += 2) {
         assert(align_tmp_res.is_extend_seed[j]);
         if (align_tmp_res.type == 1)
@@ -1079,7 +1194,9 @@ __device__ void align_PE_part12(
             assert(!align_tmp_res.is_read1[j]);
         if (!align_tmp_res.done_align[j]) {
             gpu_part2_extend_seed_get_str(
-                    align_tmp_res, j, read1, read2, references, read_id, d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset
+                    align_tmp_res, j, read1, read2, references, read_id,
+//                    tmp_todo_infos
+                    d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset
             );
         }
         assert(!align_tmp_res.is_extend_seed[j + 1]);
@@ -1089,10 +1206,46 @@ __device__ void align_PE_part12(
             assert(align_tmp_res.is_read1[j + 1]);
         if (!align_tmp_res.done_align[j + 1]) {
             gpu_part2_rescue_mate_get_str(
-                    align_tmp_res, j + 1, read1, read2, references, mu, sigma, read_id, d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset
+                    align_tmp_res, j + 1, read1, read2, references, mu, sigma, read_id,
+                    d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset
+//                    tmp_todo_infos
             );
         }
     }
+//    int global_id_start = atomicAdd(d_todo_cnt, tmp_todo_infos.size());
+//    int total_query_offset = 0;
+//    int total_ref_offset = 0;
+//    for (int i = 0; i < tmp_todo_infos.size(); i++) {
+//        TmpTODOInfos& tmp_todo_info = tmp_todo_infos[i];
+//        int q_len = tmp_todo_info.q_len;
+//        q_len = ((q_len + 7) & ~7);
+//        int r_len = tmp_todo_info.r_len;
+//        r_len = ((r_len + 7) & ~7);
+//        total_query_offset += q_len;
+//        total_ref_offset += r_len;
+//        align_tmp_res.todo_infos.push_back({
+//                                                   global_id_start + i,
+//                                                   tmp_todo_info.todo_info.read_info,
+//                                                   tmp_todo_info.todo_info.ref_id,
+//                                                   tmp_todo_info.todo_info.r_begin,
+//                                                   tmp_todo_info.todo_info.r_len
+//                                           });
+//    }
+//    int query_offset = atomicAdd(d_query_offset, total_query_offset);
+//    int ref_offset = atomicAdd(d_ref_offset, total_ref_offset);
+//    for (int i = 0; i < tmp_todo_infos.size(); i++) {
+//        TmpTODOInfos& tmp_todo_info = tmp_todo_infos[i];
+//        int query_segm_size = tmp_todo_info.q_len;
+//        int ref_segm_size = tmp_todo_info.r_len;
+//        int q_len = ((query_segm_size + 7) & ~7);
+//        int r_len = ((ref_segm_size + 7) & ~7);
+//        memcpy(d_query_ptr + query_offset, tmp_todo_info.q_ptr, query_segm_size);
+//        memcpy(d_ref_ptr + ref_offset, tmp_todo_info.r_ptr, ref_segm_size);
+//        memset(d_query_ptr + query_offset + query_segm_size, 0x4E, q_len - query_segm_size);
+//        memset(d_ref_ptr + ref_offset + ref_segm_size, 0x4E, r_len - ref_segm_size);
+//        query_offset += q_len;
+//        ref_offset += r_len;
+//    }
     return;
 }
 
@@ -1163,19 +1316,58 @@ __device__ void align_PE_part3(
 
     assert(align_tmp_res.is_extend_seed[0]);
     assert(align_tmp_res.is_read1[0]);
+    my_vector<TmpTODOInfos> tmp_todo_infos;
     if (!align_tmp_res.done_align[0]) {
         gpu_part2_extend_seed_get_str(
-                align_tmp_res, 0, read1, read2, references, read_id, d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset
+                align_tmp_res, 0, read1, read2, references, read_id,
+                d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset
+//                tmp_todo_infos
         );
     }
     assert(align_tmp_res.is_extend_seed[1]);
     assert(!align_tmp_res.is_read1[1]);
     if (!align_tmp_res.done_align[1]) {
         gpu_part2_extend_seed_get_str(
-                align_tmp_res, 1, read1, read2, references, read_id, d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset
+                align_tmp_res, 1, read1, read2, references, read_id,
+                d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset
+//                tmp_todo_infos
         );
     }
-    return;
+//    int global_id_start = atomicAdd(d_todo_cnt, tmp_todo_infos.size());
+//    int total_query_offset = 0;
+//    int total_ref_offset = 0;
+//    for (int i = 0; i < tmp_todo_infos.size(); i++) {
+//        TmpTODOInfos& tmp_todo_info = tmp_todo_infos[i];
+//        int q_len = tmp_todo_info.q_len;
+//        q_len = ((q_len + 7) & ~7);
+//        int r_len = tmp_todo_info.r_len;
+//        r_len = ((r_len + 7) & ~7);
+//        total_query_offset += q_len;
+//        total_ref_offset += r_len;
+//        align_tmp_res.todo_infos.push_back({
+//                                                   global_id_start + i,
+//                                                   tmp_todo_info.todo_info.read_info,
+//                                                   tmp_todo_info.todo_info.ref_id,
+//                                                   tmp_todo_info.todo_info.r_begin,
+//                                                   tmp_todo_info.todo_info.r_len
+//                                           });
+//    }
+//    int query_offset = atomicAdd(d_query_offset, total_query_offset);
+//    int ref_offset = atomicAdd(d_ref_offset, total_ref_offset);
+//    for (int i = 0; i < tmp_todo_infos.size(); i++) {
+//        TmpTODOInfos& tmp_todo_info = tmp_todo_infos[i];
+//        int query_segm_size = tmp_todo_info.q_len;
+//        int ref_segm_size = tmp_todo_info.r_len;
+//        int q_len = ((query_segm_size + 7) & ~7);
+//        int r_len = ((ref_segm_size + 7) & ~7);
+//        memcpy(d_query_ptr + query_offset, tmp_todo_info.q_ptr, query_segm_size);
+//        memcpy(d_ref_ptr + ref_offset, tmp_todo_info.r_ptr, ref_segm_size);
+//        memset(d_query_ptr + query_offset + query_segm_size, 0x4E, q_len - query_segm_size);
+//        memset(d_ref_ptr + ref_offset + ref_segm_size, 0x4E, r_len - ref_segm_size);
+//        query_offset += q_len;
+//        ref_offset += r_len;
+//    }
+//    return;
 
 }
 
@@ -1331,20 +1523,58 @@ __device__ void align_PE_part4(
         }
         high_scores_size++;
     }
-
+    my_vector<TmpTODOInfos> tmp_todo_infos;
     for (size_t j = 0; j < align_tmp_res.todo_nams.size(); j++) {
         if (!align_tmp_res.done_align[j]) {
             if (align_tmp_res.is_extend_seed[j]) {
                 gpu_part2_extend_seed_get_str(
-                        align_tmp_res, j, read1, read2, references, read_id, d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset
+                        align_tmp_res, j, read1, read2, references, read_id,
+                        d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset
+//                        tmp_todo_infos
                 );
             } else {
                 gpu_part2_rescue_mate_get_str(
-                        align_tmp_res, j, read1, read2, references, mu, sigma, read_id, d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset
+                        align_tmp_res, j, read1, read2, references, mu, sigma, read_id,
+                        d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset
+//                        tmp_todo_infos
                 );
             }
         }
     }
+//    int global_id_start = atomicAdd(d_todo_cnt, tmp_todo_infos.size());
+//    int total_query_offset = 0;
+//    int total_ref_offset = 0;
+//    for (int i = 0; i < tmp_todo_infos.size(); i++) {
+//        TmpTODOInfos& tmp_todo_info = tmp_todo_infos[i];
+//        int q_len = tmp_todo_info.q_len;
+//        q_len = ((q_len + 7) & ~7);
+//        int r_len = tmp_todo_info.r_len;
+//        r_len = ((r_len + 7) & ~7);
+//        total_query_offset += q_len;
+//        total_ref_offset += r_len;
+//        align_tmp_res.todo_infos.push_back({
+//                                                   global_id_start + i,
+//                                                   tmp_todo_info.todo_info.read_info,
+//                                                   tmp_todo_info.todo_info.ref_id,
+//                                                   tmp_todo_info.todo_info.r_begin,
+//                                                   tmp_todo_info.todo_info.r_len
+//                                           });
+//    }
+//    int query_offset = atomicAdd(d_query_offset, total_query_offset);
+//    int ref_offset = atomicAdd(d_ref_offset, total_ref_offset);
+//    for (int i = 0; i < tmp_todo_infos.size(); i++) {
+//        TmpTODOInfos& tmp_todo_info = tmp_todo_infos[i];
+//        int query_segm_size = tmp_todo_info.q_len;
+//        int ref_segm_size = tmp_todo_info.r_len;
+//        int q_len = ((query_segm_size + 7) & ~7);
+//        int r_len = ((ref_segm_size + 7) & ~7);
+//        memcpy(d_query_ptr + query_offset, tmp_todo_info.q_ptr, query_segm_size);
+//        memcpy(d_ref_ptr + ref_offset, tmp_todo_info.r_ptr, ref_segm_size);
+//        memset(d_query_ptr + query_offset + query_segm_size, 0x4E, q_len - query_segm_size);
+//        memset(d_ref_ptr + ref_offset + ref_segm_size, 0x4E, r_len - ref_segm_size);
+//        query_offset += q_len;
+//        ref_offset += r_len;
+//    }
     return;
 }
 
@@ -2405,10 +2635,10 @@ __global__ void gpu_rescue_sort_hits(
     if (r_range > num_tasks) r_range = num_tasks;
     for (int id = l_range; id < r_range; id++) {
         int real_id = global_todo_ids[id];
-        sort_hits_single(hits_per_ref0s[real_id]);
-        sort_hits_single(hits_per_ref1s[real_id]);
-        //sort_hits_by_refid(hits_per_ref0s[real_id]);
-        //sort_hits_by_refid(hits_per_ref1s[real_id]);
+//        sort_hits_single(hits_per_ref0s[real_id]);
+//        sort_hits_single(hits_per_ref1s[real_id]);
+        sort_hits_by_refid(hits_per_ref0s[real_id]);
+        sort_hits_by_refid(hits_per_ref1s[real_id]);
         //        check_hits(hits_per_ref0s[real_id]);
         //        check_hits(hits_per_ref1s[real_id]);
     }
@@ -2428,10 +2658,10 @@ __global__ void gpu_sort_hits(
     if (r_range > num_tasks) r_range = num_tasks;
     for (int id = l_range; id < r_range; id++) {
         int real_id = global_todo_ids[id];
-        sort_hits_single(hits_per_ref0s[real_id]);
-        sort_hits_single(hits_per_ref1s[real_id]);
-        //sort_hits_by_refid(hits_per_ref0s[real_id]);
-        //sort_hits_by_refid(hits_per_ref1s[real_id]);
+//        sort_hits_single(hits_per_ref0s[real_id]);
+//        sort_hits_single(hits_per_ref1s[real_id]);
+        sort_hits_by_refid(hits_per_ref0s[real_id]);
+        sort_hits_by_refid(hits_per_ref1s[real_id]);
     }
 }
 
@@ -2561,14 +2791,14 @@ __global__ void gpu_align_PE01234(
     int global_id = blockIdx.x * blockDim.x + threadIdx.x;
     int bid = blockIdx.x;
     int tid = threadIdx.x;
-    if (global_id != 0) return;
-    int l_range = 0;
-    int r_range = s_len;
-    //int l_range = global_id * GPU_thread_task_size;
-    //int r_range = l_range + GPU_thread_task_size;
+//    if (global_id != 0) return;
+//    int l_range = 0;
+//    int r_range = s_len;
+    int l_range = global_id * GPU_thread_task_size;
+    int r_range = l_range + GPU_thread_task_size;
     if (r_range > num_tasks) r_range = num_tasks;
     for (int id = l_range; id < r_range; id++) {
-        //int real_id = global_todo_ids[id];
+//        int real_id = global_todo_ids[id];
         int real_id = id;
         int type = global_align_res[real_id].type;
         assert(type <= 4);
@@ -3609,11 +3839,14 @@ void GPU_align_PE(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &data2s,
                 global_todo_ids[r_pos++] = types[i][j];
             }
         }
+//        std::mt19937 rng(12345);
+//        std::shuffle(global_todo_ids, global_todo_ids + s_len, rng);
+
         assert(r_pos == s_len);
         threads_per_block = 1;
         reads_per_block = threads_per_block * GPU_thread_task_size;
-        //blocks_per_grid = (s_len + reads_per_block - 1) / reads_per_block;
-        blocks_per_grid = 1;
+        blocks_per_grid = (s_len + reads_per_block - 1) / reads_per_block;
+//        blocks_per_grid = 1;
         gpu_align_PE01234<<<blocks_per_grid, threads_per_block, 0, ctx.stream>>>(s_len, s_len, d_index_para, global_align_info, d_aligner, local_d_pre_sum, local_d_len, local_d_seq,
                                                                                  global_references, d_map_param, global_nams, isize_est, global_todo_ids, global_align_res,
                                                                                  d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset);
@@ -4180,6 +4413,8 @@ void perform_task_async_pe_fx_GPU(
         assert(*h_ref_offset <= mx_device_ref_size);
         time1_2 += GetTime() - t_1;
 
+//        printf("todo cnt is %d, %d, %d\n", *h_todo_cnt, *h_query_offset, *h_ref_offset);
+
         // construct todo_info from align_res
         t_1 = GetTime();
         todo_querys.resize(*h_todo_cnt);
@@ -4208,6 +4443,7 @@ void perform_task_async_pe_fx_GPU(
                 cal_todo_cnt++;
             }
         }
+//        printf("cal_todo_cnt %d, h_todo_cnt %d\n", cal_todo_cnt, *h_todo_cnt);
         assert(cal_todo_cnt == *h_todo_cnt);
         time2_1 += GetTime() - t_1;
         assert(todo_querys.size() == todo_refs.size());
@@ -4511,6 +4747,8 @@ void perform_task_async_pe_fx_GPU(
             assert(*h_ref_offset <= mx_device_ref_size);
             time1_2 += GetTime() - t_1;
 
+//            printf("todo cnt is %d, %d, %d\n", *h_todo_cnt, *h_query_offset, *h_ref_offset);
+
             // construct todo_info from align_res
             t_1 = GetTime();
             todo_querys.resize(*h_todo_cnt);
@@ -4539,6 +4777,7 @@ void perform_task_async_pe_fx_GPU(
                     cal_todo_cnt++;
                 }
             }
+//            printf("cal_todo_cnt %d, h_todo_cnt %d\n", cal_todo_cnt, *h_todo_cnt);
             assert(cal_todo_cnt == *h_todo_cnt);
             time2_1 += GetTime() - t_1;
             assert(todo_querys.size() == todo_refs.size());
