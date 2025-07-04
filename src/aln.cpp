@@ -2392,7 +2392,17 @@ void align_SE_read_part(
     details.nams = nams.size();
 
     Timer nam_sort_timer;
-    std::sort(nams.begin(), nams.end(), by_score<Nam>);
+//    std::sort(nams.begin(), nams.end(), by_score<Nam>);
+    std::sort(nams.begin(), nams.end(), [](const Nam &n1, const Nam &n2) {
+        if(n1.score != n2.score) return n1.score > n2.score;
+        if(n1.n_hits != n2.n_hits) return n1.n_hits > n2.n_hits;
+        if(n1.query_end != n2.query_end) return n1.query_end < n2.query_end;
+        if(n1.query_start != n2.query_start) return n1.query_start < n2.query_start;
+        if(n1.ref_end != n2.ref_end) return n1.ref_end < n2.ref_end;
+        if(n1.ref_start != n2.ref_start) return n1.ref_start < n2.ref_start;
+        if(n1.ref_id != n2.ref_id) return n1.ref_id < n2.ref_id;
+        return n1.is_rc < n2.is_rc;
+    });
     shuffle_top_nams(nams, random_engine);
     statistics.tot_sort_nams += nam_sort_timer.duration();
 

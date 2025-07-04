@@ -529,7 +529,8 @@ void perform_task_async_se_fx(
     const int thread_id,
     rabbit::fq::FastqDataPool& fastqPool, 
     rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> &dq,
-    bool use_good_numa
+    bool use_good_numa,
+    int gpu_id
 ) {
     if(use_good_numa) {
         cpu_set_t cpuset;
@@ -564,6 +565,7 @@ void perform_task_async_se_fx(
     thread_local double time3_1 = 0;  //time to construct sam
     thread_local double time3_2 = 0;  //time to output
     thread_local double time_read = 0;  //time to output
+    thread_local double gpu_thread_time = 0;
     double t_0, t_1;
 
     rabbit::int64 id = 0;
@@ -656,6 +658,8 @@ void perform_task_async_se_fx(
             // step2 : solve todo_strings -- do ssw on gpu -- key step, need async
             t_1 = GetTime();
             gpu_ssw_async = std::thread([&] (){
+                auto start_gpu = GetTime();
+                cudaSetDevice(gpu_id);
                 for (size_t i = 0; i + STREAM_BATCH_SIZE <= todo_querys.size(); i += STREAM_BATCH_SIZE) {
                     auto query_start = todo_querys.begin() + i;
                     auto query_end = query_start + STREAM_BATCH_SIZE;
@@ -685,10 +689,12 @@ void perform_task_async_se_fx(
                     );
                     gasal_results.insert(gasal_results.end(), gasal_results_tmp.begin(), gasal_results_tmp.end());
                 }
+                auto end_gpu = GetTime();
+                gpu_thread_time = end_gpu - start_gpu;
             });
             //            gpu_ssw_async.join();
 
-            time2_2 += GetTime() - t_1;
+//            time2_2 += GetTime() - t_1;
 
             statistics.tot_extend += extend_timer1.duration();
         }
@@ -739,6 +745,7 @@ void perform_task_async_se_fx(
         if (gpu_ssw_async.joinable()) {
             gpu_ssw_async.join();
         }
+        time2_2 += gpu_thread_time;
 
 
         //chunk0_E2
@@ -1321,10 +1328,7 @@ void perform_task_async_pe_fx(
             //t_1 = GetTime();
             gpu_ssw_async = std::thread([&] (){
                 auto start_gpu = GetTime();
-                // TODO
-                //cudaSetDevice(thread_id / 36);
                 cudaSetDevice(gpu_id);
-                //cudaSetDevice(0);
                 for (size_t i = 0; i + STREAM_BATCH_SIZE <= todo_querys.size(); i += STREAM_BATCH_SIZE) {
                     auto query_start = todo_querys.begin() + i;
                     auto query_end = query_start + STREAM_BATCH_SIZE;
