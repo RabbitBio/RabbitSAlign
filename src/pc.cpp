@@ -437,11 +437,7 @@ inline double GetTime() {
     return (double) tv.tv_sec + (double) tv.tv_usec / 1000000;
 }
 
-#define use_gpu_ssw
-
-#ifdef use_gpu_ssw
 #include "gasal2_ssw.h"
-#endif
 
 std::mutex mtx_gpu;
 
@@ -478,6 +474,7 @@ bool gasal_fail(const std::string& query_str, const std::string& ref_str, gasal_
     }
     return false;
 }
+
 
 bool gasal_fail(const std::string_view& query_str, const std::string_view& ref_str, gasal_tmp_res gasal_res) {
     bool gg_res = gasal_res.cigar_str.empty() || gasal_res.score == 0 || gasal_res.query_start < 0 ||
@@ -565,7 +562,6 @@ void perform_task_async_se_fx(
     thread_local double time3_1 = 0;  //time to construct sam
     thread_local double time3_2 = 0;  //time to output
     thread_local double time_read = 0;  //time to output
-    thread_local double gpu_thread_time = 0;
     double t_0, t_1;
 
     rabbit::int64 id = 0;
@@ -612,6 +608,7 @@ void perform_task_async_se_fx(
     time1 += GetTime() - t_1;
 
     while (!eof) {
+        double gpu_thread_time = 0;
         std::vector<std::string> todo_querys;
         std::vector<std::string> todo_refs;
         std::vector<AlignmentInfo> info_results;
@@ -656,7 +653,7 @@ void perform_task_async_se_fx(
             time2_1 += GetTime() - t_1;
 
             // step2 : solve todo_strings -- do ssw on gpu -- key step, need async
-            t_1 = GetTime();
+//            t_1 = GetTime();
             gpu_ssw_async = std::thread([&] (){
                 auto start_gpu = GetTime();
                 cudaSetDevice(gpu_id);
@@ -825,10 +822,10 @@ void perform_task_async_se_fx(
     statistics.tot_aligner_calls += aligner.calls_count();
     done = true;
     time_tot = GetTime() - t_0;
-    //fprintf(
-    //    stderr, "cost time1:%.2f(%.2f) time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), tot time:%.2f\n", time1, time_read,
-    //    time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
-    //);
+    fprintf(
+        stderr, "cost time1:%.2f(%.2f) time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), tot time:%.2f\n", time1, time_read,
+        time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
+    );
 
 }
 #endif

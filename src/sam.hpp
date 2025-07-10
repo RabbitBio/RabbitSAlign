@@ -89,6 +89,22 @@ struct GPUAlignment {
 
 };
 
+struct TODOInfos {
+    int global_id;
+    uint32_t read_info;
+    int ref_id;
+    int r_begin;
+    int r_len;
+};
+
+struct TmpTODOInfos {
+    int q_len;
+    int r_len;
+    char* q_ptr;
+    char* r_ptr;
+    TODOInfos todo_info;
+};
+
 struct CigarData{
     uint32_t gpu_cigar[MAX_CIGAR_ITEM];
     //uint32_t cigar[MAX_CIGAR_ITEM];
@@ -136,6 +152,7 @@ public:
         }
 
     /* Add an alignment */
+    void add(const std::pair<GPUAlignment, CigarData>& alignment, const neoReference& record, const char* sequence_rc, uint8_t mapq, bool is_primary, const Details& details);
     void add(const std::pair<GPUAlignment, CigarData>& alignment, const klibpp::KSeq& record, const std::string& sequence_rc, uint8_t mapq, bool is_primary, const Details& details);
     void add(const Alignment& alignment, const klibpp::KSeq& record, const std::string& sequence_rc, uint8_t mapq, bool is_primary, const Details& details);
     void add_pair(const Alignment& alignment1, const Alignment& alignment2, const klibpp::KSeq& record1, const klibpp::KSeq& record2, const std::string& read1_rc, const std::string& read2_rc, uint8_t mapq1, uint8_t mapq2, bool is_proper, bool is_primary, const std::array<Details, 2>& details);

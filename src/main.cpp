@@ -240,27 +240,96 @@ int producer_se_fastq_task(std::string file, rabbit::fq::FastqDataPool& fastqPoo
 }
 #endif
 
-double calculateMemoryUsage(int total_cpu_num, int gpu_num, int chunk_num) {
-    int C_num = total_cpu_num / gpu_num - 2;
+
+#define META_DATA_SIZE (168) // size of meta data per read in GPU memory
+
+#define GALLATIN_BASE_SIZE (2.0 * GB_BYTE) // base size of Gallatin GPU memory
+#define GALLATIN_CHUNK_SIZE (0.3 * GB_BYTE) // size of each chunk in Gallatin GPU memory
+
+#define OVERLAP_SIZE 3 // triple buffering
+
+uint64_t STREAM_BATCH_SIZE = 1024ll;
+uint64_t STREAM_BATCH_SIZE_GPU = 4096ll;
+uint64_t MAX_QUERY_LEN = 600ll;
+uint64_t MAX_TARGET_LEN = 1000ll;
+
+
+uint64_t calculateMemoryUsageSE(int total_cpu_num, int gpu_num, int chunk_num, int eval_read_len, int chunk_size, int max_tries, uint64_t ref_index_size) {
+    int total_read_num = chunk_num * chunk_size / 2 / eval_read_len;
+    int total_read_len = total_read_num * eval_read_len;
+
+    // GPUAlignTmpRes vector item size
+    uint64_t align_res_item_size = 4 * sizeof(int) + 2 * sizeof(Nam) + sizeof(GPUAlignment) + sizeof(CigarData) + sizeof(TODOInfos);
+    // total size to reserve for GPUAlignTmpRes vector
+    uint64_t align_res_vec_size = total_read_num * (max_tries * 2 + 2) * align_res_item_size;
+    // total align_res size
+    uint64_t align_res_total_size = total_read_num * 2 * sizeof(GPUAlignTmpRes) * OVERLAP_SIZE + align_res_vec_size * OVERLAP_SIZE;
+
+    // meta data size
+    uint64_t meta_data_size = total_read_num * META_DATA_SIZE;
+
+    // seq data size
+    uint64_t seq_data_size = total_read_num * 4 + total_read_len * 2;
+
+    // device_todo memory size
+    uint64_t device_todo_mem_size = chunk_num * DEVICE_TODO_SIZE_PER_CHUNK * 3;
+
+    const int G_num = 2; // number of typeB thread per GPU
+    int C_num = total_cpu_num / gpu_num - G_num; // number of typeA threads per GPU
     double SIZE0 = G_num * MAX_GPU_SSW_SIZE + C_num * MAX_CPU_SSW_SIZE;
-    double SIZE1 = G_num * chunk_num * CHUNK_GPU36_SIZE;
-    double SIZE2 = GALLATIN_BASE_SIZE + chunk_num * GALLATIN_CHUNK_SIZE;
-    double SIZE3 = REFERENCE_SIZE;
+    double SIZE1 = G_num * (align_res_total_size + meta_data_size + seq_data_size + device_todo_mem_size);
+    double SIZE2 = GALLATIN_BASE_SIZE + chunk_num * GALLATIN_CHUNK_SIZE * 0.75;
+    double SIZE3 = ref_index_size;
 //    std::cout << SIZE0 / GB_BYTE << " " << SIZE1 / GB_BYTE << " " << SIZE2 / GB_BYTE << " " << SIZE3 / GB_BYTE << std::endl;
     double N = SIZE0 + SIZE1 + SIZE2 + SIZE3;
-    return N / GB_BYTE;
+    return N;
 }
 
-int calculateMaxChunkNum(int total_cpu_num, int gpu_num, size_t GPU_mem_size) {
-    printf("Calculating max chunk_num for total_cpu_num: %d, gpu_num: %d, GPU_mem_size: %zu GB\n", total_cpu_num, gpu_num, GPU_mem_size);
+uint64_t calculateMemoryUsagePE(int total_cpu_num, int gpu_num, int chunk_num, int eval_read_len, int chunk_size, int max_tries, uint64_t ref_index_size) {
+    int total_read_num = chunk_num * chunk_size / 2 / eval_read_len;
+    int total_read_len = total_read_num * eval_read_len;
+
+    // GPUAlignTmpRes vector item size
+    uint64_t align_res_item_size = 4 * sizeof(int) + 2 * sizeof(Nam) + sizeof(GPUAlignment) + sizeof(CigarData) + sizeof(TODOInfos);
+    // total size to reserve for GPUAlignTmpRes vector
+    uint64_t align_res_vec_size = total_read_num * (max_tries * 2 + 2) * align_res_item_size;
+    // total align_res size
+    uint64_t align_res_total_size = total_read_num * 2 * sizeof(GPUAlignTmpRes) * OVERLAP_SIZE + align_res_vec_size * OVERLAP_SIZE;
+
+    // meta data size
+    uint64_t meta_data_size = total_read_num * META_DATA_SIZE;
+
+    // seq data size
+    uint64_t seq_data_size = total_read_num * 8 + total_read_len * 4;
+
+    // device_todo memory size
+    uint64_t device_todo_mem_size = chunk_num * DEVICE_TODO_SIZE_PER_CHUNK * 3;
+
+    const int G_num = 2; // number of typeB thread per GPU
+    int C_num = total_cpu_num / gpu_num - G_num; // number of typeA threads per GPU
+    double SIZE0 = G_num * MAX_GPU_SSW_SIZE + C_num * MAX_CPU_SSW_SIZE;
+    double SIZE1 = G_num * (align_res_total_size + meta_data_size + seq_data_size + device_todo_mem_size);
+    double SIZE2 = GALLATIN_BASE_SIZE + chunk_num * GALLATIN_CHUNK_SIZE;
+    double SIZE3 = ref_index_size;
+//    std::cout << SIZE0 / GB_BYTE << " " << SIZE1 / GB_BYTE << " " << SIZE2 / GB_BYTE << " " << SIZE3 / GB_BYTE << std::endl;
+    double N = SIZE0 + SIZE1 + SIZE2 + SIZE3;
+    return N;
+}
+
+int calculateMaxChunkNum(int total_cpu_num, int gpu_num, uint64_t GPU_mem_size, int is_se, int eval_read_len, int chunk_size, int max_tries, uint64_t ref_index_size) {
+    printf("Calculating max chunk_num for total_cpu_num: %d, gpu_num: %d, GPU_mem_size: %llu GB, is_se: %d, eval_read_len: %d, chunk_size: %d, max_tries: %d, ref_index_size: %llu GB\n",
+           total_cpu_num, gpu_num, GPU_mem_size / GB_BYTE, is_se, eval_read_len, chunk_size, max_tries, ref_index_size / GB_BYTE);
     int chunk_num = 1;
-    while (true) {
-        double memory_usage = calculateMemoryUsage(total_cpu_num, gpu_num, chunk_num) * GB_BYTE;
+    while (chunk_num <= 96) {
+        uint64_t memory_usage;
+        if (is_se) memory_usage = calculateMemoryUsageSE(total_cpu_num, gpu_num, chunk_num, eval_read_len, chunk_size, max_tries, ref_index_size);
+        else memory_usage = calculateMemoryUsagePE(total_cpu_num, gpu_num, chunk_num, eval_read_len, chunk_size, max_tries, ref_index_size);
         if (memory_usage > GPU_mem_size) {
             return chunk_num - 1;
         }
         chunk_num++;
     }
+    return chunk_num - 1; // Return the last valid chunk_num
 }
 
 
@@ -376,6 +445,10 @@ int run_rabbitsalign(int argc, char **argv) {
     }
 
     int eval_read_len = opt.r;
+    MAX_QUERY_LEN = eval_read_len + 100;
+    MAX_TARGET_LEN = eval_read_len * 2;
+
+    logger.info() << "MAX_QUERY_LEN: " << MAX_QUERY_LEN << ", MAX_TARGET_LEN: " << MAX_TARGET_LEN << std::endl;
 
 //    int fx_batch_size = 1 << 22;
     int fx_batch_size = 1 << 20;
@@ -585,19 +658,58 @@ int run_rabbitsalign(int argc, char **argv) {
 
     OutputBuffer output_buffer(out);
 
-    int max_chunk_num = calculateMaxChunkNum(opt.n_threads, opt.n_gpus, free_memory);
-    //if (max_chunk_num < 4) {
+    uint64_t ref_size = 0;
+    uint64_t index_size = 0;
+    ref_size += references.size() * sizeof(my_string);
+    ref_size += references.total_length() * sizeof(char);
+    ref_size += references.size() * sizeof(int);
+    index_size += index.randstrobes.size() * sizeof(RefRandstrobe);
+    index_size += index.randstrobe_start_indices.size() * sizeof(StrobemerIndex::bucket_index_t);
+
+    int max_chunk_num = calculateMaxChunkNum(opt.n_threads, opt.n_gpus, free_memory, opt.is_SE, eval_read_len, fx_batch_size, map_param.max_tries, ref_size + index_size);
     if (max_chunk_num < 1) {
         logger.error() << "Not enough memory to run rabbitsalign. "
             << "Please reduce the number of threads, or increase the available memory.\n";
         return -1;
     }
-//    int chunk_num = 1 << (int)(log2(max_chunk_num));
     int chunk_num = max_chunk_num - (max_chunk_num % 2);
-    logger.info() << "Using chunk size: " << chunk_num << std::endl;
+    uint64_t last_mem_size = 0;
+    if (opt.is_SE) {
+        auto res = calculateMemoryUsageSE(opt.n_threads, opt.n_gpus, chunk_num, eval_read_len, fx_batch_size, map_param.max_tries, ref_size + index_size);
+        last_mem_size = free_memory - 0.5 - res;
+    } else {
+        auto res = calculateMemoryUsagePE(opt.n_threads, opt.n_gpus, chunk_num, eval_read_len, fx_batch_size, map_param.max_tries, ref_size + index_size);
+        printf("res: %llu\n", res / GB_BYTE);
+        last_mem_size = free_memory - 0.5 - res;
+    }
+    if (last_mem_size < 0) last_mem_size = 0;
+    uint64_t gallatin_num_bytes = GALLATIN_BASE_SIZE + chunk_num * GALLATIN_CHUNK_SIZE + last_mem_size;
+    uint64_t limited_gallatin_num_bytes = 24ULL * GB_BYTE; // limit to 24 GB
+    gallatin_num_bytes = std::min(limited_gallatin_num_bytes, gallatin_num_bytes); // limit to 24 GB
 
-    uint64_t gallatin_num_bytes = GALLATIN_BASE_SIZE + chunk_num * GALLATIN_CHUNK_SIZE;
+    while (gallatin_num_bytes < 4 * GB_BYTE) {
+        STREAM_BATCH_SIZE = STREAM_BATCH_SIZE / 2;
+        STREAM_BATCH_SIZE_GPU = STREAM_BATCH_SIZE_GPU / 2;
+        max_chunk_num = calculateMaxChunkNum(opt.n_threads, opt.n_gpus, free_memory, opt.is_SE, eval_read_len, fx_batch_size, map_param.max_tries, ref_size + index_size);
+        chunk_num = max_chunk_num - (max_chunk_num % 2);
+        if (opt.is_SE) {
+            auto res = calculateMemoryUsageSE(opt.n_threads, opt.n_gpus, chunk_num, eval_read_len, fx_batch_size, map_param.max_tries, ref_size + index_size);
+            last_mem_size = free_memory - 0.5 - res;
+        } else {
+            auto res = calculateMemoryUsagePE(opt.n_threads, opt.n_gpus, chunk_num, eval_read_len, fx_batch_size, map_param.max_tries, ref_size + index_size);
+            printf("res: %llu\n", res / GB_BYTE);
+            last_mem_size = free_memory - 0.5 - res;
+        }
+        if (last_mem_size < 0) last_mem_size = 0;
+        gallatin_num_bytes = GALLATIN_BASE_SIZE + chunk_num * GALLATIN_CHUNK_SIZE + last_mem_size;
+        logger.info() << "resize BATCH size to " << STREAM_BATCH_SIZE << " and GPU BATCH size to " << STREAM_BATCH_SIZE_GPU << std::endl;
+        logger.info() << "now chunk num is " << chunk_num << " and gallatin_num_bytes is " << gallatin_num_bytes / GB_BYTE << " GB" << std::endl;
+    }
+
+    logger.info() << "Additional memory for Gallatin: " << last_mem_size / (1024 * 1024) << " MB\n";
+
     logger.info() << "Gallatin memory usage: " << gallatin_num_bytes / (1024 * 1024) << " MB\n";
+    logger.info() << "Using chunk size: " << chunk_num << std::endl;
     uint64_t gallatin_seed = 13;
     for (int i = 0; i < opt.n_gpus; i++) {
         set_scores(i, aln_params.match, aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend);
@@ -638,7 +750,7 @@ int run_rabbitsalign(int argc, char **argv) {
                 if (assignments[i].flag) {
 //                if (0) {
                     if (assignments[i].pass) {
-                        printf("gpu thread %d skip\n", i);
+//                        printf("gpu thread %d skip\n", i);
                         continue;
                     }
                     std::thread consumer(perform_task_async_se_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
@@ -661,7 +773,7 @@ int run_rabbitsalign(int argc, char **argv) {
                 if (assignments[i].flag) {
 //                if (0) {
                     if (assignments[i].pass) {
-                        printf("gpu thread %d skip\n", i);
+//                        printf("gpu thread %d skip\n", i);
                         continue;
                     }
                     std::thread consumer(perform_task_async_se_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
@@ -685,7 +797,7 @@ int run_rabbitsalign(int argc, char **argv) {
                 if (assignments[i].flag) {
 //                if (0) {
                     if (assignments[i].pass) {
-                        printf("gpu thread %d skip\n", i);
+//                        printf("gpu thread %d skip\n", i);
                         continue;
                     }
                     std::thread consumer(perform_task_async_se_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
@@ -714,7 +826,7 @@ int run_rabbitsalign(int argc, char **argv) {
             for (int i = 0; i < opt.n_threads * 1 / 2; ++i) {
                 if (assignments[i].flag) {
                     if (assignments[i].pass) {
-                        printf("gpu thread %d skip\n", i);
+//                        printf("gpu thread %d skip\n", i);
                         continue;
                     }
                     std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
@@ -736,7 +848,7 @@ int run_rabbitsalign(int argc, char **argv) {
             for (int i = opt.n_threads * 1 / 2; i < opt.n_threads; ++i) {
                 if (assignments[i].flag) {
                     if (assignments[i].pass) {
-                        printf("gpu thread %d skip\n", i);
+//                        printf("gpu thread %d skip\n", i);
                         continue;
                     }
                     std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
@@ -760,7 +872,7 @@ int run_rabbitsalign(int argc, char **argv) {
                 if (assignments[i].flag) {
                 //if (0) {
                     if (assignments[i].pass) {
-                        printf("gpu thread %d skip\n", i);
+//                        printf("gpu thread %d skip\n", i);
                         continue;
                     }
                     std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),

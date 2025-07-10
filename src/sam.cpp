@@ -223,6 +223,28 @@ void Sam::add(
 }
 
 void Sam::add(
+        const std::pair<GPUAlignment, CigarData>& alignment,
+        const neoReference& record,
+        const char* sequence_rc,
+        uint8_t mapq,
+        bool is_primary,
+        const Details& details
+) {
+    assert(!alignment.first.is_unaligned);
+
+    int flags = 0;
+    if (!alignment.first.is_unaligned && alignment.first.is_rc) {
+        flags |= REVERSE;
+    }
+    if (!is_primary) {
+        flags |= SECONDARY;
+        mapq = 255;
+    }
+    add_record((char*)record.base + record.pname, record.lname, flags, references.names[alignment.first.ref_id], alignment.first.ref_start, mapq, alignment.second, "*", -1, 0,
+               (char*)record.base + record.pseq, sequence_rc, record.lseq, (char*)record.base + record.pqual, record.lqual, alignment.first.edit_distance, alignment.first.score, details);
+}
+
+void Sam::add(
     const std::pair<GPUAlignment, CigarData>& alignment,
     const KSeq& record,
     const std::string& sequence_rc,

@@ -880,8 +880,8 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
     for (auto& nam1 : nams1) {
         for (auto& nam2 : nams2) {
             int joint_hits = nam1.n_hits + nam2.n_hits;
-            //if (joint_hits < best_joint_hits / 2 || joint_nam_scores.size() >= max_tries * 2) {
-            if (joint_hits < best_joint_hits / 2) {
+            if (joint_hits < best_joint_hits / 2 || joint_nam_scores.size() >= max_tries * 2) {
+            //if (joint_hits < best_joint_hits / 2) {
                 break;
             }
             if (is_proper_nam_pair(nam1, nam2, mu, sigma)) {
@@ -891,7 +891,7 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
                 best_joint_hits = std::max(joint_hits, best_joint_hits);
             }
         }
-        //if (joint_nam_scores.size() >= max_tries * 2) break;
+        if (joint_nam_scores.size() >= max_tries * 2) break;
     }
 #endif
 
@@ -906,9 +906,9 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
     dummy_nam.ref_start = -1;
     if (!nams1.empty()) {
         int best_joint_hits1 = best_joint_hits > 0 ? best_joint_hits : nams1[0].n_hits;
-        for (auto& nam1 : nams1) {
-        //for (int i = 0; i < std::min(max_tries, (int)nams1.size()); i++) {
-            //Nam nam1 = nams1[i];
+        //for (auto& nam1 : nams1) {
+        for (int i = 0; i < std::min(max_tries, (int)nams1.size()); i++) {
+            Nam nam1 = nams1[i];
             if (nam1.n_hits < best_joint_hits1 / 2) {
                 break;
             }
@@ -930,9 +930,9 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
     // Find high-scoring R2 NAMs that are not part of a proper pair
     if (!nams2.empty()) {
         int best_joint_hits2 = best_joint_hits > 0 ? best_joint_hits : nams2[0].n_hits;
-        for (auto& nam2 : nams2) {
-        //for (int i = 0; i < std::min(max_tries, (int)nams2.size()); i++) {
-            //Nam nam2 = nams2[i];
+        //for (auto& nam2 : nams2) {
+        for (int i = 0; i < std::min(max_tries, (int)nams2.size()); i++) {
+            Nam nam2 = nams2[i];
             if (nam2.n_hits < best_joint_hits2 / 2) {
                 break;
             }
@@ -2392,17 +2392,17 @@ void align_SE_read_part(
     details.nams = nams.size();
 
     Timer nam_sort_timer;
-//    std::sort(nams.begin(), nams.end(), by_score<Nam>);
-    std::sort(nams.begin(), nams.end(), [](const Nam &n1, const Nam &n2) {
-        if(n1.score != n2.score) return n1.score > n2.score;
-        if(n1.n_hits != n2.n_hits) return n1.n_hits > n2.n_hits;
-        if(n1.query_end != n2.query_end) return n1.query_end < n2.query_end;
-        if(n1.query_start != n2.query_start) return n1.query_start < n2.query_start;
-        if(n1.ref_end != n2.ref_end) return n1.ref_end < n2.ref_end;
-        if(n1.ref_start != n2.ref_start) return n1.ref_start < n2.ref_start;
-        if(n1.ref_id != n2.ref_id) return n1.ref_id < n2.ref_id;
-        return n1.is_rc < n2.is_rc;
-    });
+    std::sort(nams.begin(), nams.end(), by_score<Nam>);
+//    std::sort(nams.begin(), nams.end(), [](const Nam &n1, const Nam &n2) {
+//        if(n1.score != n2.score) return n1.score > n2.score;
+//        if(n1.n_hits != n2.n_hits) return n1.n_hits > n2.n_hits;
+//        if(n1.query_end != n2.query_end) return n1.query_end < n2.query_end;
+//        if(n1.query_start != n2.query_start) return n1.query_start < n2.query_start;
+//        if(n1.ref_end != n2.ref_end) return n1.ref_end < n2.ref_end;
+//        if(n1.ref_start != n2.ref_start) return n1.ref_start < n2.ref_start;
+//        if(n1.ref_id != n2.ref_id) return n1.ref_id < n2.ref_id;
+//        return n1.is_rc < n2.is_rc;
+//    });
     shuffle_top_nams(nams, random_engine);
     statistics.tot_sort_nams += nam_sort_timer.duration();
 
