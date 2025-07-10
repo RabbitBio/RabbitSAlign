@@ -19,7 +19,7 @@ fi
 # Configure and compile GASAL2 if libgasal.a does not exist
 if [ ! -f "GASAL2/lib/libgasal.a" ]; then
   echo "Configuring and compiling GASAL2..."
-  cd GASAL2 && ./configure.sh $CUDA_PATH && make GPU_SM_ARCH=sm_$GPU_ARCH MAX_QUERY_LEN=500 N_CODE=0x4E
+  cd GASAL2 && ./configure.sh $CUDA_PATH && make GPU_SM_ARCH=sm_$GPU_ARCH MAX_QUERY_LEN=600 N_CODE=0x4E
   cd ..
 else
   echo "Skipping GASAL2 compilation as libgasal.a already exists."
