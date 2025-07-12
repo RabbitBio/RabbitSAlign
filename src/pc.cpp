@@ -121,18 +121,18 @@ void OutputBuffer::output_records(std::string chunk, size_t chunk_index) {
 
     // Ensure we print the chunks in the order in which they were read
     assert(chunks.count(chunk_index) == 0);
-    out << chunk;
+//    out << chunk;
 
-    //chunks.emplace(std::make_pair(chunk_index, chunk));
-    //while (true) {
-    //    const auto& item = chunks.find(next_chunk_index);
-    //    if (item == chunks.end()) {
-    //        break;
-    //    }
-    //    out << item->second;
-    //    chunks.erase(item);
-    //    next_chunk_index++;
-    //}
+    chunks.emplace(std::make_pair(chunk_index, chunk));
+    while (true) {
+        const auto& item = chunks.find(next_chunk_index);
+        if (item == chunks.end()) {
+            break;
+        }
+        out << item->second;
+        chunks.erase(item);
+        next_chunk_index++;
+    }
     unique_lock.unlock();
 }
 

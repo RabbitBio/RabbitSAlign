@@ -1054,7 +1054,7 @@ __device__ void align_PE_part12(
             type, align_tmp_res, type == 1 ? read2 : read1, type == 1 ? read1 : read2, aligner_parameters, references, type == 1 ? nams1 : nams2, max_tries, dropoff, k, mu,
             sigma, max_secondary, secondary_dropoff, type == 1 ? false : true
     );
-    my_vector<TmpTODOInfos> tmp_todo_infos;
+//    my_vector<TmpTODOInfos> tmp_todo_infos;
     for (size_t j = 0; j < align_tmp_res.todo_nams.size(); j += 2) {
         assert(align_tmp_res.is_extend_seed[j]);
         if (align_tmp_res.type == 1)
@@ -1185,7 +1185,7 @@ __device__ void align_PE_part3(
 
     assert(align_tmp_res.is_extend_seed[0]);
     assert(align_tmp_res.is_read1[0]);
-    my_vector<TmpTODOInfos> tmp_todo_infos;
+//    my_vector<TmpTODOInfos> tmp_todo_infos;
     if (!align_tmp_res.done_align[0]) {
         gpu_part2_extend_seed_get_str(
                 align_tmp_res, 0, read1, read2, references, read_id,
@@ -1347,7 +1347,7 @@ __device__ void align_PE_part4(
         }
         high_scores_size++;
     }
-    my_vector<TmpTODOInfos> tmp_todo_infos;
+//    my_vector<TmpTODOInfos> tmp_todo_infos;
     for (size_t j = 0; j < align_tmp_res.todo_nams.size(); j++) {
         if (!align_tmp_res.done_align[j]) {
             if (align_tmp_res.is_extend_seed[j]) {
@@ -1645,8 +1645,53 @@ __device__ void sort_nams_get_k(my_vector<Nam>& nams, int mx_num) {
     }
 }
 
-
 __device__ void sort_nams_by_score(my_vector<Nam>& nams, int mx_num) {
+    int* head = (int*)my_malloc(key_mod_val * sizeof(int));
+    my_vector<ref_ids_edge> edges;
+    for (int i = 0; i < key_mod_val; i++) head[i] = -1;
+    int score_group_num = 0;
+    for (int i = 0; i < nams.size(); i++) {
+        int score_key = (int)(nams[i].score);
+        int score_rank = find_ref_ids(score_key, head, edges.data);
+        if (score_rank == -1) {
+            score_rank = score_group_num;
+            int key = score_key % key_mod_val;
+            edges.push_back({head[key], score_key});
+            head[key] = score_group_num++;
+        }
+    }
+    my_vector<my_pair<int, my_vector<Nam>*>> all_nams(score_group_num);
+    all_nams.length = score_group_num;
+    my_vector<Nam>* all_vecs = (my_vector<Nam>*)my_malloc(score_group_num * sizeof(my_vector<Nam>));
+    for (int i = 0; i < score_group_num; i++) {
+        all_nams[i].first = -1;
+        all_nams[i].second = &all_vecs[i];
+        all_nams[i].second->init();
+    }
+    for (int i = 0; i < nams.size(); i++) {
+        int score_key = (int)(nams[i].score);
+        int score_rank = find_ref_ids(score_key, head, edges.data);
+        assert(score_rank >= 0 && score_rank < score_group_num);
+        all_nams[score_rank].first = score_key;
+        all_nams[score_rank].second->push_back(nams[i]);
+    }
+    nams.clear();
+    quick_sort_iterative(&(all_nams[0]), 0, all_nams.size() - 1,
+                         [](const my_pair<int, my_vector<Nam>*>& a, const my_pair<int, my_vector<Nam>*>& b) {
+                             return a.first > b.first;
+                         });
+    for (int i = 0; i < all_nams.size(); i++) {
+        for (int j = 0; j < all_nams[i].second->size(); j++) {
+            if (nams.size() == mx_num) break;
+            nams.push_back((*all_nams[i].second)[j]);
+        }
+        all_nams[i].second->release();
+    }
+    my_free(head);
+    my_free(all_vecs);
+}
+
+__device__ void sort_nams_by_score2(my_vector<Nam>& nams, int mx_num) {
     my_vector<my_pair<int, my_vector<Nam>*>> all_nams;
     int* head = (int*)my_malloc(key_mod_val * sizeof(int));
     my_vector<ref_ids_edge> edges;
@@ -1682,8 +1727,51 @@ __device__ void sort_nams_by_score(my_vector<Nam>& nams, int mx_num) {
     my_free(head);
 }
 
-
 __device__ void sort_hits_by_refid(
+        my_vector<my_pair<int, Hit>>& hits_per_ref
+) {
+
+    int *head = (int*)my_malloc(key_mod_val * sizeof(int));
+    my_vector<ref_ids_edge> edges;
+    for(int i = 0; i < key_mod_val; i++) head[i] = -1;
+    int ref_ids_num = 0;
+    for(int i = 0; i < hits_per_ref.size(); i++) {
+        int ref_id = hits_per_ref[i].first;
+        int find_ref_id_rank = find_ref_ids(ref_id, head, edges.data);
+        if (find_ref_id_rank == -1) {
+            find_ref_id_rank = ref_ids_num;
+            int key = ref_id % key_mod_val;
+            edges.push_back({head[key], ref_id});
+            head[key] = ref_ids_num++;
+        }
+    }
+    my_vector<my_pair<int, my_vector<Hit>*>> all_hits(ref_ids_num);
+    all_hits.length = ref_ids_num;
+    my_vector<Hit>* all_vecs = (my_vector<Hit>*)my_malloc(ref_ids_num * sizeof(my_vector<Hit>));
+    for (int i = 0; i < ref_ids_num; i++) {
+        all_hits[i].first = -1;
+        all_hits[i].second = &all_vecs[i];
+        all_hits[i].second->init();
+    }
+    for (int i = 0; i < hits_per_ref.size(); i++) {
+        int ref_id = hits_per_ref[i].first;
+        int find_ref_id_rank = find_ref_ids(ref_id, head, edges.data);
+        assert(find_ref_id_rank >= 0 && find_ref_id_rank < ref_ids_num);
+        all_hits[find_ref_id_rank].first = ref_id;
+        all_hits[find_ref_id_rank].second->push_back(hits_per_ref[i].second);
+    }
+    hits_per_ref.clear();
+    for(int i = 0; i < all_hits.size(); i++) {
+        for(int j = 0; j < all_hits[i].second->size(); j++) {
+            hits_per_ref.push_back({all_hits[i].first, (*all_hits[i].second)[j]});
+        }
+        all_hits[i].second->release();
+    }
+    my_free(head);
+    my_free(all_vecs);
+}
+
+__device__ void sort_hits_by_refid2(
         my_vector<my_pair<int, Hit>>& hits_per_ref
 ) {
     my_vector<my_pair<int, my_vector<Hit>*>> all_hits;
@@ -1705,7 +1793,7 @@ __device__ void sort_hits_by_refid(
         }
         all_hits[find_ref_id_rank].second->push_back(hits_per_ref[i].second);
     }
-    quick_sort(&(all_hits[0]), all_hits.size());
+//    quick_sort(&(all_hits[0]), all_hits.size());
     hits_per_ref.clear();
     for(int i = 0; i < all_hits.size(); i++) {
         for(int j = 0; j < all_hits[i].second->size(); j++) {
@@ -1908,7 +1996,7 @@ __device__ void merge_hits(
         int ref_id = hits_per_ref[i].first;
         Hit hit = hits_per_ref[i].second;
         if(ref_id != pre_ref_id) {
-            assert(ref_id > pre_ref_id);
+//            assert(ref_id > pre_ref_id);
             ref_num++;
             pre_ref_id = ref_id;
             each_ref_size.push_back(now_ref_num);
@@ -4619,6 +4707,13 @@ void perform_task_async_pe_fx_GPU(
     meta_data_size += batch_read_num * sizeof(uint64_t);
     cudaMemset(global_align_info, 0, batch_read_num * sizeof(uint64_t));
 
+    int *chunk0_real_chunk_nums = new int[MAX_RABBITFX_CHUNK_NUM];
+    int *chunk1_real_chunk_nums = new int[MAX_RABBITFX_CHUNK_NUM];
+    int *chunk2_real_chunk_nums = new int[MAX_RABBITFX_CHUNK_NUM];
+
+    int *chunk0_real_chunk_ids = new int[MAX_RABBITFX_CHUNK_NUM];
+    int *chunk1_real_chunk_ids = new int[MAX_RABBITFX_CHUNK_NUM];
+    int *chunk2_real_chunk_ids = new int[MAX_RABBITFX_CHUNK_NUM];
 
 
     if (gpu_id == 0) printf("--- meta GPU mem alloc %llu\n", meta_data_size);
@@ -4817,6 +4912,8 @@ void perform_task_async_pe_fx_GPU(
                     }
                 }
                 time1_1_2 += GetTime() - t_3;
+                chunk0_real_chunk_nums[chunk_id] = neo_data1s.size();
+                chunk0_real_chunk_ids[chunk_id] = id;
                 chunk0_real_chunk_num++;
             } else break;
         }
@@ -4890,6 +4987,8 @@ void perform_task_async_pe_fx_GPU(
                     }
                 }
                 time1_1_2 += GetTime() - t_3;
+                chunk1_real_chunk_nums[chunk_id] = neo_data1s.size();
+                chunk1_real_chunk_ids[chunk_id] = id;
                 chunk1_real_chunk_num++;
             } else break;
         }
@@ -5164,35 +5263,40 @@ void perform_task_async_pe_fx_GPU(
                 time2_4 += GetTime() - t_start;
 
                 // format align_res to SAM item
-                t_start = GetTime();
-                std::string sam_out;
-                sam_out.reserve(7 * map_param.r * (chunk0_data1s.size()));
-                Sam sam{sam_out, references, map_param.cigar_ops, read_group_id, map_param.output_unmapped,
-                        map_param.details};
-                for (size_t i = 0; i < chunk0_data1s.size(); ++i) {
-                    GPU_align_PE_read_last(chunk0_global_align_res[i], chunk0_data1s[i], chunk0_data2s[i], sam, sam_out,
-                                           *isize_est, aligner,
-                                           map_param, index_parameters, references, index, random_engine,
-                                           time3_1_1, time3_1_2, time3_1_3, time3_1_4
-                    );
-                    GPUAlignTmpRes& align_tmp_res = chunk0_global_align_res[i];
-                    for (int j = 0; j < align_tmp_res.todo_nams.size(); j++) {
-                        if (align_tmp_res.cigar_info[j].has_realloc == 1) {
+                int base_read_num = 0;
+                for (int chunk_id = 0; chunk_id < chunk0_real_chunk_num; chunk_id++) {
+                    int fx_chunk_id = chunk0_real_chunk_ids[chunk_id];
+                    int this_chunk_read_num = chunk0_real_chunk_nums[chunk_id];
+                    t_start = GetTime();
+                    std::string sam_out;
+                    sam_out.reserve(7 * map_param.r * this_chunk_read_num);
+                    Sam sam{sam_out, references, map_param.cigar_ops, read_group_id, map_param.output_unmapped, map_param.details};
+                    for (size_t i = base_read_num; i < base_read_num + this_chunk_read_num; ++i) {
+                        GPU_align_PE_read_last(chunk0_global_align_res[i], chunk0_data1s[i], chunk0_data2s[i], sam, sam_out,
+                                               *isize_est, aligner,
+                                               map_param, index_parameters, references, index, random_engine,
+                                               time3_1_1, time3_1_2, time3_1_3, time3_1_4
+                        );
+                        GPUAlignTmpRes& align_tmp_res = chunk0_global_align_res[i];
+                        for (int j = 0; j < align_tmp_res.todo_nams.size(); j++) {
+                            if (align_tmp_res.cigar_info[j].has_realloc == 1) {
 //                            printf("free %d %d %d\n", i, j, align_tmp_res.cigar_info[j].cigar[0]);
-                            align_tmp_res.cigar_info[j].has_realloc = 0;
-                            free(align_tmp_res.cigar_info[j].cigar);
-                            align_tmp_res.cigar_info[j].cigar = align_tmp_res.cigar_info[j].gpu_cigar;
+                                align_tmp_res.cigar_info[j].has_realloc = 0;
+                                free(align_tmp_res.cigar_info[j].cigar);
+                                align_tmp_res.cigar_info[j].cigar = align_tmp_res.cigar_info[j].gpu_cigar;
+                            }
                         }
-
                     }
+                    time3_1 += GetTime() - t_start;
 
+                    // output SAM data
+                    t_start = GetTime();
+                    if (sam_out.length() > 0) output_buffer.output_records(std::move(sam_out), fx_chunk_id);
+                    time3_2 += GetTime() - t_start;
+
+                    base_read_num += this_chunk_read_num;
                 }
-                time3_1 += GetTime() - t_start;
-
-                // output SAM data
-                t_start = GetTime();
-                if (sam_out.length() > 0) output_buffer.output_records(std::move(sam_out), chunk_index);
-                time3_2 += GetTime() - t_start;
+                assert(base_read_num == chunk0_data1s.size());
 
                 // release rabbitfx chunk
                 t_start = GetTime();
@@ -5263,6 +5367,8 @@ void perform_task_async_pe_fx_GPU(
                             }
                         }
                         time1_1_2 += GetTime() - t_3;
+                        chunk2_real_chunk_nums[chunk_id] = neo_data1s.size();
+                        chunk2_real_chunk_ids[chunk_id] = id;
                         chunk2_real_chunk_num++;
                     } else break;
                 }
@@ -5485,6 +5591,16 @@ void perform_task_async_pe_fx_GPU(
             chunk1_chunk_num = chunk2_chunk_num;
             chunk2_chunk_num = temp_chunk_num;
 
+            int* temp_chunk_nums = chunk0_real_chunk_nums;
+            chunk0_real_chunk_nums = chunk1_real_chunk_nums;
+            chunk1_real_chunk_nums = chunk2_real_chunk_nums;
+            chunk2_real_chunk_nums = temp_chunk_nums;
+
+            int* temp_chunk_ids = chunk0_real_chunk_ids;
+            chunk0_real_chunk_ids = chunk1_real_chunk_ids;
+            chunk1_real_chunk_ids = chunk2_real_chunk_ids;
+            chunk2_real_chunk_ids = temp_chunk_ids;
+
             GPUAlignTmpRes* temp_global_align_res = chunk0_global_align_res;
             chunk0_global_align_res = chunk1_global_align_res;
             chunk1_global_align_res = chunk2_global_align_res;
@@ -5559,6 +5675,13 @@ void perform_task_async_pe_fx_GPU(
     delete[] chunk1_rc_data2;
     delete[] chunk2_rc_data1;
     delete[] chunk2_rc_data2;
+
+    delete[] chunk0_real_chunk_nums;
+    delete[] chunk1_real_chunk_nums;
+    delete[] chunk2_real_chunk_nums;
+    delete[] chunk0_real_chunk_ids;
+    delete[] chunk1_real_chunk_ids;
+    delete[] chunk2_real_chunk_ids;
 
 
     time4 += GetTime() - t_1;
@@ -5720,7 +5843,13 @@ void perform_task_async_se_fx_GPU(
     meta_data_size += batch_read_num * sizeof(uint64_t);
     cudaMemset(global_align_info, 0, batch_read_num * sizeof(uint64_t));
 
+    int *chunk0_real_chunk_nums = new int[MAX_RABBITFX_CHUNK_NUM];
+    int *chunk1_real_chunk_nums = new int[MAX_RABBITFX_CHUNK_NUM];
+    int *chunk2_real_chunk_nums = new int[MAX_RABBITFX_CHUNK_NUM];
 
+    int *chunk0_real_chunk_ids = new int[MAX_RABBITFX_CHUNK_NUM];
+    int *chunk1_real_chunk_ids = new int[MAX_RABBITFX_CHUNK_NUM];
+    int *chunk2_real_chunk_ids = new int[MAX_RABBITFX_CHUNK_NUM];
 
     if (gpu_id == 0) printf("--- meta GPU mem alloc %llu\n", meta_data_size);
 
@@ -5892,6 +6021,8 @@ void perform_task_async_se_fx_GPU(
                     }
                 }
                 time1_1_2 += GetTime() - t_3;
+                chunk0_real_chunk_nums[chunk_id] = neo_datas.size();
+                chunk0_real_chunk_ids[chunk_id] = id;
                 chunk0_real_chunk_num++;
             } else break;
         }
@@ -5943,6 +6074,8 @@ void perform_task_async_se_fx_GPU(
                     }
                 }
                 time1_1_2 += GetTime() - t_3;
+                chunk1_real_chunk_nums[chunk_id] = neo_datas.size();
+                chunk1_real_chunk_ids[chunk_id] = id;
                 chunk1_real_chunk_num++;
             } else break;
         }
@@ -6178,33 +6311,39 @@ void perform_task_async_se_fx_GPU(
                 time2_4 += GetTime() - t_start;
 
                 // format align_res to SAM item
-                t_start = GetTime();
-                std::string sam_out;
-                sam_out.reserve(7 * map_param.r * (chunk0_datas.size()));
-                Sam sam{sam_out, references, map_param.cigar_ops, read_group_id, map_param.output_unmapped, map_param.details};
-                for (size_t i = 0; i < chunk0_datas.size(); ++i) {
-                    GPU_align_SE_read_last(chunk0_global_align_res[i], chunk0_datas[i], sam, sam_out, aligner,
-                                           map_param, index_parameters, references, index, random_engine,
-                                           time3_1_1, time3_1_2, time3_1_3, time3_1_4
-                    );
-                    GPUAlignTmpRes& align_tmp_res = chunk0_global_align_res[i];
-                    for (int j = 0; j < align_tmp_res.todo_nams.size(); j++) {
-                        if (align_tmp_res.cigar_info[j].has_realloc == 1) {
+                int base_read_num = 0;
+                for (int chunk_id = 0; chunk_id < chunk0_real_chunk_num; chunk_id++) {
+                    int fx_chunk_id = chunk0_real_chunk_ids[chunk_id];
+                    int this_chunk_read_num = chunk0_real_chunk_nums[chunk_id];
+                    t_start = GetTime();
+                    std::string sam_out;
+                    sam_out.reserve(7 * map_param.r * this_chunk_read_num);
+                    Sam sam{sam_out, references, map_param.cigar_ops, read_group_id, map_param.output_unmapped, map_param.details};
+                    for (size_t i = base_read_num; i < base_read_num + this_chunk_read_num; ++i) {
+                        GPU_align_SE_read_last(chunk0_global_align_res[i], chunk0_datas[i], sam, sam_out, aligner,
+                                               map_param, index_parameters, references, index, random_engine,
+                                               time3_1_1, time3_1_2, time3_1_3, time3_1_4
+                        );
+                        GPUAlignTmpRes& align_tmp_res = chunk0_global_align_res[i];
+                        for (int j = 0; j < align_tmp_res.todo_nams.size(); j++) {
+                            if (align_tmp_res.cigar_info[j].has_realloc == 1) {
 //                            printf("free %d %d %d\n", i, j, align_tmp_res.cigar_info[j].cigar[0]);
-                            align_tmp_res.cigar_info[j].has_realloc = 0;
-                            free(align_tmp_res.cigar_info[j].cigar);
-                            align_tmp_res.cigar_info[j].cigar = align_tmp_res.cigar_info[j].gpu_cigar;
+                                align_tmp_res.cigar_info[j].has_realloc = 0;
+                                free(align_tmp_res.cigar_info[j].cigar);
+                                align_tmp_res.cigar_info[j].cigar = align_tmp_res.cigar_info[j].gpu_cigar;
+                            }
                         }
-
                     }
+                    time3_1 += GetTime() - t_start;
 
+                    // output SAM data
+                    t_start = GetTime();
+                    if (sam_out.length() > 0) output_buffer.output_records(std::move(sam_out), fx_chunk_id);
+                    time3_2 += GetTime() - t_start;
+
+                    base_read_num += this_chunk_read_num;
                 }
-                time3_1 += GetTime() - t_start;
-
-                // output SAM data
-                t_start = GetTime();
-                if (sam_out.length() > 0) output_buffer.output_records(std::move(sam_out), chunk_index);
-                time3_2 += GetTime() - t_start;
+                assert(base_read_num == chunk0_datas.size());
 
                 // release rabbitfx chunk
                 t_start = GetTime();
@@ -6253,6 +6392,8 @@ void perform_task_async_se_fx_GPU(
                             }
                         }
                         time1_1_2 += GetTime() - t_3;
+                        chunk2_real_chunk_nums[chunk_id] = neo_datas.size();
+                        chunk2_real_chunk_ids[chunk_id] = id;
                         chunk2_real_chunk_num++;
                     } else break;
                 }
@@ -6464,6 +6605,16 @@ void perform_task_async_se_fx_GPU(
             chunk1_chunk_num = chunk2_chunk_num;
             chunk2_chunk_num = temp_chunk_num;
 
+            int* temp_chunk_nums = chunk0_real_chunk_nums;
+            chunk0_real_chunk_nums = chunk1_real_chunk_nums;
+            chunk1_real_chunk_nums = chunk2_real_chunk_nums;
+            chunk2_real_chunk_nums = temp_chunk_nums;
+
+            int* temp_chunk_ids = chunk0_real_chunk_ids;
+            chunk0_real_chunk_ids = chunk1_real_chunk_ids;
+            chunk1_real_chunk_ids = chunk2_real_chunk_ids;
+            chunk2_real_chunk_ids = temp_chunk_ids;
+
             GPUAlignTmpRes* temp_global_align_res = chunk0_global_align_res;
             chunk0_global_align_res = chunk1_global_align_res;
             chunk1_global_align_res = chunk2_global_align_res;
@@ -6535,6 +6686,13 @@ void perform_task_async_se_fx_GPU(
     delete[] chunk0_rc_data;
     delete[] chunk1_rc_data;
     delete[] chunk2_rc_data;
+
+    delete[] chunk0_real_chunk_nums;
+    delete[] chunk1_real_chunk_nums;
+    delete[] chunk2_real_chunk_nums;
+    delete[] chunk0_real_chunk_ids;
+    delete[] chunk1_real_chunk_ids;
+    delete[] chunk2_real_chunk_ids;
 
 
     time4 += GetTime() - t_1;

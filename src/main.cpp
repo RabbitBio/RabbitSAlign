@@ -367,11 +367,9 @@ std::vector<ThreadAssignment> assign_threads_fixed_with_flags(int total_cpu_num,
 
     std::vector<ThreadAssignment> assignments;
 
-    // Step 1: 从 total_cpu_num 中均匀选择 cpu_num 个线程
     std::vector<int> selected_threads = evenly_select(total_cpu_num, cpu_num);
 
-    // Step 2: 在 selected_threads 中均匀选择 gpu_num 个主线程
-    std::vector<int> main_gpu_indices = evenly_select(cpu_num, gpu_num * 2);  // 注意：取的是 selected_threads 的索引
+    std::vector<int> main_gpu_indices = evenly_select(cpu_num, gpu_num * 2);
     std::unordered_set<int> main_gpu_tids;
     std::unordered_set<int> aux_gpu_tids;
 
@@ -391,13 +389,13 @@ std::vector<ThreadAssignment> assign_threads_fixed_with_flags(int total_cpu_num,
     for (int i = 0; i < selected_threads.size(); ++i) {
         int tid = selected_threads[i];
         int numa_node = tid / (total_cpu_num / numa_num);
-        int gpu_id = tid / (total_cpu_num / gpu_num);  // 简单映射策略
+        int gpu_id = tid / (total_cpu_num / gpu_num);
 
         ThreadAssignment ta = {tid, -1, numa_node, gpu_id, 0, 0};
 
         if (main_gpu_tids.count(tid)) {
             ta.flag = 1;
-            ta.async_thread_id = selected_threads[i + 1];  // 下一个就是aux
+            ta.async_thread_id = selected_threads[i + 1];
             ta.gpu_id = gpu_id_counter / 2;
             gpu_id_counter++;
 //            std::cout << "Assign GPU main thread " << tid << " (GPU " << ta.gpu_id << ") with aux " << ta.async_thread_id << "\n";

@@ -167,7 +167,10 @@ struct RescueHit {
     }
 };
 
-CUDA_DEV void* my_malloc(size_t size);
+#define my_malloc(size) my_malloc_impl((size), __FILE__, __LINE__, __func__)
+
+CUDA_DEV void* my_malloc_impl(size_t size, const char* file, int line, const char* func);
+
 CUDA_DEV void my_free(void* ptr);
 
 CUDA_HOST void init_mm(uint64_t num_bytes, uint64_t seed);
@@ -237,7 +240,7 @@ struct my_vector {
     CUDA_DEV my_vector(int N = 4) {
         capacity = N;
         length = 0;
-        data = (T*)my_malloc(capacity * sizeof(T));
+        if (N > 0) data = (T*)my_malloc(capacity * sizeof(T));
     }
 
     CUDA_DEV void init(int N = 4) {
