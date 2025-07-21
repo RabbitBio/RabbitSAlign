@@ -47,16 +47,31 @@ inline double GetTime() {
 }
 
 int getNumaNodeCount() {
-    FILE* pipe = popen("lscpu | grep 'NUMA node(s)' | awk '{print $3}'", "r");
-    if (!pipe) return -1;
-    char buffer[128];
-    std::string result = "";
-    while (!feof(pipe)) {
-        if (fgets(buffer, 128, pipe) != nullptr)
-            result += buffer;
+    std::ifstream file("/sys/devices/system/node/possible");
+    if (!file.is_open()) {
+        return 1;
     }
-    pclose(pipe);
-    return std::stoi(result);
+
+    std::string line;
+    if (std::getline(file, line)) {
+        size_t hyphen_pos = line.find('-');
+        if (hyphen_pos == std::string::npos) {
+            try {
+                int max_node = std::stoi(line);
+                return max_node + 1;
+            } catch (const std::invalid_argument& e) {
+                return 1;
+            }
+        } else {
+            try {
+                int max_node = std::stoi(line.substr(hyphen_pos + 1));
+                return max_node + 1;
+            } catch (const std::invalid_argument& e) {
+                return 1;
+            }
+        }
+    }
+    return 1;
 }
 
 long long getAvailableMemory() {

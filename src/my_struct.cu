@@ -3,14 +3,15 @@
 #include <gallatin/allocators/global_allocator.cuh>
 
 
-//__device__ int lock2;
+__device__ int lock2;
 __device__ void* my_malloc_impl(size_t size, const char* file, int line, const char* func) {
-//    while (atomicCAS(&lock2, 0, 1) != 0) {}
     void* ptr = gallatin::allocators::global_malloc(size);
+//    while (atomicCAS(&lock2, 0, 1) != 0) {}
+//    printf("gallatin malloc %lu at %s:%d (%s)\n", (unsigned long)size, file, line, func);
 //    atomicExch(&lock2, 0);
     if (ptr == nullptr) {
-        printf("gallatin malloc failed - %zu at %s:%d (%s)\n", size, file, line, func);
-        assert(false);
+        printf("gallatin malloc failed - %lu at %s:%d (%s)\n", (unsigned long)size, file, line, func);
+        asm("trap;");
     }
     return ptr;
 }

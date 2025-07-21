@@ -880,8 +880,8 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
     for (auto& nam1 : nams1) {
         for (auto& nam2 : nams2) {
             int joint_hits = nam1.n_hits + nam2.n_hits;
-            if (joint_hits < best_joint_hits / 2 || joint_nam_scores.size() >= max_tries * 2) {
-            //if (joint_hits < best_joint_hits / 2) {
+            //if (joint_hits < best_joint_hits / 2 || joint_nam_scores.size() >= max_tries * 2) {
+            if (joint_hits < best_joint_hits / 2) {
                 break;
             }
             if (is_proper_nam_pair(nam1, nam2, mu, sigma)) {
@@ -891,7 +891,7 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
                 best_joint_hits = std::max(joint_hits, best_joint_hits);
             }
         }
-        if (joint_nam_scores.size() >= max_tries * 2) break;
+        //if (joint_nam_scores.size() >= max_tries * 2) break;
     }
 #endif
 
@@ -906,9 +906,9 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
     dummy_nam.ref_start = -1;
     if (!nams1.empty()) {
         int best_joint_hits1 = best_joint_hits > 0 ? best_joint_hits : nams1[0].n_hits;
-        //for (auto& nam1 : nams1) {
-        for (int i = 0; i < std::min(max_tries, (int)nams1.size()); i++) {
-            Nam nam1 = nams1[i];
+        for (auto& nam1 : nams1) {
+        //for (int i = 0; i < std::min(max_tries, (int)nams1.size()); i++) {
+            //Nam nam1 = nams1[i];
             if (nam1.n_hits < best_joint_hits1 / 2) {
                 break;
             }
@@ -930,9 +930,9 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
     // Find high-scoring R2 NAMs that are not part of a proper pair
     if (!nams2.empty()) {
         int best_joint_hits2 = best_joint_hits > 0 ? best_joint_hits : nams2[0].n_hits;
-        //for (auto& nam2 : nams2) {
-        for (int i = 0; i < std::min(max_tries, (int)nams2.size()); i++) {
-            Nam nam2 = nams2[i];
+        for (auto& nam2 : nams2) {
+        //for (int i = 0; i < std::min(max_tries, (int)nams2.size()); i++) {
+            //Nam nam2 = nams2[i];
             if (nam2.n_hits < best_joint_hits2 / 2) {
                 break;
             }
@@ -1161,7 +1161,7 @@ void deduplicate_scored_pairs(std::vector<ScoredAlignmentPair>& pairs) {
  * pick one randomly and move it to the front.
  */
 void pick_random_top_pair(std::vector<ScoredAlignmentPair>& high_scores, std::minstd_rand& random_engine) {
-    return;
+    //return;
     size_t i = 1;
     for (; i < high_scores.size(); ++i) {
         if (high_scores[i].score != high_scores[0].score) {
@@ -1460,7 +1460,7 @@ inline void align_PE_part(
 
     align_tmp_res.type = 4;
     std::vector<NamPair> joint_nam_scores = get_best_scoring_nam_pairs(nams1, nams2, mu, sigma, max_tries);
-    if (joint_nam_scores.size() > max_tries) joint_nam_scores.resize(max_tries);
+    //if (joint_nam_scores.size() > max_tries) joint_nam_scores.resize(max_tries);
     
 
     // Cache for already computed alignments. Maps NAM ids to alignments.
@@ -1867,7 +1867,7 @@ inline void get_best_map_location(
 
 /* Add a new observation */
 void InsertSizeDistribution::update(int dist) {
-    return;
+    //return;
     if (dist >= 2000) {
         return;
     }
@@ -1898,7 +1898,7 @@ void InsertSizeDistribution::update(int dist) {
  * equally good ones.
  */
 void shuffle_top_nams(std::vector<Nam>& nams, std::minstd_rand& random_engine) {
-    return;
+    //return;
     if (nams.empty()) {
         return;
     }

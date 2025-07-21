@@ -230,6 +230,7 @@ struct my_string {
     }
 };
 
+#define VEC_PUSH_BACK(item) VEC_PUSH_BACK_impl((item), __FILE__, __LINE__, __func__)
 
 template <typename T>
 struct my_vector {
@@ -237,16 +238,17 @@ struct my_vector {
     int length;
     int capacity;
 
-    CUDA_DEV my_vector(int N = 4) {
+    CUDA_DEV my_vector(int N = 4, const char* file = nullptr, int line = 0, const char* func = nullptr) {
         capacity = N;
         length = 0;
-        if (N > 0) data = (T*)my_malloc(capacity * sizeof(T));
+        if (N > 0) data = (T*)my_malloc_impl(capacity * sizeof(T), file, line, func);
+        else data = nullptr;
     }
 
-    CUDA_DEV void init(int N = 4) {
+    CUDA_DEV void VEC_INIT_impl(int N = 4, const char* file = nullptr, int line = 0, const char* func = nullptr) {
         capacity = N;
         length = 0;
-        data = (T*)my_malloc(capacity * sizeof(T));
+        data = (T*)my_malloc_impl(capacity * sizeof(T), file, line, func);
     }
 
     CUDA_HOST CUDA_DEV ~my_vector() {
@@ -254,18 +256,18 @@ struct my_vector {
         data = nullptr;
     }
 
-    CUDA_DEV void resize(int new_capacity) {
+    CUDA_DEV void resize(int new_capacity, const char* file = nullptr, int line = 0, const char* func = nullptr) {
         T* new_data;
-        new_data = (T*)my_malloc(new_capacity * sizeof(T));
+        new_data = (T*)my_malloc_impl(new_capacity * sizeof(T), file, line, func);
         for (int i = 0; i < length; ++i) new_data[i] = data[i];
         if (data != nullptr) my_free(data);
         data = new_data;
         capacity = new_capacity;
     }
 
-    CUDA_DEV void push_back(const T& value) {
+    CUDA_DEV void VEC_PUSH_BACK_impl(const T& value, const char* file, int line, const char* func) {
         if (length == capacity) {
-            resize(capacity == 0 ? 1 : capacity * 2);
+            resize(capacity == 0 ? 1 : capacity * 2, file, line, func);
         }
         data[length++] = value;
     }
