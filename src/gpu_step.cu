@@ -205,7 +205,7 @@ __device__ void print_str(my_string str) {
 __device__ void cigar_push(my_vector<uint32_t>& m_ops, uint8_t op, int len) {
     assert(op < 16);
     if (m_ops.empty() || (m_ops.back() & 0xf) != op) {
-        m_ops.VEC_PUSH_BACK(len << 4 | op);
+        m_ops.push_back(len << 4 | op);
     } else {
         m_ops.back() += len << 4;
     }
@@ -330,20 +330,20 @@ __device__ bool gpu_extend_seed_part(
         }
     }
 
-    align_tmp_res.todo_nams.VEC_PUSH_BACK(nam);
-    align_tmp_res.is_extend_seed.VEC_PUSH_BACK(true);
+    align_tmp_res.todo_nams.push_back(nam);
+    align_tmp_res.is_extend_seed.push_back(true);
     if (gapped) {
         // not pass hamming, pending to do align on GPU, tag is false
         GPUAlignment alignment;
-        align_tmp_res.done_align.VEC_PUSH_BACK(false);
-        align_tmp_res.align_res.VEC_PUSH_BACK(alignment);
+        align_tmp_res.done_align.push_back(false);
+        align_tmp_res.align_res.push_back(alignment);
         align_tmp_res.cigar_info.length++;
         align_tmp_res.cigar_info.back().cigar = align_tmp_res.cigar_info.back().gpu_cigar;
         align_tmp_res.cigar_info.back().cigar[0] = 0;
         align_tmp_res.cigar_info.back().has_realloc = 0;
     } else {
         // pass hamming, store result, tag is true
-        align_tmp_res.done_align.VEC_PUSH_BACK(true);
+        align_tmp_res.done_align.push_back(true);
         int softclipped = info.query_start + (query.size() - info.query_end);
         GPUAlignment alignment;
         //alignment.cigar.move_from(info.cigar);
@@ -356,7 +356,7 @@ __device__ bool gpu_extend_seed_part(
         alignment.is_unaligned = false;
         alignment.ref_id = nam.ref_id;
         alignment.gapped = gapped;
-        align_tmp_res.align_res.VEC_PUSH_BACK(alignment);
+        align_tmp_res.align_res.push_back(alignment);
         if (info.cigar.size() + 1 > MAX_CIGAR_ITEM) {
             printf("gpu gg cigar size %d\n", info.cigar.size());
         }
@@ -398,7 +398,7 @@ __device__ bool gpu_has_shared_substring(const my_string& read_seq, const my_str
         }
         hash0[N++] = h;
         //assert(N <= 50);
-        //hash0.VEC_PUSH_BACK(h);
+        //hash0.push_back(h);
         //N++;
     }
     quick_sort(&(hash0[0]), N);
@@ -449,8 +449,8 @@ __device__ bool gpu_rescue_mate_part(
     auto ref_start = my_max(0, my_min(a, ref_len));
     auto ref_end = my_min(ref_len, my_max(0, b));
 
-    align_tmp_res.todo_nams.VEC_PUSH_BACK(nam);
-    align_tmp_res.is_extend_seed.VEC_PUSH_BACK(false);
+    align_tmp_res.todo_nams.push_back(nam);
+    align_tmp_res.is_extend_seed.push_back(false);
     if (ref_end < ref_start + k) {
         //        alignment.cigar = Cigar();
         alignment.edit_distance = read_len;
@@ -459,8 +459,8 @@ __device__ bool gpu_rescue_mate_part(
         alignment.is_rc = nam.is_rc;
         alignment.ref_id = nam.ref_id;
         alignment.is_unaligned = true;
-        align_tmp_res.done_align.VEC_PUSH_BACK(true);
-        align_tmp_res.align_res.VEC_PUSH_BACK(alignment);
+        align_tmp_res.done_align.push_back(true);
+        align_tmp_res.align_res.push_back(alignment);
         align_tmp_res.cigar_info.length++;
         align_tmp_res.cigar_info.back().cigar = align_tmp_res.cigar_info.back().gpu_cigar;
         align_tmp_res.cigar_info.back().cigar[0] = 0;
@@ -477,8 +477,8 @@ __device__ bool gpu_rescue_mate_part(
         alignment.is_rc = nam.is_rc;
         alignment.ref_id = nam.ref_id;
         alignment.is_unaligned = true;
-        align_tmp_res.done_align.VEC_PUSH_BACK(true);
-        align_tmp_res.align_res.VEC_PUSH_BACK(alignment);
+        align_tmp_res.done_align.push_back(true);
+        align_tmp_res.align_res.push_back(alignment);
         align_tmp_res.cigar_info.length++;
         align_tmp_res.cigar_info.back().cigar = align_tmp_res.cigar_info.back().gpu_cigar;
         align_tmp_res.cigar_info.back().cigar[0] = 0;
@@ -486,8 +486,8 @@ __device__ bool gpu_rescue_mate_part(
         return true;
     }
 
-    align_tmp_res.done_align.VEC_PUSH_BACK(false);
-    align_tmp_res.align_res.VEC_PUSH_BACK(alignment);
+    align_tmp_res.done_align.push_back(false);
+    align_tmp_res.align_res.push_back(alignment);
     align_tmp_res.cigar_info.length++;
     align_tmp_res.cigar_info.back().cigar = align_tmp_res.cigar_info.back().gpu_cigar;
     align_tmp_res.cigar_info.back().cigar[0] = 0;
@@ -564,11 +564,7 @@ __device__ void gpu_part2_extend_seed_get_str(
                       (static_cast<uint32_t>(query_start) << 15) |
                       (static_cast<uint32_t>(query_segm_size));
 
-    TmpTODOInfos tmp_todo_info{
-        query_segm_size, ref_segm_size, query.data + query_start, ref.data + ref_start,
-        {0, packed, nam.ref_id, ref_start, ref_segm_size}
-    };
-    tmp_todo_infos.VEC_PUSH_BACK(tmp_todo_info);
+    tmp_todo_infos.push_back({query_segm_size, ref_segm_size, query.data + query_start, ref.data + ref_start, {0, packed, nam.ref_id, ref_start, ref_segm_size}});
 }
 
 
@@ -611,11 +607,7 @@ __device__ void gpu_part2_rescue_mate_get_str(
                       (static_cast<uint32_t>(query_start) << 15) |
                       (static_cast<uint32_t>(query_segm_size));
 
-    TmpTODOInfos tmp_todo_info{
-        query_segm_size, ref_segm_size, r_tmp.data + query_start, references.sequences[nam.ref_id].data + ref_start,
-        {0, packed, nam.ref_id, ref_start, ref_segm_size}
-    };
-    tmp_todo_infos.VEC_PUSH_BACK(tmp_todo_info);
+    tmp_todo_infos.push_back({query_segm_size, ref_segm_size, r_tmp.data + query_start, references.sequences[nam.ref_id].data + ref_start, {0, packed, nam.ref_id, ref_start, ref_segm_size}});
 }
 
 __device__ void gpu_part2_extend_seed_get_str(
@@ -667,10 +659,7 @@ __device__ void gpu_part2_extend_seed_get_str(
     memset(d_ref_ptr + ref_offset + ref_segm_size, 0x4E, r_len - ref_segm_size);
 #endif
 
-    TODOInfos global_id_info{
-        global_id, packed, nam.ref_id, ref_start, ref_segm_size
-    };
-    align_tmp_res.todo_infos.VEC_PUSH_BACK(global_id_info);
+    align_tmp_res.todo_infos.push_back({global_id, packed, nam.ref_id, ref_start, ref_segm_size});
 }
 
 
@@ -731,10 +720,8 @@ __device__ void gpu_part2_rescue_mate_get_str(
     memset(d_query_ptr + query_offset + query_segm_size, 0x4E, q_len - query_segm_size);
     memset(d_ref_ptr + ref_offset + ref_segm_size, 0x4E, r_len - ref_segm_size);
 #endif
-    TODOInfos global_id_info{
-        global_id, packed, nam.ref_id, ref_start, ref_segm_size
-    };
-    align_tmp_res.todo_infos.VEC_PUSH_BACK(global_id_info);
+
+    align_tmp_res.todo_infos.push_back({global_id, packed, nam.ref_id, ref_start, ref_segm_size});
 }
 
 __device__ void gpu_rescue_read_part(
@@ -768,13 +755,13 @@ __device__ void gpu_rescue_read_part(
 
         const bool consistent_nam = gpu_reverse_nam_if_needed(nam, read1, references, k);
         // reserve extend and store info
-        if(flag == 1) align_tmp_res.is_read1.VEC_PUSH_BACK(true);
-        else align_tmp_res.is_read1.VEC_PUSH_BACK(false);
+        if(flag == 1) align_tmp_res.is_read1.push_back(true);
+        else align_tmp_res.is_read1.push_back(false);
         bool gapped = gpu_extend_seed_part(align_tmp_res, aligner_parameters, nam, references, read1, consistent_nam);
 
         // Force SW alignment to rescue mate
-        if(flag == 1) align_tmp_res.is_read1.VEC_PUSH_BACK(false);
-        else align_tmp_res.is_read1.VEC_PUSH_BACK(true);
+        if(flag == 1) align_tmp_res.is_read1.push_back(false);
+        else align_tmp_res.is_read1.push_back(true);
         bool is_unaligned = gpu_rescue_mate_part(align_tmp_res, aligner_parameters, nam, references, read2, mu, sigma, k);
         tries++;
     }
@@ -926,10 +913,10 @@ __device__ void gpu_get_best_scoring_nam_pairs(
 ) {
     int nams1_len = nams1.size();
     int nams2_len = nams2.size();
-    my_vector<bool> added_n1(nams1_len, __FILE__, __LINE__, __func__);
-    my_vector<bool> added_n2(nams2_len, __FILE__, __LINE__, __func__);
-    for(int i = 0; i < nams1_len; i++) added_n1.VEC_PUSH_BACK(false);
-    for(int i = 0; i < nams2_len; i++) added_n2.VEC_PUSH_BACK(false);
+    my_vector<bool> added_n1(nams1_len);
+    my_vector<bool> added_n2(nams2_len);
+    for(int i = 0; i < nams1_len; i++) added_n1.push_back(false);
+    for(int i = 0; i < nams2_len; i++) added_n2.push_back(false);
 
     int best_joint_hits = 0;
     for (int i = 0; i < nams1_len; i++) {
@@ -942,8 +929,7 @@ __device__ void gpu_get_best_scoring_nam_pairs(
                 break;
             }
             if (gpu_is_proper_nam_pair(nam1, nam2, mu, sigma)) {
-                gpu_NamPair gpu_nam_pair{joint_hits, &nams1, &nams2, i, j};
-                joint_nam_scores.VEC_PUSH_BACK(gpu_nam_pair);
+                joint_nam_scores.push_back(gpu_NamPair{joint_hits, &nams1, &nams2, i, j});
                 added_n1[i] = 1;
                 added_n2[j] = 1;
                 best_joint_hits = my_max(joint_hits, best_joint_hits);
@@ -965,8 +951,7 @@ __device__ void gpu_get_best_scoring_nam_pairs(
         if (added_n1[i]) {
             continue;
         }
-        gpu_NamPair gpu_nam_pair{nam1.n_hits, &nams1, &nams2, i, -1};
-        joint_nam_scores.VEC_PUSH_BACK(gpu_nam_pair);
+        joint_nam_scores.push_back(gpu_NamPair{nam1.n_hits, &nams1, &nams2, i, -1});
     }
 
     // Find high-scoring R2 NAMs that are not part of a proper pair
@@ -980,8 +965,7 @@ __device__ void gpu_get_best_scoring_nam_pairs(
         if (added_n2[i]) {
             continue;
         }
-        gpu_NamPair gpu_nam_pair{nam2.n_hits, &nams1, &nams2, -1, i};
-        joint_nam_scores.VEC_PUSH_BACK(gpu_nam_pair);
+        joint_nam_scores.push_back(gpu_NamPair{nam2.n_hits, &nams1, &nams2, -1, i});
     }
     quick_sort_iterative(&(joint_nam_scores[0]), 0, joint_nam_scores.size() - 1, 
             [](const gpu_NamPair &n1, const gpu_NamPair &n2) {
@@ -1108,7 +1092,7 @@ __device__ void align_PE_part12(
 //        r_len = ((r_len + 7) & ~7);
 //        total_query_offset += q_len;
 //        total_ref_offset += r_len;
-//        align_tmp_res.todo_infos.VEC_PUSH_BACK({
+//        align_tmp_res.todo_infos.push_back({
 //                                                   global_id_start + i,
 //                                                   tmp_todo_info.todo_info.read_info,
 //                                                   tmp_todo_info.todo_info.ref_id,
@@ -1169,11 +1153,11 @@ __device__ void align_PE_part3(
     bool consistent_nam1 = gpu_reverse_nam_if_needed(n_max1, read1, references, k);
     bool consistent_nam2 = gpu_reverse_nam_if_needed(n_max2, read2, references, k);
 
-    align_tmp_res.is_read1.VEC_PUSH_BACK(true);
+    align_tmp_res.is_read1.push_back(true);
     bool gapped1 = gpu_extend_seed_part(align_tmp_res, aligner_parameters, n_max1, references, read1, consistent_nam1);
 
 
-    align_tmp_res.is_read1.VEC_PUSH_BACK(false);
+    align_tmp_res.is_read1.push_back(false);
     bool gapped2 = gpu_extend_seed_part(align_tmp_res, aligner_parameters, n_max2, references, read2, consistent_nam2);
 
     int mapq1 = gpu_get_mapq(nams1, n_max1);
@@ -1229,7 +1213,7 @@ __device__ void align_PE_part3(
 //        r_len = ((r_len + 7) & ~7);
 //        total_query_offset += q_len;
 //        total_ref_offset += r_len;
-//        align_tmp_res.todo_infos.VEC_PUSH_BACK({
+//        align_tmp_res.todo_infos.push_back({
 //                                                   global_id_start + i,
 //                                                   tmp_todo_info.todo_info.read_info,
 //                                                   tmp_todo_info.todo_info.ref_id,
@@ -1292,21 +1276,21 @@ __device__ void align_PE_part4(
 
     int nams1_len = nams1.size();
     int nams2_len = nams2.size();
-    my_vector<bool> is_aligned1(nams1_len + 1, __FILE__, __LINE__, __func__);
-    my_vector<bool> is_aligned2(nams2_len + 1, __FILE__, __LINE__, __func__);
-    for (int i = 0; i <= nams1_len; i++) is_aligned1.VEC_PUSH_BACK(false);
-    for (int i = 0; i <= nams2_len; i++) is_aligned2.VEC_PUSH_BACK(false);
+    my_vector<bool> is_aligned1(nams1_len + 1);
+    my_vector<bool> is_aligned2(nams2_len + 1);
+    for (int i = 0; i <= nams1_len; i++) is_aligned1.push_back(false);
+    for (int i = 0; i <= nams2_len; i++) is_aligned2.push_back(false);
 
     {
         Nam n1_max = nams1[0];
         bool consistent_nam1 = gpu_reverse_nam_if_needed(n1_max, read1, references, k);
-        align_tmp_res.is_read1.VEC_PUSH_BACK(true);
+        align_tmp_res.is_read1.push_back(true);
         bool gapped1 = gpu_extend_seed_part(align_tmp_res, aligner_parameters, n1_max, references, read1, consistent_nam1);
         is_aligned1[0] = 1;
 
         Nam n2_max = nams2[0];
         bool consistent_nam2 = gpu_reverse_nam_if_needed(n2_max, read2, references, k);
-        align_tmp_res.is_read1.VEC_PUSH_BACK(false);
+        align_tmp_res.is_read1.push_back(false);
         bool gapped2 = gpu_extend_seed_part(align_tmp_res, aligner_parameters, n2_max, references, read2, consistent_nam2);
         is_aligned2[0] = 1;
     }
@@ -1327,8 +1311,8 @@ __device__ void align_PE_part4(
             break;
         }
 
-        align_tmp_res.type4_nams.VEC_PUSH_BACK(n1);
-        align_tmp_res.type4_nams.VEC_PUSH_BACK(n2);
+        align_tmp_res.type4_nams.push_back(n1);
+        align_tmp_res.type4_nams.push_back(n2);
         align_tmp_res.type4_loop_size++;
 
         if (n1.ref_start >= 0) {
@@ -1336,13 +1320,13 @@ __device__ void align_PE_part4(
 
             } else {
                 bool consistent_nam = gpu_reverse_nam_if_needed(n1, read1, references, k);
-                align_tmp_res.is_read1.VEC_PUSH_BACK(true);
+                align_tmp_res.is_read1.push_back(true);
                 bool gapped = gpu_extend_seed_part(align_tmp_res, aligner_parameters, n1, references, read1, consistent_nam);
                 is_aligned1[id1] = 1;
             }
         } else {
             gpu_reverse_nam_if_needed(n2, read2, references, k);
-            align_tmp_res.is_read1.VEC_PUSH_BACK(true);
+            align_tmp_res.is_read1.push_back(true);
             bool is_unaligned = gpu_rescue_mate_part(align_tmp_res, aligner_parameters, n2, references, read1, mu, sigma, k);
         }
 
@@ -1351,13 +1335,13 @@ __device__ void align_PE_part4(
 
             } else {
                 bool consistent_nam = gpu_reverse_nam_if_needed(n2, read2, references, k);
-                align_tmp_res.is_read1.VEC_PUSH_BACK(false);
+                align_tmp_res.is_read1.push_back(false);
                 bool gapped = gpu_extend_seed_part(align_tmp_res, aligner_parameters, n2, references, read2, consistent_nam);
                 is_aligned2[id2] = 1;
             }
         } else {
             gpu_reverse_nam_if_needed(n1, read1, references, k);
-            align_tmp_res.is_read1.VEC_PUSH_BACK(false);
+            align_tmp_res.is_read1.push_back(false);
             bool is_unaligned = gpu_rescue_mate_part(align_tmp_res, aligner_parameters, n1, references, read2, mu, sigma, k);
         }
         high_scores_size++;
@@ -1391,7 +1375,7 @@ __device__ void align_PE_part4(
 //        r_len = ((r_len + 7) & ~7);
 //        total_query_offset += q_len;
 //        total_ref_offset += r_len;
-//        align_tmp_res.todo_infos.VEC_PUSH_BACK({
+//        align_tmp_res.todo_infos.push_back({
 //                                                   global_id_start + i,
 //                                                   tmp_todo_info.todo_info.read_info,
 //                                                   tmp_todo_info.todo_info.ref_id,
@@ -1448,8 +1432,8 @@ __device__ void align_SE_part(
             break;
         }
         bool consistent_nam = gpu_reverse_nam_if_needed(nam, read, references, k);
-        align_tmp_res.consistent_nam.VEC_PUSH_BACK(consistent_nam);
-        align_tmp_res.is_read1.VEC_PUSH_BACK(true);
+        align_tmp_res.consistent_nam.push_back(consistent_nam);
+        align_tmp_res.is_read1.push_back(true);
         bool gapped = gpu_extend_seed_part(align_tmp_res, aligner_parameters, nam, references, read, consistent_nam);
         tries++;
     }
@@ -1662,7 +1646,7 @@ __device__ void sort_nams_get_k(my_vector<Nam>& nams, int mx_num) {
 
 __device__ void sort_nams_by_score(my_vector<Nam>& nams, int mx_num) {
     int* head = (int*)my_malloc(key_mod_val * sizeof(int));
-    my_vector<ref_ids_edge> edges(4, __FILE__, __LINE__, __func__);
+    my_vector<ref_ids_edge> edges;
     for (int i = 0; i < key_mod_val; i++) head[i] = -1;
     int score_group_num = 0;
     for (int i = 0; i < nams.size(); i++) {
@@ -1671,8 +1655,7 @@ __device__ void sort_nams_by_score(my_vector<Nam>& nams, int mx_num) {
         if (score_rank == -1) {
             score_rank = score_group_num;
             int key = score_key % key_mod_val;
-            ref_ids_edge edge{head[key], score_key};
-            edges.VEC_PUSH_BACK(edge);
+            edges.push_back({head[key], score_key});
             head[key] = score_group_num++;
         }
     }
@@ -1686,14 +1669,14 @@ __device__ void sort_nams_by_score(my_vector<Nam>& nams, int mx_num) {
     for (int i = 0; i < score_group_num; i++) {
         all_nams[i].first = -1;
         all_nams[i].second = &all_vecs[i];
-        all_nams[i].second->VEC_INIT_impl(4, __FILE__, __LINE__, __func__);
+        all_nams[i].second->init();
     }
     for (int i = 0; i < nams.size(); i++) {
         int score_key = (int)(nams[i].score);
         int score_rank = find_ref_ids(score_key, head, edges.data);
         assert(score_rank >= 0 && score_rank < score_group_num);
         all_nams[score_rank].first = score_key;
-        all_nams[score_rank].second->VEC_PUSH_BACK(nams[i]);
+        all_nams[score_rank].second->push_back(nams[i]);
     }
     nams.clear();
     quick_sort_iterative(&(all_nams[0]), 0, all_nams.size() - 1,
@@ -1703,7 +1686,7 @@ __device__ void sort_nams_by_score(my_vector<Nam>& nams, int mx_num) {
     for (int i = 0; i < all_nams.size(); i++) {
         for (int j = 0; j < all_nams[i].second->size(); j++) {
             if (nams.size() == mx_num) break;
-            nams.VEC_PUSH_BACK((*all_nams[i].second)[j]);
+            nams.push_back((*all_nams[i].second)[j]);
         }
         all_nams[i].second->release();
     }
@@ -1717,7 +1700,7 @@ __device__ void sort_hits_by_refid(
 ) {
 
     int *head = (int*)my_malloc(key_mod_val * sizeof(int));
-    my_vector<ref_ids_edge> edges(4, __FILE__, __LINE__, __func__);
+    my_vector<ref_ids_edge> edges;
     for(int i = 0; i < key_mod_val; i++) head[i] = -1;
     int ref_ids_num = 0;
     for(int i = 0; i < hits_per_ref.size(); i++) {
@@ -1726,8 +1709,7 @@ __device__ void sort_hits_by_refid(
         if (find_ref_id_rank == -1) {
             find_ref_id_rank = ref_ids_num;
             int key = ref_id % key_mod_val;
-            ref_ids_edge edge{head[key], ref_id};
-            edges.VEC_PUSH_BACK(edge);
+            edges.push_back({head[key], ref_id});
             head[key] = ref_ids_num++;
         }
     }
@@ -1741,20 +1723,19 @@ __device__ void sort_hits_by_refid(
     for (int i = 0; i < ref_ids_num; i++) {
         all_hits[i].first = -1;
         all_hits[i].second = &all_vecs[i];
-        all_hits[i].second->VEC_INIT_impl(4, __FILE__, __LINE__, __func__);
+        all_hits[i].second->init();
     }
     for (int i = 0; i < hits_per_ref.size(); i++) {
         int ref_id = hits_per_ref[i].first;
         int find_ref_id_rank = find_ref_ids(ref_id, head, edges.data);
         assert(find_ref_id_rank >= 0 && find_ref_id_rank < ref_ids_num);
         all_hits[find_ref_id_rank].first = ref_id;
-        all_hits[find_ref_id_rank].second->VEC_PUSH_BACK(hits_per_ref[i].second);
+        all_hits[find_ref_id_rank].second->push_back(hits_per_ref[i].second);
     }
     hits_per_ref.clear();
     for(int i = 0; i < all_hits.size(); i++) {
         for(int j = 0; j < all_hits[i].second->size(); j++) {
-            my_pair<int, Hit> hit_pair{all_hits[i].first, (*all_hits[i].second)[j]};
-            hits_per_ref.VEC_PUSH_BACK(hit_pair);
+            hits_per_ref.push_back({all_hits[i].first, (*all_hits[i].second)[j]});
         }
         all_hits[i].second->release();
     }
@@ -1783,7 +1764,7 @@ __device__ void salign_merge_hits(
 ) {
     if(hits_per_ref.size() == 0) return;
     int ref_num = 0;
-    my_vector<int> each_ref_size(4, __FILE__, __LINE__, __func__);
+    my_vector<int> each_ref_size;
     int pre_ref_id = hits_per_ref[0].first;
     int now_ref_num = 1;
     for(int i = 1; i < hits_per_ref.size(); i++) {
@@ -1792,22 +1773,22 @@ __device__ void salign_merge_hits(
         if(ref_id != pre_ref_id) {
             ref_num++;
             pre_ref_id = ref_id;
-            each_ref_size.VEC_PUSH_BACK(now_ref_num);
+            each_ref_size.push_back(now_ref_num);
             now_ref_num = 1;
         } else {
             now_ref_num++;
         }
     }
     ref_num++;
-    each_ref_size.VEC_PUSH_BACK(now_ref_num);
+    each_ref_size.push_back(now_ref_num);
     //int mx_hits_per_ref = 0;
     //for (int i = 0; i < each_ref_size.size(); i++) {
     //    mx_hits_per_ref = my_max(mx_hits_per_ref, each_ref_size[i]);
     //}
 
-    my_vector<Nam> open_nams(4, __FILE__, __LINE__, __func__);
+    my_vector<Nam> open_nams;
     //(mx_hits_per_ref);
-    my_vector<bool> is_added(32, __FILE__, __LINE__, __func__);
+    my_vector<bool> is_added(32);
     int now_vec_pos = 0;
     for (int rid = 0; rid < ref_num; rid++) {
         if(rid != 0) now_vec_pos += each_ref_size[rid - 1];
@@ -1828,7 +1809,7 @@ __device__ void salign_merge_hits(
             //}
             //quick_sort(&(hits[i_start]), i_size);
             is_added.clear();
-            for(size_t j = 0; j < i_size; j++) is_added.VEC_PUSH_BACK(false);
+            for(size_t j = 0; j < i_size; j++) is_added.push_back(false);
             int query_start = hits[i_start].second.query_start;
             int cnt_done = 0;
             for (int k = 0; k < open_nams.size(); k++) {
@@ -1886,7 +1867,7 @@ __device__ void salign_merge_hits(
                     n.n_hits = 1;
                     n.is_rc = is_revcomp;
                     //                n.score += (float)1 / (float)h.count;
-                    open_nams.VEC_PUSH_BACK(n);
+                    open_nams.push_back(n);
                 }
             }
 
@@ -1904,7 +1885,7 @@ __device__ void salign_merge_hits(
                         //                        n_score = n.n_hits * n.query_span();
                         n.score = n_score;
                         n.nam_id = nams.size();
-                        nams.VEC_PUSH_BACK(n);
+                        nams.push_back(n);
                     }
                 }
 
@@ -1914,7 +1895,7 @@ __device__ void salign_merge_hits(
                 open_nams.clear();
                 for (int in = 0; in < old_open_size; ++in) {
                     if (!(open_nams[in].query_end < c)) {
-                        open_nams.VEC_PUSH_BACK(open_nams[in]);
+                        open_nams.push_back(open_nams[in]);
                     }
                 }
                 prev_q_start = query_start;
@@ -1930,7 +1911,7 @@ __device__ void salign_merge_hits(
             //            n_score = n.n_hits * n.query_span();
             n.score = n_score;
             n.nam_id = nams.size();
-            nams.VEC_PUSH_BACK(n);
+            nams.push_back(n);
         }
     }
 }
@@ -1946,7 +1927,7 @@ __device__ void merge_hits(
     int num_hits = hits_per_ref.size();
 
     int ref_num = 0;
-    my_vector<int> each_ref_size(8, __FILE__, __LINE__, __func__);
+    my_vector<int> each_ref_size(8);
     int pre_ref_id = hits_per_ref[0].first;
     int now_ref_num = 1;
     for(int i = 1; i < hits_per_ref.size(); i++) {
@@ -1956,16 +1937,16 @@ __device__ void merge_hits(
 //            assert(ref_id > pre_ref_id);
             ref_num++;
             pre_ref_id = ref_id;
-            each_ref_size.VEC_PUSH_BACK(now_ref_num);
+            each_ref_size.push_back(now_ref_num);
             now_ref_num = 1;
         } else {
             now_ref_num++;
         }
     }
     ref_num++;
-    each_ref_size.VEC_PUSH_BACK(now_ref_num);
+    each_ref_size.push_back(now_ref_num);
 
-    my_vector<Nam> open_nams(4, __FILE__, __LINE__, __func__);
+    my_vector<Nam> open_nams;
 
     int now_vec_pos = 0;
     for (int i = 0; i < ref_num; i++) {
@@ -2024,7 +2005,7 @@ __device__ void merge_hits(
                 n.n_hits = 1;
                 n.is_rc = is_revcomp;
                 //                n.score += (float)1 / (float)h.count;
-                open_nams.VEC_PUSH_BACK(n);
+                open_nams.push_back(n);
             }
 
             // Only filter if we have advanced at least k nucleotides
@@ -2040,7 +2021,7 @@ __device__ void merge_hits(
                         //                        n_score = n.n_hits * n.query_span();
                         n.score = n_score;
                         n.nam_id = nams.size();
-                        nams.VEC_PUSH_BACK(n);
+                        nams.push_back(n);
                     }
                 }
 
@@ -2050,7 +2031,7 @@ __device__ void merge_hits(
                 open_nams.clear();
                 for (int in = 0; in < old_open_size; ++in) {
                     if (!(open_nams[in].query_end < c)) {
-                        open_nams.VEC_PUSH_BACK(open_nams[in]);
+                        open_nams.push_back(open_nams[in]);
                     }
                 }
                 prev_q_start = h.query_start;
@@ -2067,7 +2048,7 @@ __device__ void merge_hits(
             //            n_score = n.n_hits * n.query_span();
             n.score = n_score;
             n.nam_id = nams.size();
-            nams.VEC_PUSH_BACK(n);
+            nams.push_back(n);
         }
     }
 }
@@ -2088,8 +2069,7 @@ __device__ void add_to_hits_per_ref(
         int diff = std::abs((query_end - query_start) - (ref_end - ref_start));
         if (diff <= min_diff) {
 //        if (diff < min_diff || diff == 0) {
-            my_pair<int, Hit> hit_pair{d_randstrobes[position].reference_index(), Hit{query_start, query_end, ref_start, ref_end}};
-            hits_per_ref.VEC_PUSH_BACK(hit_pair);
+            hits_per_ref.push_back({d_randstrobes[position].reference_index(), Hit{query_start, query_end, ref_start, ref_end}});
             min_diff = diff;
         }
     }
@@ -2123,17 +2103,10 @@ __global__ void gpu_rescue_get_hits(
     if (r_range > num_tasks) r_range = num_tasks;
     for (int id = l_range; id < r_range; id++) {
         int real_id = global_todo_ids[id];
-//        my_vector<my_pair<int, Hit>>* hits_per_ref0;
-//        my_vector<my_pair<int, Hit>>* hits_per_ref1;
-//        hits_per_ref0 = (my_vector<my_pair<int, Hit>>*)my_malloc(sizeof(my_vector<my_pair<int, Hit>>));
-//        hits_per_ref1 = (my_vector<my_pair<int, Hit>>*)my_malloc(sizeof(my_vector<my_pair<int, Hit>>));
-//        hits_per_ref0->VEC_INIT_impl(32, __FILE__, __LINE__, __func__);
-//        hits_per_ref1->VEC_INIT_impl(32, __FILE__, __LINE__, __func__);
-//        hits_per_ref0s[real_id].VEC_INIT_impl(32, __FILE__, __LINE__, __func__);
-//        hits_per_ref1s[real_id].VEC_INIT_impl(32, __FILE__, __LINE__, __func__);
 
-        my_vector<RescueHit> hits_t0(4, __FILE__, __LINE__, __func__);
-        my_vector<RescueHit> hits_t1(4, __FILE__, __LINE__, __func__);
+
+        my_vector<RescueHit> hits_t0;
+        my_vector<RescueHit> hits_t1;
         for (int i = 0; i < global_randstrobes[real_id].size(); i++) {
             QueryRandstrobe q = global_randstrobes[real_id][i];
             //size_t position = gpu_find(d_randstrobes, d_randstrobe_start_indices, q.hash, bits);
@@ -2145,8 +2118,8 @@ __global__ void gpu_rescue_get_hits(
                 }
                 unsigned int count = gpu_get_count(d_randstrobes, d_randstrobe_start_indices, position, bits);
                 RescueHit rh{position, count, q.start, q.end};
-                if(q.is_reverse) hits_t1.VEC_PUSH_BACK(rh);
-                else hits_t0.VEC_PUSH_BACK(rh);
+                if(q.is_reverse) hits_t1.push_back(rh);
+                else hits_t0.push_back(rh);
             }
         }
         global_randstrobes[real_id].release();
@@ -2179,12 +2152,10 @@ __global__ void gpu_rescue_get_hits(
         });
         for (int i = 0; i < cnt0; i++) {
             RescueHit &rh = hits_t0[i];
-//            add_to_hits_per_ref(*hits_per_ref0, rh.query_start, rh.query_end, rh.position, d_randstrobes, d_randstrobes_size, index_para->syncmer.k);
             add_to_hits_per_ref(hits_per_ref0s[real_id], rh.query_start, rh.query_end, rh.position, d_randstrobes, d_randstrobes_size, index_para->syncmer.k);
         }
         for (int i = 0; i < cnt1; i++) {
             RescueHit &rh = hits_t1[i];
-//            add_to_hits_per_ref(*hits_per_ref1, rh.query_start, rh.query_end, rh.position, d_randstrobes, d_randstrobes_size, index_para->syncmer.k);
             add_to_hits_per_ref(hits_per_ref1s[real_id], rh.query_start, rh.query_end, rh.position, d_randstrobes, d_randstrobes_size, index_para->syncmer.k);
         }
 #else
@@ -2194,7 +2165,6 @@ __global__ void gpu_rescue_get_hits(
             if ((rh.count > rescue_cutoff && cnt >= 5) || rh.count > 100) {
                 break;
             }
-//            add_to_hits_per_ref(*hits_per_ref0, rh.query_start, rh.query_end, rh.position, d_randstrobes, d_randstrobes_size, index_para->syncmer.k);
             add_to_hits_per_ref(hits_per_ref0s[real_id], rh.query_start, rh.query_end, rh.position, d_randstrobes, d_randstrobes_size, index_para->syncmer.k);
             cnt++;
         }
@@ -2204,16 +2174,11 @@ __global__ void gpu_rescue_get_hits(
             if ((rh.count > rescue_cutoff && cnt >= 5) || rh.count > 100) {
                 break;
             }
-//            add_to_hits_per_ref(*hits_per_ref1, rh.query_start, rh.query_end, rh.position, d_randstrobes, d_randstrobes_size, index_para->syncmer.k);
             add_to_hits_per_ref(hits_per_ref1s[real_id], rh.query_start, rh.query_end, rh.position, d_randstrobes, d_randstrobes_size, index_para->syncmer.k);
             cnt++;
         }
 #endif
 //        global_hits_num[real_id] = hits_per_ref0->size() + hits_per_ref1->size();
-//        hits_per_ref0s[real_id] = *hits_per_ref0;
-//        hits_per_ref1s[real_id] = *hits_per_ref1;
-//        my_free(hits_per_ref0);
-//        my_free(hits_per_ref1);
     }
 }
 
@@ -2236,7 +2201,7 @@ __global__ void gpu_rescue_merge_hits_get_nams(
     for (int id = l_range; id < r_range; id++) {
         int real_id = global_todo_ids[id];
         my_vector<Nam> *nams = (my_vector<Nam>*)my_malloc(sizeof(my_vector<Nam>));
-        nams->VEC_INIT_impl(8, __FILE__, __LINE__, __func__);
+        nams->init(8);
         salign_merge_hits(hits_per_ref0s[real_id], index_para->syncmer.k, 0, *nams);
         salign_merge_hits(hits_per_ref1s[real_id], index_para->syncmer.k, 1, *nams);
         //merge_hits(hits_per_ref0s[real_id], index_para->syncmer.k, 0, *nams);
@@ -2281,7 +2246,7 @@ __global__ void gpu_get_randstrobes(
             rc = all_seqs + pre_sum[read_id + read_num * 3];
         }
 
-        my_vector<Syncmer> syncmers(len, __FILE__, __LINE__, __func__);
+        my_vector<Syncmer> syncmers(len);
 
         const int k = index_para->syncmer.k;
         const int s = index_para->syncmer.s;
@@ -2291,7 +2256,7 @@ __global__ void gpu_get_randstrobes(
         const uint64_t smask = (1ULL << 2 * s) - 1;
         const uint64_t kshift = (k - 1) * 2;
         const uint64_t sshift = (s - 1) * 2;
-        my_vector<uint64_t> gpu_qs(len * 2, __FILE__, __LINE__, __func__);
+        my_vector<uint64_t> gpu_qs(len * 2);
         int l_pos = 0;
         int r_pos = 0;
         uint64_t qs_min_val = UINT64_MAX;
@@ -2344,8 +2309,7 @@ __global__ void gpu_get_randstrobes(
                 }
                 if (qs_min_pos == i - k + t) { // occurs at t:th position in k-mer
                     uint64_t yk = xk[0] < xk[1] ? xk[0] : xk[1];
-                    Syncmer ss{gpu_syncmer_kmer_hash(yk), i - k + 1};
-                    syncmers.VEC_PUSH_BACK(ss);
+                    syncmers.push_back(Syncmer{gpu_syncmer_kmer_hash(yk), i - k + 1});
                 }
             } else {
                 // if there is an "N", restart
@@ -2363,10 +2327,7 @@ __global__ void gpu_get_randstrobes(
         const uint64_t q = index_para->randstrobe.q;
         const int max_dist = index_para->randstrobe.max_dist;
 
-//        my_vector<QueryRandstrobe> *randstrobes;
-//        randstrobes = (my_vector<QueryRandstrobe>*)my_malloc(sizeof(my_vector<QueryRandstrobe>));
-//        randstrobes->VEC_INIT_impl((my_max(syncmers.size() - w_min, 0)) * 2, __FILE__, __LINE__, __func__);
-        global_randstrobes[id].VEC_INIT_impl((my_max(syncmers.size() - w_min, 0)) * 2, __FILE__, __LINE__, __func__);
+        global_randstrobes[id].init((my_max(syncmers.size() - w_min, 0)) * 2);
 
         for (int strobe1_index = 0; strobe1_index + w_min < syncmers.size(); strobe1_index++) {
             unsigned int w_end = (strobe1_index + w_max < syncmers.size() - 1) ? (strobe1_index + w_max) : syncmers.size() - 1;
@@ -2383,12 +2344,12 @@ __global__ void gpu_get_randstrobes(
                     strobe2 = syncmers[i];
                 }
             }
-            QueryRandstrobe query_randstrobe{
-                    gpu_randstrobe_hash(strobe1.hash, strobe2.hash), static_cast<uint32_t>(strobe1.position),
-                    static_cast<uint32_t>(strobe2.position) + index_para->syncmer.k, false
-            };
-//            randstrobes->VEC_PUSH_BACK(query_randstrobe);
-            global_randstrobes[id].VEC_PUSH_BACK(query_randstrobe);
+            global_randstrobes[id].push_back(
+                    QueryRandstrobe{
+                            gpu_randstrobe_hash(strobe1.hash, strobe2.hash), static_cast<uint32_t>(strobe1.position),
+                            static_cast<uint32_t>(strobe2.position) + index_para->syncmer.k, false
+                    }
+            );
         }
 
 
@@ -2414,92 +2375,13 @@ __global__ void gpu_get_randstrobes(
                     strobe2 = syncmers[i];
                 }
             }
-            QueryRandstrobe query_randstrobe{
-                    gpu_randstrobe_hash(strobe1.hash, strobe2.hash), static_cast<uint32_t>(strobe1.position),
-                    static_cast<uint32_t>(strobe2.position) + index_para->syncmer.k, true
-            };
-//            randstrobes->VEC_PUSH_BACK(query_randstrobe);
-            global_randstrobes[id].VEC_PUSH_BACK(query_randstrobe);
+            global_randstrobes[id].push_back(
+             QueryRandstrobe{
+                            gpu_randstrobe_hash(strobe1.hash, strobe2.hash), static_cast<uint32_t>(strobe1.position),
+                            static_cast<uint32_t>(strobe2.position) + index_para->syncmer.k, true
+                    }
+            );
         }
-//        global_randstrobes[id] = *randstrobes;
-//        my_free(randstrobes);
-    }
-}
-
-__global__ void gpu_get_hits_after2(
-        int bits,
-        unsigned int filter_cutoff,
-        int rescue_cutoff,
-        const RefRandstrobe *d_randstrobes,
-        size_t d_randstrobes_size,
-        const my_bucket_index_t *d_randstrobe_start_indices,
-        int num_tasks,
-        IndexParameters *index_para,
-        uint64_t *global_hits_num,
-        my_vector<QueryRandstrobe>* global_randstrobes,
-        my_vector<my_pair<int, Hit>>* hits_per_ref0s,
-        my_vector<my_pair<int, Hit>>* hits_per_ref1s
-) {
-    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
-    int bid = blockIdx.x;
-    int tid = threadIdx.x;
-    int l_range = global_id * GPU_thread_task_size;
-    int r_range = l_range + GPU_thread_task_size;
-    if (r_range > num_tasks) r_range = num_tasks;
-    for (int id = l_range; id < r_range; id++) {
-        int sum_seeds0 = 0;
-        int sum_seeds1 = 0;
-        for (int i = 0; i < global_randstrobes[id].size(); i++) {
-            if (global_randstrobes[id][i].is_reverse) {
-                sum_seeds1++;
-            } else {
-                sum_seeds0++;
-            }
-        }
-//        my_vector<my_pair<int, Hit>>* hits_per_ref0;
-//        my_vector<my_pair<int, Hit>>* hits_per_ref1;
-//        hits_per_ref0 = (my_vector<my_pair<int, Hit>>*)my_malloc(sizeof(my_vector<my_pair<int, Hit>>));
-//        hits_per_ref1 = (my_vector<my_pair<int, Hit>>*)my_malloc(sizeof(my_vector<my_pair<int, Hit>>));
-//        hits_per_ref0->VEC_INIT_impl(32, __FILE__, __LINE__, __func__);
-//        hits_per_ref1->VEC_INIT_impl(32, __FILE__, __LINE__, __func__);
-        hits_per_ref0s[id].VEC_INIT_impl(8, __FILE__, __LINE__, __func__);
-        hits_per_ref1s[id].VEC_INIT_impl(8, __FILE__, __LINE__, __func__);
-
-        uint64_t local_total_hits = 0;
-        uint64_t local_nr_good_hits = 0;
-        for (int i = 0; i < global_randstrobes[id].size(); i++) {
-            QueryRandstrobe q = global_randstrobes[id][i];
-            size_t position = q.hash;
-            if (position != static_cast<size_t>(-1)) {
-                local_total_hits++;
-                bool res = gpu_is_filtered(d_randstrobes, d_randstrobes_size, position, filter_cutoff);
-                if (res) continue;
-                local_nr_good_hits++;
-                if(q.is_reverse) {
-//                    add_to_hits_per_ref(*hits_per_ref1, q.start, q.end, position, d_randstrobes, d_randstrobes_size, index_para->syncmer.k);
-                    add_to_hits_per_ref(hits_per_ref1s[id], q.start, q.end, position, d_randstrobes, d_randstrobes_size, index_para->syncmer.k);
-                } else {
-//                    add_to_hits_per_ref(*hits_per_ref0, q.start, q.end, position, d_randstrobes, d_randstrobes_size, index_para->syncmer.k);
-                    add_to_hits_per_ref(hits_per_ref0s[id], q.start, q.end, position, d_randstrobes, d_randstrobes_size, index_para->syncmer.k);
-                }
-            }
-        }
-        float nonrepetitive_fraction = local_total_hits > 0 ? ((float) local_nr_good_hits) / ((float) local_total_hits) : 1.0;
-
-//        if (nonrepetitive_fraction < 0.7 || hits_per_ref0->size() + hits_per_ref1->size() == 0) {
-        if (nonrepetitive_fraction < 0.7 || hits_per_ref0s[id].size() + hits_per_ref1s[id].size() == 0) {
-//            hits_per_ref0->release();
-//            hits_per_ref1->release();
-//            hits_per_ref0s[id].release();
-//            hits_per_ref1s[id].release();
-        } else {
-            global_randstrobes[id].release();
-        }
-//        global_hits_num[id] = hits_per_ref0->size() + hits_per_ref1->size();
-//        hits_per_ref0s[id] = *hits_per_ref0;
-//        hits_per_ref1s[id] = *hits_per_ref1;
-//        my_free(hits_per_ref0);
-//        my_free(hits_per_ref1);
     }
 }
 
@@ -2533,8 +2415,8 @@ __global__ void gpu_get_hits_after(
                 sum_seeds0++;
             }
         }
-        hits_per_ref0s[id].VEC_INIT_impl(8, __FILE__, __LINE__, __func__);
-        hits_per_ref1s[id].VEC_INIT_impl(8, __FILE__, __LINE__, __func__);
+        hits_per_ref0s[id].init(8);
+        hits_per_ref1s[id].init(8);
         uint64_t local_total_hits = 0;
         uint64_t local_nr_good_hits = 0;
         for (int i = 0; i < global_randstrobes[id].size(); i++) {
@@ -2621,9 +2503,9 @@ __global__ void gpu_sort_nams(
             sort_nams_by_score(global_nams[id], max_tries);
             global_nams[id].length = my_min(global_nams[id].length, max_tries);
         } else {
-            sort_nams_by_score(global_nams[id], max_tries * 2);
-            global_nams[id].length = my_min(global_nams[id].length, max_tries * 2);
-            //sort_nams_by_score(global_nams[id], 1e9);
+            //sort_nams_by_score(global_nams[id], max_tries * 2);
+            //global_nams[id].length = my_min(global_nams[id].length, max_tries * 2);
+            sort_nams_by_score(global_nams[id], 1e9);
         }
 //        sort_nams_single_check(global_nams[id]);
         gpu_shuffle_top_nams(global_nams[id]);
@@ -2692,17 +2574,11 @@ __global__ void gpu_merge_hits_get_nams(
     if (r_range > num_tasks) r_range = num_tasks;
     for (int id = l_range; id < r_range; id++) {
         int real_id = global_todo_ids[id];
-//        my_vector<Nam> *nams = (my_vector<Nam>*)my_malloc(sizeof(my_vector<Nam>));
-//        nams->VEC_INIT_impl(32, __FILE__, __LINE__, __func__);
-        global_nams[real_id].VEC_INIT_impl(8, __FILE__, __LINE__, __func__);
-//        merge_hits(hits_per_ref0s[real_id], index_para->syncmer.k, 0, *nams);
-//        merge_hits(hits_per_ref1s[real_id], index_para->syncmer.k, 1, *nams);
+        global_nams[real_id].init(8);
         merge_hits(hits_per_ref0s[real_id], index_para->syncmer.k, 0, global_nams[real_id]);
         merge_hits(hits_per_ref1s[real_id], index_para->syncmer.k, 1, global_nams[real_id]);
         hits_per_ref0s[real_id].release();
         hits_per_ref1s[real_id].release();
-//        global_nams[real_id] = *nams;
-//        my_free(nams);
     }
 }
 
