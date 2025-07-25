@@ -10,6 +10,10 @@ struct CommandLineOptions {
     int n_gpus { 1 };
     int chunk_size { 10000 };
 
+    bool only_gpu {false};
+
+    bool unordered_output {false};
+
     // Input/output
     std::string output_file_name;
     bool write_to_stdout { true };

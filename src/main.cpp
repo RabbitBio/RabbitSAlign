@@ -28,7 +28,7 @@
 #include "readlen.hpp"
 #include "version.hpp"
 #include "buildconfig.hpp"
-#include "gpu_step.h"
+#include "gpu_pipeline.h"
 
 #ifdef RABBIT_FX
 #include "FastxStream.h"
@@ -37,14 +37,6 @@
 #include "Formater.h"
 #endif
 
-
-
-#include <sys/time.h>
-inline double GetTime() {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (double) tv.tv_sec + (double) tv.tv_usec / 1000000;
-}
 
 int getNumaNodeCount() {
     std::ifstream file("/sys/devices/system/node/possible");
@@ -259,6 +251,7 @@ int producer_se_fastq_task(std::string file, rabbit::fq::FastqDataPool& fastqPoo
 #define META_DATA_SIZE (168) // size of meta data per read in GPU memory
 
 #define GALLATIN_BASE_SIZE (2.0 * GB_BYTE) // base size of Gallatin GPU memory
+//#define GALLATIN_CHUNK_SIZE (1.0 * GB_BYTE) // size of each chunk in Gallatin GPU memory
 #define GALLATIN_CHUNK_SIZE (0.3 * GB_BYTE) // size of each chunk in Gallatin GPU memory
 
 #define OVERLAP_SIZE 3 // triple buffering
@@ -268,6 +261,7 @@ uint64_t STREAM_BATCH_SIZE_GPU = 4096ll;
 uint64_t MAX_QUERY_LEN = 600ll;
 uint64_t MAX_TARGET_LEN = 1000ll;
 
+const int G_num = 2; // number of typeB thread per GPU
 
 uint64_t calculateMemoryUsageSE(int total_cpu_num, int gpu_num, int chunk_num, int eval_read_len, int chunk_size, int max_tries, uint64_t ref_index_size) {
     int total_read_num = chunk_num * chunk_size / 2 / eval_read_len;
@@ -289,7 +283,6 @@ uint64_t calculateMemoryUsageSE(int total_cpu_num, int gpu_num, int chunk_num, i
     // device_todo memory size
     uint64_t device_todo_mem_size = chunk_num * DEVICE_TODO_SIZE_PER_CHUNK * 3;
 
-    const int G_num = 2; // number of typeB thread per GPU
     int C_num = total_cpu_num / gpu_num - G_num; // number of typeA threads per GPU
     double SIZE0 = G_num * MAX_GPU_SSW_SIZE + C_num * MAX_CPU_SSW_SIZE;
     double SIZE1 = G_num * (align_res_total_size + meta_data_size + seq_data_size + device_todo_mem_size);
@@ -320,7 +313,6 @@ uint64_t calculateMemoryUsagePE(int total_cpu_num, int gpu_num, int chunk_num, i
     // device_todo memory size
     uint64_t device_todo_mem_size = chunk_num * DEVICE_TODO_SIZE_PER_CHUNK * 3;
 
-    const int G_num = 2; // number of typeB thread per GPU
     int C_num = total_cpu_num / gpu_num - G_num; // number of typeA threads per GPU
     double SIZE0 = G_num * MAX_GPU_SSW_SIZE + C_num * MAX_CPU_SSW_SIZE;
     double SIZE1 = G_num * (align_res_total_size + meta_data_size + seq_data_size + device_todo_mem_size);
@@ -384,7 +376,7 @@ std::vector<ThreadAssignment> assign_threads_fixed_with_flags(int total_cpu_num,
 
     std::vector<int> selected_threads = evenly_select(total_cpu_num, cpu_num);
 
-    std::vector<int> main_gpu_indices = evenly_select(cpu_num, gpu_num * 2);
+    std::vector<int> main_gpu_indices = evenly_select(cpu_num, gpu_num * G_num);
     std::unordered_set<int> main_gpu_tids;
     std::unordered_set<int> aux_gpu_tids;
 
@@ -771,9 +763,9 @@ int run_rabbitsalign(int argc, char **argv) {
                             std::ref(map_param), std::ref(index_parameters), std::ref(references),
                             std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
                             std::ref(fastqPool), std::ref(queue_se), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
-                            batch_read_num, batch_total_read_len, chunk_num);
+                            batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
                     workers.push_back(std::move(consumer));
-                } else {
+                } else if (!opt.only_gpu) {
                     std::thread consumer(perform_task_async_se_fx, std::ref(input_buffer), std::ref(output_buffer),
                             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
                             std::ref(map_param), std::ref(index_parameters), std::ref(references),
@@ -794,9 +786,9 @@ int run_rabbitsalign(int argc, char **argv) {
                             std::ref(map_param), std::ref(index_parameters), std::ref(references),
                             std::ref(index2), std::ref(opt.read_group_id), assignments[i].thread_id,
                             std::ref(fastqPool), std::ref(queue_se), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
-                            batch_read_num, batch_total_read_len, chunk_num);
+                            batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
                     workers.push_back(std::move(consumer));
-                } else {
+                } else if (!opt.only_gpu) {
                     std::thread consumer(perform_task_async_se_fx, std::ref(input_buffer), std::ref(output_buffer),
                             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
                             std::ref(map_param), std::ref(index_parameters), std::ref(references),
@@ -818,9 +810,9 @@ int run_rabbitsalign(int argc, char **argv) {
                             std::ref(map_param), std::ref(index_parameters), std::ref(references),
                             std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
                             std::ref(fastqPool), std::ref(queue_se), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
-                            batch_read_num, batch_total_read_len, chunk_num);
+                            batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
                     workers.push_back(std::move(consumer));
-                } else {
+                } else if (!opt.only_gpu) {
                     std::thread consumer(perform_task_async_se_fx, std::ref(input_buffer), std::ref(output_buffer),
                             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
                             std::ref(map_param), std::ref(index_parameters), std::ref(references),
@@ -847,9 +839,9 @@ int run_rabbitsalign(int argc, char **argv) {
                             std::ref(map_param), std::ref(index_parameters), std::ref(references),
                             std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
                             std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
-                            batch_read_num, batch_total_read_len, chunk_num);
+                            batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
                     workers.push_back(std::move(consumer));
-                } else {
+                } else if (!opt.only_gpu) {
                     std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
                             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
                             std::ref(map_param), std::ref(index_parameters), std::ref(references),
@@ -869,9 +861,9 @@ int run_rabbitsalign(int argc, char **argv) {
                             std::ref(map_param), std::ref(index_parameters), std::ref(references),
                             std::ref(index2), std::ref(opt.read_group_id), assignments[i].thread_id,
                             std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
-                            batch_read_num, batch_total_read_len, chunk_num);
+                            batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
                     workers.push_back(std::move(consumer));
-                } else {
+                } else if (!opt.only_gpu) {
                     std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
                             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
                             std::ref(map_param), std::ref(index_parameters), std::ref(references),
@@ -893,9 +885,9 @@ int run_rabbitsalign(int argc, char **argv) {
                             std::ref(map_param), std::ref(index_parameters), std::ref(references),
                             std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
                             std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
-                            batch_read_num, batch_total_read_len, chunk_num);
+                            batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
                     workers.push_back(std::move(consumer));
-                } else {
+                } else if (!opt.only_gpu) {
                     std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
                             std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
                             std::ref(map_param), std::ref(index_parameters), std::ref(references),
@@ -918,69 +910,8 @@ int run_rabbitsalign(int argc, char **argv) {
 
 #else
 
-    if(opt.is_SE) {
-        //SE
-        fprintf(stderr, "SE module\n");
-        if(use_good_numa) {
-            for (int i = 0; i < opt.n_threads / 2; ++i) {
-                std::thread consumer(perform_task_async_se, std::ref(input_buffer), std::ref(output_buffer),
-                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                        std::ref(index), std::ref(opt.read_group_id), i, use_good_numa);
-                workers.push_back(std::move(consumer));
-            }
-            for (int i = opt.n_threads / 2; i < opt.n_threads; ++i) {
-                std::thread consumer(perform_task_async_se, std::ref(input_buffer), std::ref(output_buffer),
-                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                        std::ref(index2), std::ref(opt.read_group_id), totalCPUs / 2 + i - opt.n_threads / 2, use_good_numa);
-                workers.push_back(std::move(consumer));
-            }
-        } else {
-            for (int i = 0; i < opt.n_threads; ++i) {
-                std::thread consumer(perform_task_async_se, std::ref(input_buffer), std::ref(output_buffer),
-                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                        std::ref(index), std::ref(opt.read_group_id), i, use_good_numa);
-                workers.push_back(std::move(consumer));
-            }
-        }
-    } else {
-        //PE
-        fprintf(stderr, "PE module\n");
-        if(use_good_numa) {
-            printf("size %d\n", index.randstrobes.size());
-            for (int i = 0; i < opt.n_threads / 2; ++i) {
-                std::thread consumer(perform_task_async_pe, std::ref(input_buffer), std::ref(output_buffer),
-                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                        std::ref(index), std::ref(opt.read_group_id), i, use_good_numa);
-                workers.push_back(std::move(consumer));
-            }
-            for (int i = opt.n_threads / 2; i < opt.n_threads; ++i) {
-                std::thread consumer(perform_task_async_pe, std::ref(input_buffer), std::ref(output_buffer),
-                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                        std::ref(index2), std::ref(opt.read_group_id), totalCPUs / 2 + i - opt.n_threads / 2, use_good_numa);
-                workers.push_back(std::move(consumer));
-            }
-        } else{
-            printf("size %d\n", index.randstrobes.size());
-            for (int i = 0; i < opt.n_threads; ++i) {
-                std::thread consumer(perform_task_async_pe, std::ref(input_buffer), std::ref(output_buffer),
-                        std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                        std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                        std::ref(index), std::ref(opt.read_group_id), i, use_good_numa);
-                workers.push_back(std::move(consumer));
-            }
-        }
-    }
-    if (opt.show_progress && isatty(2)) {
-        show_progress_until_done(worker_done, log_stats_vec);
-    }
-    for (auto& worker : workers) {
-        worker.join();
-    }
+    logger.error("pls use fx mode\n");
+    return -1;
 
 #endif
 

@@ -88,8 +88,14 @@ set(SOURCES
         src/gasal2_ssw.cpp
         src/gasal2_ssw.h
         src/my_struct.cu
-        src/gpu_step.cu
         src/gpu_packing.cu
+        src/gpu_common.cu
+        src/gpu_seeding.cu
+        src/gpu_merging.cu
+        src/gpu_alignment.cu
+        src/gpu_pipeline_common.cu
+        src/gpu_pipeline_pe.cu
+        src/gpu_pipeline_se.cu
 )
 
 #include_directories(src/ src/include ext/ ${PROJECT_BINARY_DIR} ${MPI_C_INCLUDE_DIRS})

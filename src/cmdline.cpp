@@ -34,6 +34,9 @@ CommandLineOptions parse_command_line_arguments(int argc, char **argv) {
     args::ValueFlag<std::string> rgid(parser, "ID", "Read group ID", {"rg-id"});
     args::ValueFlagList<std::string> rg(parser, "TAG:VALUE", "Add read group metadata to SAM header (can be specified multiple times). Example: SM:samplename", {"rg"});
     args::Flag details(parser, "details", "Add debugging details to SAM records", {"details"});
+    args::Flag only_gpu(parser, "only_gpu", "Only use gpu [false]", { "only_gpu" });
+    args::Flag unordered_output(parser, "unordered_output", "Does not guarantee SAM output in the input order [false]", { "unordered_output" });
+
 
     args::ValueFlag<int> N(parser, "INT", "Retain at most INT secondary alignments (is upper bounded by -M and depends on -S) [0]", {'N'});
     args::ValueFlag<std::string> index_statistics(parser, "PATH", "Print statistics of indexing to PATH", {"index-statistics"});
@@ -87,6 +90,10 @@ CommandLineOptions parse_command_line_arguments(int argc, char **argv) {
     if (threads) { opt.n_threads = args::get(threads); }
     if (gpus) { opt.n_gpus = args::get(gpus); }
     if (chunk_size) { opt.chunk_size = args::get(chunk_size); }
+
+    if (only_gpu) {opt.only_gpu = args::get(only_gpu);}
+
+    if (unordered_output) {opt.unordered_output = args::get(unordered_output);}
 
     // Input/output
     if (o) { opt.output_file_name = args::get(o); opt.write_to_stdout = false; }

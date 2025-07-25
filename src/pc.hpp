@@ -68,7 +68,7 @@ public:
     std::unordered_map<size_t, std::string> chunks;
     size_t next_chunk_index{0};
 
-    void output_records(std::string chunk, size_t chunk_index);
+    void output_records(std::string chunk, size_t chunk_index, bool unordered_output = false);
 };
 
 

@@ -116,22 +116,22 @@ void InputBuffer::rewind_reset() {
     chunk_index = 0;
 }
 
-void OutputBuffer::output_records(std::string chunk, size_t chunk_index) {
+void OutputBuffer::output_records(std::string chunk, size_t chunk_index, bool unordered_output) {
     std::unique_lock<std::mutex> unique_lock(mtx);
-
-    // Ensure we print the chunks in the order in which they were read
-    assert(chunks.count(chunk_index) == 0);
-//    out << chunk;
-
-    chunks.emplace(std::make_pair(chunk_index, chunk));
-    while (true) {
-        const auto& item = chunks.find(next_chunk_index);
-        if (item == chunks.end()) {
-            break;
+    if (unordered_output) out << chunk;
+    else {
+        // Ensure we print the chunks in the order in which they were read
+        assert(chunks.count(chunk_index) == 0);
+        chunks.emplace(std::make_pair(chunk_index, chunk));
+        while (true) {
+            const auto &item = chunks.find(next_chunk_index);
+            if (item == chunks.end()) {
+                break;
+            }
+            out << item->second;
+            chunks.erase(item);
+            next_chunk_index++;
         }
-        out << item->second;
-        chunks.erase(item);
-        next_chunk_index++;
     }
     unique_lock.unlock();
 }
