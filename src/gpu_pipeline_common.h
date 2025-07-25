@@ -8,7 +8,10 @@
 #include <random>
 #include "gpu_common.h" // Asumiendo que esta cabecera contiene structs como neoRcRef, Nam, etc.
 
-#define use_seg_sort
+//#define use_seg_sort
+
+#define use_index_sort
+
 
 // --- Declaraciones de Variables Globales Externas ---
 extern std::once_flag init_flag_ref[GPU_NUM_MAX];

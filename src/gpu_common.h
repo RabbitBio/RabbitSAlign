@@ -35,8 +35,6 @@
 #include "hash.hpp"
 #include "timer.hpp"
 
-#define GPU_thread_task_size 1
-
 #define my_bucket_index_t StrobemerIndex::bucket_index_t
 
 #define MAX_TRIES_LIMIT (d_map_param->max_tries * 2 + 2)

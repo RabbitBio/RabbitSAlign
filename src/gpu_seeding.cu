@@ -92,9 +92,6 @@ __device__ void add_to_hits_per_ref(
     }
 }
 
-
-#define GPU_thread_task_size 1
-
 __global__ void gpu_get_randstrobes(
         int num_tasks,
         int read_num,
@@ -106,13 +103,8 @@ __global__ void gpu_get_randstrobes(
         uint64_t *hashes,
         my_vector<QueryRandstrobe>* global_randstrobes
 ) {
-    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
-    int bid = blockIdx.x;
-    int tid = threadIdx.x;
-    int l_range = global_id * GPU_thread_task_size;
-    int r_range = l_range + GPU_thread_task_size;
-    if (r_range > num_tasks) r_range = num_tasks;
-    for (int id = l_range; id < r_range; id++) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id < num_tasks) {
         int read_id = id % read_num;
         int is_read2 = id / read_num;
         size_t len;
@@ -281,13 +273,8 @@ __global__ void gpu_get_hits_pre(
         my_vector<my_pair<int, Hit>>* hits_per_ref0s,
         my_vector<my_pair<int, Hit>>* hits_per_ref1s
 ) {
-    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
-    int bid = blockIdx.x;
-    int tid = threadIdx.x;
-    int l_range = global_id * GPU_thread_task_size;
-    int r_range = l_range + GPU_thread_task_size;
-    if (r_range > num_tasks) r_range = num_tasks;
-    for (int id = l_range; id < r_range; id++) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id < num_tasks) {
         for (int i = 0; i < global_randstrobes[id].size(); i++) {
             QueryRandstrobe q = global_randstrobes[id][i];
             size_t position = gpu_find(d_randstrobes, d_randstrobe_start_indices, q.hash, bits);
@@ -310,11 +297,8 @@ __global__ void gpu_get_hits_after(
         my_vector<my_pair<int, Hit>>* hits_per_ref0s,
         my_vector<my_pair<int, Hit>>* hits_per_ref1s
 ) {
-    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
-    int l_range = global_id * GPU_thread_task_size;
-    int r_range = l_range + GPU_thread_task_size;
-    if (r_range > num_tasks) r_range = num_tasks;
-    for (int id = l_range; id < r_range; id++) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id < num_tasks) {
         uint64_t local_total_hits = 0;
         uint64_t local_nr_good_hits = 0;
         for (int i = 0; i < global_randstrobes[id].size(); i++) {
@@ -329,7 +313,7 @@ __global__ void gpu_get_hits_after(
         }
         float nonrepetitive_fraction = local_total_hits > 0 ? ((float) local_nr_good_hits) / ((float) local_total_hits) : 1.0;
 
-        if (nonrepetitive_fraction < 0.7) continue;
+        if (nonrepetitive_fraction < 0.7) return;
 
         hits_per_ref0s[id].init(8);
         hits_per_ref1s[id].init(8);
@@ -351,7 +335,6 @@ __global__ void gpu_get_hits_after(
 
 
 __global__ void gpu_rescue_get_hits(
-        /* ... function body ... */
         int bits,
         unsigned int filter_cutoff,
         int rescue_cutoff,
@@ -368,13 +351,9 @@ __global__ void gpu_rescue_get_hits(
         int rescue_threshold
 )
 {
-    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
-    int l_range = global_id * GPU_thread_task_size;
-    int r_range = l_range + GPU_thread_task_size;
-    if (r_range > num_tasks) r_range = num_tasks;
-    for (int id = l_range; id < r_range; id++) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id < num_tasks) {
         int real_id = global_todo_ids[id];
-
         my_vector<RescueHit> hits_t0;
         my_vector<RescueHit> hits_t1;
         for (int i = 0; i < global_randstrobes[real_id].size(); i++) {

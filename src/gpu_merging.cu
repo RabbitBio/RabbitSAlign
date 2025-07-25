@@ -816,13 +816,27 @@ __global__ void gpu_sort_hits(
         my_vector<my_pair<int, Hit>>* hits_per_ref1s,
         int* global_todo_ids
 ) {
-    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
-    int bid = blockIdx.x;
-    int tid = threadIdx.x;
-    int l_range = global_id * GPU_thread_task_size;
-    int r_range = l_range + GPU_thread_task_size;
-    if (r_range > num_tasks) r_range = num_tasks;
-    for (int id = l_range; id < r_range; id++) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id < num_tasks) {
+        int real_id = global_todo_ids[id];
+        sort_hits_by_refid(hits_per_ref0s[real_id]);
+        sort_hits_by_refid(hits_per_ref1s[real_id]);
+//        check_hits(hits_per_ref0s[real_id]);
+//        check_hits(hits_per_ref1s[real_id]);
+//        sort_hits_single(hits_per_ref0s[real_id]);
+//        sort_hits_single(hits_per_ref1s[real_id]);
+
+    }
+}
+
+__global__ void gpu_sort_hits_index(
+        int num_tasks,
+        my_vector<my_pair<int, Hit>>* hits_per_ref0s,
+        my_vector<my_pair<int, Hit>>* hits_per_ref1s,
+        int* global_todo_ids
+) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id < num_tasks) {
         int real_id = global_todo_ids[id];
         sort_hits_by_refid(hits_per_ref0s[real_id]);
         sort_hits_by_refid(hits_per_ref1s[real_id]);
@@ -840,13 +854,8 @@ __global__ void gpu_rescue_sort_hits(
         my_vector<my_pair<int, Hit>>* hits_per_ref1s,
         int* global_todo_ids
 ) {
-    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
-    int bid = blockIdx.x;
-    int tid = threadIdx.x;
-    int l_range = global_id * GPU_thread_task_size;
-    int r_range = l_range + GPU_thread_task_size;
-    if (r_range > num_tasks) r_range = num_tasks;
-    for (int id = l_range; id < r_range; id++) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id < num_tasks) {
         int real_id = global_todo_ids[id];
 //        sort_hits_single(hits_per_ref0s[real_id]);
 //        sort_hits_single(hits_per_ref1s[real_id]);
@@ -869,7 +878,6 @@ __global__ void gpu_merge_hits_get_nams_seg(
         int* global_todo_ids
 ) {
     int global_id = blockIdx.x * blockDim.x + threadIdx.x;
-    // Assuming GPU_thread_task_size is 1 for simplicity, otherwise use your loop
     if (global_id < num_tasks) {
         int real_id = global_todo_ids[global_id];
         global_nams[real_id].init(8);
@@ -900,13 +908,8 @@ __global__ void gpu_merge_hits_get_nams(
         my_vector<Nam> *global_nams,
         int* global_todo_ids
 ) {
-    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
-    int bid = blockIdx.x;
-    int tid = threadIdx.x;
-    int l_range = global_id * GPU_thread_task_size;
-    int r_range = l_range + GPU_thread_task_size;
-    if (r_range > num_tasks) r_range = num_tasks;
-    for (int id = l_range; id < r_range; id++) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id < num_tasks) {
         int real_id = global_todo_ids[id];
         global_nams[real_id].init(8);
         merge_hits(hits_per_ref0s[real_id], index_para->syncmer.k, 0, global_nams[real_id]);
@@ -926,13 +929,8 @@ __global__ void gpu_rescue_merge_hits_get_nams(
         int* global_todo_ids
 )
 {
-    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
-    int bid = blockIdx.x;
-    int tid = threadIdx.x;
-    int l_range = global_id * GPU_thread_task_size;
-    int r_range = l_range + GPU_thread_task_size;
-    if (r_range > num_tasks) r_range = num_tasks;
-    for (int id = l_range; id < r_range; id++) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id < num_tasks){
         int real_id = global_todo_ids[id];
         my_vector<Nam> *nams = (my_vector<Nam>*)my_malloc(sizeof(my_vector<Nam>));
         nams->init(8);
@@ -954,14 +952,8 @@ __global__ void gpu_sort_nams(
         MappingParameters *mapping_parameters,
         int is_se
 ) {
-    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
-    int bid = blockIdx.x;
-    int tid = threadIdx.x;
-    int l_range = global_id * GPU_thread_task_size;
-    int r_range = l_range + GPU_thread_task_size;
-    if (r_range > num_tasks) r_range = num_tasks;
-    int read_num = num_tasks / 2;
-    for (int id = l_range; id < r_range; id++) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id < num_tasks) {
         int max_tries = mapping_parameters->max_tries;
         if (is_se) {
             sort_nams_by_score(global_nams[id], max_tries);
