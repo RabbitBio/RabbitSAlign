@@ -19,7 +19,7 @@ struct CommandLineOptions {
     bool write_to_stdout { true };
     bool verbose { false };
     bool details{false};
-    bool show_progress { true };
+    bool show_progress { false };
     bool cigar_eqx { false };
     std::string read_group_id { "" };
     std::vector<std::string> read_group_fields;

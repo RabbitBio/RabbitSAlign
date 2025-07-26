@@ -474,6 +474,7 @@ __device__ void merge_hits(
 
 
 __device__ void gpu_shuffle_top_nams(my_vector<Nam>& nams) {
+    return;
     unsigned int seed = 1234567u;
     if (nams.empty()) {
         return;
@@ -543,10 +544,10 @@ __device__ void sort_hits_by_refid(
         all_hits[find_ref_id_rank].second->push_back(hits_per_ref[i].second);
     }
     hits_per_ref.clear();
-//    quick_sort_iterative(&(all_hits[0]), 0, all_hits.size() - 1,
-//                         [](const my_pair<int, my_vector<Hit>*>& a, const my_pair<int, my_vector<Hit>*>& b) {
-//                             return a.first < b.first;
-//                         });
+    quick_sort_iterative(&(all_hits[0]), 0, all_hits.size() - 1,
+                         [](const my_pair<int, my_vector<Hit>*>& a, const my_pair<int, my_vector<Hit>*>& b) {
+                             return a.first < b.first;
+                         });
     for(int i = 0; i < all_hits.size(); i++) {
         for(int j = 0; j < all_hits[i].second->size(); j++) {
             hits_per_ref.push_back({all_hits[i].first, (*all_hits[i].second)[j]});
@@ -556,6 +557,23 @@ __device__ void sort_hits_by_refid(
     my_free(head);
     my_free(all_vecs);
 }
+
+__device__ void sort_nams_single_check(
+        my_vector<Nam>& nams
+) {
+    //bubble_sort(&(hits_per_ref[0]), hits_per_ref.size());
+    quick_sort_iterative(&(nams[0]), 0, nams.size() - 1, [](const Nam &n1, const Nam &n2) {
+        if(n1.score != n2.score) return n1.score > n2.score;
+        if(n1.n_hits != n2.n_hits) return n1.n_hits > n2.n_hits;
+        if(n1.query_end != n2.query_end) return n1.query_end < n2.query_end;
+        if(n1.query_start != n2.query_start) return n1.query_start < n2.query_start;
+        if(n1.ref_end != n2.ref_end) return n1.ref_end < n2.ref_end;
+        if(n1.ref_start != n2.ref_start) return n1.ref_start < n2.ref_start;
+        if(n1.ref_id != n2.ref_id) return n1.ref_id < n2.ref_id;
+        return n1.is_rc < n2.is_rc;
+    });
+}
+
 
 __device__ void sort_nams_by_score(my_vector<Nam>& nams, int mx_num) {
     int* head = (int*)my_malloc(key_mod_val * sizeof(int));
@@ -819,32 +837,12 @@ __global__ void gpu_sort_hits(
     int id = blockIdx.x * blockDim.x + threadIdx.x;
     if (id < num_tasks) {
         int real_id = global_todo_ids[id];
-        sort_hits_by_refid(hits_per_ref0s[real_id]);
-        sort_hits_by_refid(hits_per_ref1s[real_id]);
+        sort_hits_single(hits_per_ref0s[real_id]);
+        sort_hits_single(hits_per_ref1s[real_id]);
+//        sort_hits_by_refid(hits_per_ref0s[real_id]);
+//        sort_hits_by_refid(hits_per_ref1s[real_id]);
 //        check_hits(hits_per_ref0s[real_id]);
 //        check_hits(hits_per_ref1s[real_id]);
-//        sort_hits_single(hits_per_ref0s[real_id]);
-//        sort_hits_single(hits_per_ref1s[real_id]);
-
-    }
-}
-
-__global__ void gpu_sort_hits_index(
-        int num_tasks,
-        my_vector<my_pair<int, Hit>>* hits_per_ref0s,
-        my_vector<my_pair<int, Hit>>* hits_per_ref1s,
-        int* global_todo_ids
-) {
-    int id = blockIdx.x * blockDim.x + threadIdx.x;
-    if (id < num_tasks) {
-        int real_id = global_todo_ids[id];
-        sort_hits_by_refid(hits_per_ref0s[real_id]);
-        sort_hits_by_refid(hits_per_ref1s[real_id]);
-//        check_hits(hits_per_ref0s[real_id]);
-//        check_hits(hits_per_ref1s[real_id]);
-//        sort_hits_single(hits_per_ref0s[real_id]);
-//        sort_hits_single(hits_per_ref1s[real_id]);
-
     }
 }
 
@@ -857,12 +855,12 @@ __global__ void gpu_rescue_sort_hits(
     int id = blockIdx.x * blockDim.x + threadIdx.x;
     if (id < num_tasks) {
         int real_id = global_todo_ids[id];
-//        sort_hits_single(hits_per_ref0s[real_id]);
-//        sort_hits_single(hits_per_ref1s[real_id]);
-        sort_hits_by_refid(hits_per_ref0s[real_id]);
-        sort_hits_by_refid(hits_per_ref1s[real_id]);
-        //        check_hits(hits_per_ref0s[real_id]);
-        //        check_hits(hits_per_ref1s[real_id]);
+        sort_hits_single(hits_per_ref0s[real_id]);
+        sort_hits_single(hits_per_ref1s[real_id]);
+//        sort_hits_by_refid(hits_per_ref0s[real_id]);
+//        sort_hits_by_refid(hits_per_ref1s[real_id]);
+//        check_hits(hits_per_ref0s[real_id]);
+//        check_hits(hits_per_ref1s[real_id]);
     }
 }
 
@@ -934,10 +932,10 @@ __global__ void gpu_rescue_merge_hits_get_nams(
         int real_id = global_todo_ids[id];
         my_vector<Nam> *nams = (my_vector<Nam>*)my_malloc(sizeof(my_vector<Nam>));
         nams->init(8);
-        salign_merge_hits(hits_per_ref0s[real_id], index_para->syncmer.k, 0, *nams);
-        salign_merge_hits(hits_per_ref1s[real_id], index_para->syncmer.k, 1, *nams);
-        //merge_hits(hits_per_ref0s[real_id], index_para->syncmer.k, 0, *nams);
-        //merge_hits(hits_per_ref1s[real_id], index_para->syncmer.k, 1, *nams);
+//        salign_merge_hits(hits_per_ref0s[real_id], index_para->syncmer.k, 0, *nams);
+//        salign_merge_hits(hits_per_ref1s[real_id], index_para->syncmer.k, 1, *nams);
+        merge_hits(hits_per_ref0s[real_id], index_para->syncmer.k, 0, *nams);
+        merge_hits(hits_per_ref1s[real_id], index_para->syncmer.k, 1, *nams);
         global_nams[real_id] = *nams;
         my_free(nams);
         hits_per_ref0s[real_id].release();
@@ -956,14 +954,15 @@ __global__ void gpu_sort_nams(
     if (id < num_tasks) {
         int max_tries = mapping_parameters->max_tries;
         if (is_se) {
-            sort_nams_by_score(global_nams[id], max_tries);
+            sort_nams_single_check(global_nams[id]);
+//            sort_nams_by_score(global_nams[id], max_tries);
             global_nams[id].length = my_min(global_nams[id].length, max_tries);
         } else {
+            sort_nams_single_check(global_nams[id]);
             //sort_nams_by_score(global_nams[id], max_tries * 2);
             //global_nams[id].length = my_min(global_nams[id].length, max_tries * 2);
-            sort_nams_by_score(global_nams[id], 1e9);
+//            sort_nams_by_score(global_nams[id], 1e9);
         }
-//        sort_nams_single_check(global_nams[id]);
         gpu_shuffle_top_nams(global_nams[id]);
     }
 }

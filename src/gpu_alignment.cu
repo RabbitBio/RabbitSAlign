@@ -172,14 +172,21 @@ __device__ bool gpu_extend_seed_part(
                     aligner_parameters.end_bonus, info
             );
             result_ref_start = projected_ref_start + info.ref_start;
-            gapped = false;
+            gapped = false; // Tentatively mark as non-gapped (Hamming passed)
+
+            // MODIFICATION: Check if the CIGAR is too long.
+            // If so, revert to gapped alignment to trigger CPU-side handling.
+            if (info.cigar.size() + 1 > MAX_CIGAR_ITEM) {
+                //printf("Warning: CIGAR too long -- %d, reverting to gapped alignment.\n", info.cigar.size() + 1);
+                gapped = true;
+            }
         }
     }
 
     align_tmp_res.todo_nams.push_back(nam);
     align_tmp_res.is_extend_seed.push_back(true);
     if (gapped) {
-        // not pass hamming, pending to do align on GPU, tag is false
+        // This path is now taken if Hamming failed OR if the resulting CIGAR was too long.
         GPUAlignment alignment;
         align_tmp_res.done_align.push_back(false);
         align_tmp_res.align_res.push_back(alignment);
@@ -188,11 +195,10 @@ __device__ bool gpu_extend_seed_part(
         align_tmp_res.cigar_info.back().cigar[0] = 0;
         align_tmp_res.cigar_info.back().has_realloc = 0;
     } else {
-        // pass hamming, store result, tag is true
+        // This path is now only taken if Hamming passed AND the CIGAR fits.
         align_tmp_res.done_align.push_back(true);
         int softclipped = info.query_start + (query.size() - info.query_end);
         GPUAlignment alignment;
-        //alignment.cigar.move_from(info.cigar);
         alignment.edit_distance = info.edit_distance;
         alignment.global_ed = info.edit_distance + softclipped;
         alignment.score = info.sw_score;
@@ -203,14 +209,11 @@ __device__ bool gpu_extend_seed_part(
         alignment.ref_id = nam.ref_id;
         alignment.gapped = gapped;
         align_tmp_res.align_res.push_back(alignment);
-        if (info.cigar.size() + 1 > MAX_CIGAR_ITEM) {
-            printf("gpu gg cigar size %d\n", info.cigar.size());
-        }
-        assert(info.cigar.size() + 1 <= MAX_CIGAR_ITEM);
+
         align_tmp_res.cigar_info.length++;
         align_tmp_res.cigar_info.back().cigar = align_tmp_res.cigar_info.back().gpu_cigar;
-        align_tmp_res.cigar_info.back().cigar[0] = info.cigar.size();
         align_tmp_res.cigar_info.back().has_realloc = 0;
+        align_tmp_res.cigar_info.back().cigar[0] = info.cigar.size();
         for (int i = 0; i < info.cigar.size(); i++) {
             align_tmp_res.cigar_info.back().cigar[i + 1] = info.cigar[i];
         }

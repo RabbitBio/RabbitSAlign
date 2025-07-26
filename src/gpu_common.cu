@@ -2,6 +2,7 @@
 #include "my_struct.hpp" // For Nam definition
 
 __device__ __host__ void GPUInsertSizeDistribution::update(int dist) {
+    return;
     if (dist >= 2000) {
         return;
     }

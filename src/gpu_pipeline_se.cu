@@ -880,9 +880,8 @@ void perform_task_async_se_fx_GPU(
     }
 
     //int rescue_threshold = read_len;
-    int rescue_threshold = 100;
-//    printf("rescue_threshold %d\n", rescue_threshold);
-
+    int rescue_threshold = RESCUE_THRESHOLD;
+    printf("rescue_threshold %d\n", rescue_threshold);
 
     // step: f_1
     {

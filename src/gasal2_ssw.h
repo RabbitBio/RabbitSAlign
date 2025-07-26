@@ -39,8 +39,6 @@ extern uint64_t MAX_TARGET_LEN;
 
 
 
-//#define RESCUE_THRESHOLD 100
-
 #define DEBUG
 
 #define MAX(a, b) (a > b ? a : b)

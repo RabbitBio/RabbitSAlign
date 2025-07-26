@@ -151,6 +151,7 @@ void GPU_deduplicate_scored_pairs(std::vector<GPUScoredAlignmentPair>& pairs) {
 }
 
 void GPU_pick_random_top_pair(std::vector<GPUScoredAlignmentPair>& high_scores, std::minstd_rand& random_engine) {
+    return;
     size_t i = 1;
     for (; i < high_scores.size(); ++i) {
         if (high_scores[i].score != high_scores[0].score) {
@@ -598,39 +599,39 @@ __device__ void gpu_get_best_scoring_nam_pairs(
         }
         joint_nam_scores.push_back(gpu_NamPair{nam2.n_hits, &nams1, &nams2, -1, i});
     }
+//    quick_sort_iterative(&(joint_nam_scores[0]), 0, joint_nam_scores.size() - 1,
+//                         [](const gpu_NamPair &n1, const gpu_NamPair &n2) {
+//                             return n1.score > n2.score;
+//                         }
+//    );
+
     quick_sort_iterative(&(joint_nam_scores[0]), 0, joint_nam_scores.size() - 1,
-                         [](const gpu_NamPair &n1, const gpu_NamPair &n2) {
-                             return n1.score > n2.score;
-                         }
+            [](const gpu_NamPair &n1, const gpu_NamPair &n2) {
+                if (n1.score != n2.score) return n1.score > n2.score;
+
+                // Initialize the dummy nam here
+                Nam dummy_nam;
+                dummy_nam.ref_start = -1;
+
+                // Ensure that nams1 and nams2 are valid before dereferencing
+                const my_vector<Nam>& lnams1 = *(n1.nams1);
+                const my_vector<Nam>& lnams2 = *(n1.nams2);
+
+                // Safely access Nam1 and Nam2 objects based on valid indices
+                const Nam n1_nam1 = (n1.i1 >= 0 && n1.i1 < lnams1.size()) ? lnams1[n1.i1] : dummy_nam;
+                const Nam n1_nam2 = (n1.i2 >= 0 && n1.i2 < lnams2.size()) ? lnams2[n1.i2] : dummy_nam;
+                const Nam n2_nam1 = (n2.i1 >= 0 && n2.i1 < lnams1.size()) ? lnams1[n2.i1] : dummy_nam;
+                const Nam n2_nam2 = (n2.i2 >= 0 && n2.i2 < lnams2.size()) ? lnams2[n2.i2] : dummy_nam;
+
+                if (n1_nam1.nam_id != n2_nam1.nam_id) {
+                    return n1_nam1.nam_id < n2_nam1.nam_id;
+                }
+                if (n1_nam2.nam_id != n2_nam2.nam_id) {
+                    return n1_nam2.nam_id < n2_nam2.nam_id;
+                }
+                return n1_nam1.ref_start < n2_nam1.ref_start;
+            }
     );
-
-    //quick_sort_iterative(&(joint_nam_scores[0]), 0, joint_nam_scores.size() - 1,
-    //        [](const gpu_NamPair &n1, const gpu_NamPair &n2) {
-    //        if (n1.score != n2.score) return n1.score > n2.score;
-
-    //        // Initialize the dummy nam here
-    //        Nam dummy_nam;
-    //        dummy_nam.ref_start = -1;
-
-    //        // Ensure that nams1 and nams2 are valid before dereferencing
-    //        const my_vector<Nam>& lnams1 = *(n1.nams1);
-    //        const my_vector<Nam>& lnams2 = *(n1.nams2);
-
-    //        // Safely access Nam1 and Nam2 objects based on valid indices
-    //        const Nam n1_nam1 = (n1.i1 >= 0 && n1.i1 < lnams1.size()) ? lnams1[n1.i1] : dummy_nam;
-    //        const Nam n1_nam2 = (n1.i2 >= 0 && n1.i2 < lnams2.size()) ? lnams2[n1.i2] : dummy_nam;
-    //        const Nam n2_nam1 = (n2.i1 >= 0 && n2.i1 < lnams1.size()) ? lnams1[n2.i1] : dummy_nam;
-    //        const Nam n2_nam2 = (n2.i2 >= 0 && n2.i2 < lnams2.size()) ? lnams2[n2.i2] : dummy_nam;
-
-    //        if (n1_nam1.nam_id != n2_nam1.nam_id) {
-    //        return n1_nam1.nam_id < n2_nam1.nam_id;
-    //        }
-    //        if (n1_nam2.nam_id != n2_nam2.nam_id) {
-    //            return n1_nam2.nam_id < n2_nam2.nam_id;
-    //        }
-    //        return n1_nam1.ref_start < n2_nam1.ref_start;
-    //        }
-    //);
 
     return;
 }
@@ -1778,8 +1779,8 @@ void perform_task_async_pe_fx_GPU(
     }
 
     //int rescue_threshold = read_len;
-    int rescue_threshold = 100;
-//    printf("rescue_threshold %d\n", rescue_threshold);
+    int rescue_threshold = RESCUE_THRESHOLD;
+    printf("rescue_threshold %d\n", rescue_threshold);
 
 
     // step: f_1

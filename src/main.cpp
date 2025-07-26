@@ -210,8 +210,8 @@ void readIndexOnCPU(StrobemerIndex& index, const std::string& sti_path, int cpu_
 
 int producer_pe_fastq_task(std::string file, std::string file2, rabbit::fq::FastqDataPool &fastqPool, rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq) {
 	rabbit::fq::FastqFileReader *fqFileReader;
-	fqFileReader = new rabbit::fq::FastqFileReader(file, fastqPool, false, file2, 1 << 12);
-//	fqFileReader = new rabbit::fq::FastqFileReader(file, fastqPool, false, file2);
+//	fqFileReader = new rabbit::fq::FastqFileReader(file, fastqPool, false, file2, 1 << 12);
+	fqFileReader = new rabbit::fq::FastqFileReader(file, fastqPool, false, file2);
 	int n_chunks = 0;
 	int line_sum = 0;
 	while (true) {
@@ -230,8 +230,8 @@ int producer_pe_fastq_task(std::string file, std::string file2, rabbit::fq::Fast
 }
 
 int producer_se_fastq_task(std::string file, rabbit::fq::FastqDataPool& fastqPool, rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> &dq){
-	rabbit::fq::FastqFileReader fqFileReader(file, fastqPool, false, "", 1 << 12);
-//	rabbit::fq::FastqFileReader fqFileReader(file, fastqPool, false, "");
+//	rabbit::fq::FastqFileReader fqFileReader(file, fastqPool, false, "", 1 << 12);
+	rabbit::fq::FastqFileReader fqFileReader(file, fastqPool, false, "");
 	rabbit::int64 n_chunks = 0;
 	while(true){ 
 		rabbit::fq::FastqDataChunk* fqdatachunk;// = new rabbit::fq::FastqDataChunk;
@@ -251,8 +251,8 @@ int producer_se_fastq_task(std::string file, rabbit::fq::FastqDataPool& fastqPoo
 #define META_DATA_SIZE (168) // size of meta data per read in GPU memory
 
 #define GALLATIN_BASE_SIZE (2.0 * GB_BYTE) // base size of Gallatin GPU memory
-//#define GALLATIN_CHUNK_SIZE (1.0 * GB_BYTE) // size of each chunk in Gallatin GPU memory
-#define GALLATIN_CHUNK_SIZE (0.3 * GB_BYTE) // size of each chunk in Gallatin GPU memory
+#define GALLATIN_CHUNK_SIZE (1.0 * GB_BYTE) // size of each chunk in Gallatin GPU memory
+//#define GALLATIN_CHUNK_SIZE (0.3 * GB_BYTE) // size of each chunk in Gallatin GPU memory
 
 #define OVERLAP_SIZE 3 // triple buffering
 
@@ -261,7 +261,7 @@ uint64_t STREAM_BATCH_SIZE_GPU = 4096ll;
 uint64_t MAX_QUERY_LEN = 600ll;
 uint64_t MAX_TARGET_LEN = 1000ll;
 
-const int G_num = 2; // number of typeB thread per GPU
+const int G_num = 0; // number of typeB thread per GPU
 
 uint64_t calculateMemoryUsageSE(int total_cpu_num, int gpu_num, int chunk_num, int eval_read_len, int chunk_size, int max_tries, uint64_t ref_index_size) {
     int total_read_num = chunk_num * chunk_size / 2 / eval_read_len;
@@ -450,13 +450,13 @@ int run_rabbitsalign(int argc, char **argv) {
     }
 
     int eval_read_len = opt.r;
-    MAX_QUERY_LEN = eval_read_len + 100;
-    MAX_TARGET_LEN = eval_read_len * 2;
+//    MAX_QUERY_LEN = eval_read_len + 100;
+//    MAX_TARGET_LEN = eval_read_len * 2;
 
     logger.info() << "MAX_QUERY_LEN: " << MAX_QUERY_LEN << ", MAX_TARGET_LEN: " << MAX_TARGET_LEN << std::endl;
 
-//    int fx_batch_size = 1 << 22;
-    int fx_batch_size = 1 << 20;
+    int fx_batch_size = 1 << 22;
+    //int fx_batch_size = 1 << 20;
 
 #ifdef RABBIT_FX
     rabbit::fq::FastqDataPool fastqPool(4096, fx_batch_size);
@@ -509,6 +509,11 @@ int run_rabbitsalign(int argc, char **argv) {
     log_parameters(index_parameters, map_param, aln_params);
     logger.info() << "CPU Threads: " << opt.n_threads << std::endl;
     logger.info() << "GPU Numbers: " << opt.n_gpus << std::endl;
+
+    if (opt.n_gpus <= 0) {
+        logger.error() << "No GPUs specified. Please specify at least one GPU using -g option.\n";
+        return 1;
+    }
 
 //    assert(k <= (w/2)*w_min && "k should be smaller than (w/2)*w_min to avoid creating short strobemers");
 
@@ -684,7 +689,6 @@ int run_rabbitsalign(int argc, char **argv) {
         last_mem_size = free_memory - 0.5 - res;
     } else {
         auto res = calculateMemoryUsagePE(opt.n_threads, opt.n_gpus, chunk_num, eval_read_len, fx_batch_size, map_param.max_tries, ref_size + index_size);
-        printf("res: %llu\n", res / GB_BYTE);
         last_mem_size = free_memory - 0.5 - res;
     }
     if (last_mem_size < 0) last_mem_size = 0;
@@ -702,15 +706,15 @@ int run_rabbitsalign(int argc, char **argv) {
             last_mem_size = free_memory - 0.5 - res;
         } else {
             auto res = calculateMemoryUsagePE(opt.n_threads, opt.n_gpus, chunk_num, eval_read_len, fx_batch_size, map_param.max_tries, ref_size + index_size);
-            printf("res: %llu\n", res / GB_BYTE);
             last_mem_size = free_memory - 0.5 - res;
         }
         if (last_mem_size < 0) last_mem_size = 0;
         gallatin_num_bytes = GALLATIN_BASE_SIZE + chunk_num * GALLATIN_CHUNK_SIZE + last_mem_size;
-        logger.info() << "resize BATCH size to " << STREAM_BATCH_SIZE << " and GPU BATCH size to " << STREAM_BATCH_SIZE_GPU << std::endl;
-        logger.info() << "now chunk num is " << chunk_num << " and gallatin_num_bytes is " << gallatin_num_bytes / GB_BYTE << " GB" << std::endl;
+//        logger.info() << "resize BATCH size to " << STREAM_BATCH_SIZE << " and GPU BATCH size to " << STREAM_BATCH_SIZE_GPU << std::endl;
+//        logger.info() << "now chunk num is " << chunk_num << " and gallatin_num_bytes is " << gallatin_num_bytes / GB_BYTE << " GB" << std::endl;
     }
 
+    logger.info() << "BATCH size: " << STREAM_BATCH_SIZE << " and GPU BATCH size: " << STREAM_BATCH_SIZE_GPU << std::endl;
     logger.info() << "Additional memory for Gallatin: " << last_mem_size / (1024 * 1024) << " MB\n";
 
     logger.info() << "Gallatin memory usage: " << gallatin_num_bytes / (1024 * 1024) << " MB\n";
