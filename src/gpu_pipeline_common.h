@@ -10,9 +10,12 @@
 
 //#define use_seg_sort
 
-//#define use_index_sort
 
 #define RESCUE_THRESHOLD 1000
+
+#define SMALL_CHUNK_FAC 1
+
+#define THREADS_PER_BLOCK 1
 
 // --- Declaraciones de Variables Globales Externas ---
 extern std::once_flag init_flag_ref[GPU_NUM_MAX];

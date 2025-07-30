@@ -88,11 +88,11 @@ struct GPUAlignmentInfo {
 };
 
 struct GPUAlignTmpRes {
-    int type;
-    int mapq1;
-    int mapq2;
-    int type4_loop_size;
-    int type3_isize_val;
+    int type{0};
+    int mapq1{0};
+    int mapq2{0};
+    int type4_loop_size{0};
+    int type3_isize_val{0};
     my_vector<int> is_extend_seed;
     my_vector<int> consistent_nam;
     my_vector<int> is_read1;

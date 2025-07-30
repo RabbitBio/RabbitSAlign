@@ -200,12 +200,13 @@ void align_SE_read_last(
                 assert(alignment.score == best_score);
                 // Two or more alignments have the same best score - count them
                 alignments_with_best_score++;
-
-                // Pick one randomly using reservoir sampling
+#ifndef CPU_ACC_TAG
+//                // Pick one randomly using reservoir sampling
                 std::uniform_int_distribution<> distrib(1, alignments_with_best_score);
                 if (distrib(random_engine) == 1) {
                     update_best = true;
                 }
+#endif
             }
             if (update_best) {
                 best_score = alignment.score;
@@ -454,8 +455,7 @@ static inline Alignment extend_seed(
         std::string ref_segm_ham = ref.substr(projected_ref_start, query.size());
         auto hamming_dist = hamming_distance(query, ref_segm_ham);
 
-        if (hamming_dist >= 0 && (((float) hamming_dist / query.size()) < 0.05
-                                 )) {  //Hamming distance worked fine, no need to ksw align
+        if (hamming_dist >= 0 && (((float) hamming_dist / query.size()) < 0.05)) {  //Hamming distance worked fine, no need to ksw align
             info = hamming_align(
                 query, ref_segm_ham, aligner.parameters.match, aligner.parameters.mismatch,
                 aligner.parameters.end_bonus
@@ -514,10 +514,8 @@ static std::pair<int, int> joint_mapq_from_high_scores(const std::vector<ScoredA
     }
     int mapq;
     const int diff = score1 - score2;  // (1.0 - (S1 - S2) / S1);
-    //  float log10_p = diff > 6 ? -6.0 : -diff; // Corresponds to: p_error= 0.1^diff // change in sw score times rough illumina error rate. This is highly heauristic, but so seem most computations of mapq scores
     if (score1 > 0 && score2 > 0) {
         mapq = std::min(60, diff);
-        //            mapq1 = -10 * log10_p < 60 ? -10 * log10_p : 60;
     } else if (score1 > 0 && score2 <= 0) {
         mapq = 60;
     } else {  // both negative SW one is better
@@ -604,7 +602,9 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
     robin_hood::unordered_set<int> added_n1;
     robin_hood::unordered_set<int> added_n2;
     int best_joint_hits = 0;
+#ifndef CPU_ACC_TAG
 #define use_fast_loop
+#endif
 
 #ifdef use_fast_loop
     std::vector<Nam> nams2_sorted[2];
@@ -740,23 +740,49 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
     added_n1.clear();
     added_n2.clear();
 
+//#ifdef CPU_ACC_TAG
     std::sort(
         joint_nam_scores.begin(), joint_nam_scores.end(),
         [](const NamPair& a, const NamPair& b) -> bool {
             if (a.score != b.score) return a.score > b.score;
             const Nam& n1_nam1 = a.nam1;
-            const Nam& n1_nam2 = a.nam2;
-            const Nam& n2_nam1 = b.nam1;
-            const Nam& n2_nam2 = b.nam2;
-            if (n1_nam1.nam_id != n2_nam1.nam_id) {
-                return n1_nam1.nam_id < n2_nam1.nam_id;
-            }
-            if (n1_nam2.nam_id != n2_nam2.nam_id) {
-                return n1_nam2.nam_id < n2_nam2.nam_id;
-            }
-            return n1_nam1.ref_start < n2_nam1.ref_start;
+			const Nam& n1_nam2 = a.nam2;
+			const Nam& n2_nam1 = b.nam1;
+			const Nam& n2_nam2 = b.nam2;
+			if (n1_nam1.query_start != n2_nam1.query_start)
+				return n1_nam1.query_start < n2_nam1.query_start;
+			if (n1_nam1.query_end != n2_nam1.query_end)
+				return n1_nam1.query_end < n2_nam1.query_end;
+			if (n1_nam1.ref_start != n2_nam1.ref_start)
+				return n1_nam1.ref_start < n2_nam1.ref_start;
+			if (n1_nam1.ref_end != n2_nam1.ref_end)
+				return n1_nam1.ref_end < n2_nam1.ref_end;
+			if (n1_nam1.n_hits != n2_nam1.n_hits)
+				return n1_nam1.n_hits < n2_nam1.n_hits;
+			if (n1_nam1.ref_id != n2_nam1.ref_id)
+				return n1_nam1.ref_id < n2_nam1.ref_id;
+			if (n1_nam2.query_start != n2_nam2.query_start)
+				return n1_nam2.query_start < n2_nam2.query_start;
+			if (n1_nam2.query_end != n2_nam2.query_end)
+				return n1_nam2.query_end < n2_nam2.query_end;
+			if (n1_nam2.ref_start != n2_nam2.ref_start)
+				return n1_nam2.ref_start < n2_nam2.ref_start;
+			if (n1_nam2.ref_end != n2_nam2.ref_end)
+				return n1_nam2.ref_end < n2_nam2.ref_end;
+			if (n1_nam2.n_hits != n2_nam2.n_hits)
+				return n1_nam2.n_hits < n2_nam2.n_hits;
+			if (n1_nam2.ref_id != n2_nam2.ref_id)
+				return n1_nam2.ref_id < n2_nam2.ref_id;
+			return false;
         }
     );  // Sort by highest score first
+//#else
+//    std::sort(joint_nam_scores.begin(), joint_nam_scores.end(),
+//            [](const NamPair& a, const NamPair& b) -> bool {
+//                return a.score > b.score;
+//            }
+//    );
+//#endif
     return joint_nam_scores;
 }
 
@@ -940,22 +966,21 @@ void deduplicate_scored_pairs(std::vector<ScoredAlignmentPair>& pairs) {
  * pick one randomly and move it to the front.
  */
 void pick_random_top_pair(std::vector<ScoredAlignmentPair>& high_scores, std::minstd_rand& random_engine) {
+#ifdef CPU_ACC_TAG
     return;
+#endif
     size_t i = 1;
     for (; i < high_scores.size(); ++i) {
         if (high_scores[i].score != high_scores[0].score) {
             break;
         }
     }
-//    fprintf(stderr, "pick end %zu, ", i);
     if (i > 1) {
         size_t random_index = std::uniform_int_distribution<>(0, i - 1)(random_engine);
-//        fprintf(stderr, "pick swap %zu", random_index);
         if (random_index != 0) {
             std::swap(high_scores[0], high_scores[random_index]);
         }
     }
-//    fprintf(stderr, "\n");
 }
 
 void rescue_read_part(
@@ -1155,7 +1180,6 @@ inline void align_PE_part(
     const auto sigma = isize_est.sigma;
     Read read1(record1.seq);
     Read read2(record2.seq);
-//    fprintf(stderr, "nam1 size %zu, nam2 size %zu\n", nams1.size(), nams2.size());
     double secondary_dropoff = 2 * aligner.parameters.mismatch + aligner.parameters.gap_open;
 
     if (nams1.empty() && nams2.empty()) {
@@ -1257,7 +1281,6 @@ inline void align_PE_part(
         is_aligned1[n1_max.nam_id] = 1;
         details[0].tried_alignment++;
         details[0].gapped += gapped1;
-//        fprintf(stderr, "cal n1 %d\n", n1_max.nam_id);
 
 
         auto n2_max = nams2[0];
@@ -1268,7 +1291,6 @@ inline void align_PE_part(
         is_aligned2[n2_max.nam_id] = 1;
         details[1].tried_alignment++;
         details[1].gapped += gapped2;
-//        fprintf(stderr, "cal n2 %d\n", n2_max.nam_id);
 
     }
 
@@ -1285,7 +1307,6 @@ inline void align_PE_part(
         align_tmp_res.type4_nams.push_back(n1);
         align_tmp_res.type4_nams.push_back(n2);
         align_tmp_res.type4_loop_size++;
-//        fprintf(stderr, "n1 %d, n2 %d\n", n1.nam_id, n2.nam_id);
 
 
         // Get alignments for the two NAMs, either by computing the alignment,
@@ -1312,7 +1333,6 @@ inline void align_PE_part(
             bool is_unaligned = rescue_mate_part(align_tmp_res, aligner, n2, references, read1, mu, sigma, k);
 //            details[0].mate_rescue += !is_unaligned;
             details[0].tried_alignment++;
-//            fprintf(stderr, "add rescue nam : %d\n", n2.nam_id);
 
         }
 
@@ -1329,7 +1349,6 @@ inline void align_PE_part(
                 is_aligned2[n2.nam_id] = 1;
                 details[1].tried_alignment++;
                 details[1].gapped += gapped;
-//                fprintf(stderr, "add extend nam : %d\n", n2.nam_id);
 
             }
         } else {
@@ -1338,7 +1357,6 @@ inline void align_PE_part(
             bool is_unaligned = rescue_mate_part(align_tmp_res, aligner, n1, references, read2, mu, sigma, k);
 //            details[1].mate_rescue += !is_unaligned;
             details[1].tried_alignment++;
-//            fprintf(stderr, "add rescue nam : %d\n", n1.nam_id);
 
         }
 
@@ -1646,7 +1664,9 @@ inline void get_best_map_location(
 
 /* Add a new observation */
 void InsertSizeDistribution::update(int dist) {
+#ifdef CPU_ACC_TAG
     return;
+#endif
     if (dist >= 2000) {
         return;
     }
@@ -1677,7 +1697,9 @@ void InsertSizeDistribution::update(int dist) {
  * equally good ones.
  */
 void shuffle_top_nams(std::vector<Nam>& nams, std::minstd_rand& random_engine) {
+#ifdef CPU_ACC_TAG
     return;
+#endif
     if (nams.empty()) {
         return;
     }
@@ -1686,12 +1708,6 @@ void shuffle_top_nams(std::vector<Nam>& nams, std::minstd_rand& random_engine) {
     if (it != nams.end()) {
         std::shuffle(nams.begin(), it, random_engine);
     }
-//    fprintf(stderr, "shuffle : ");
-//    for(int i = 0; i < nams.size(); i++) {
-//        if(nams[i].score != best_score) break;
-//        fprintf(stderr, "%d ", nams[i].nam_id);
-//    }
-//    fprintf(stderr, "\n\n");
 }
 
 void align_PE_read_part(
@@ -1732,7 +1748,7 @@ void align_PE_read_part(
         }
         details[is_revcomp].nams = nams.size();
         Timer nam_sort_timer;
-//        std::sort(nams.begin(), nams.end(), by_score<Nam>);
+//#ifdef CPU_ACC_TAG
         std::sort(nams.begin(), nams.end(), [](const Nam &n1, const Nam &n2) {
             if(n1.score != n2.score) return n1.score > n2.score;
             if(n1.n_hits != n2.n_hits) return n1.n_hits > n2.n_hits;
@@ -1743,6 +1759,9 @@ void align_PE_read_part(
             if(n1.ref_id != n2.ref_id) return n1.ref_id < n2.ref_id;
             return n1.is_rc < n2.is_rc;
         });
+//#else
+//        std::sort(nams.begin(), nams.end(), by_score<Nam>);
+//#endif
         shuffle_top_nams(nams, random_engine);
         statistics.tot_sort_nams += nam_sort_timer.duration();
         nams_pair[is_revcomp] = nams;
@@ -1786,8 +1805,6 @@ void rescue_read_last(
         alignments1.push_back(align_tmp_res.align_res[i]);
         alignments2.push_back(align_tmp_res.align_res[i + 1]);
         details[1].mate_rescue += !align_tmp_res.align_res[i + 1].is_unaligned;
-//        fprintf(stderr, "3 a1 score %d\n", align_tmp_res.align_res[i].score);
-//        fprintf(stderr, "3 a2 score %d\n", align_tmp_res.align_res[i + 1].score);
     }
     std::sort(alignments1.begin(), alignments1.end(), by_score<Alignment>);
     std::sort(alignments2.begin(), alignments2.end(), by_score<Alignment>);
@@ -1797,10 +1814,6 @@ void rescue_read_last(
 
     std::sort(high_scores.begin(), high_scores.end(), by_score<ScoredAlignmentPair>);
     deduplicate_scored_pairs(high_scores);
-//    fprintf(stderr, "rescue read : ");
-//    for(auto item : high_scores)
-//        fprintf(stderr, "%f ,", item.score);
-//    fprintf(stderr, "\n\n");
     pick_random_top_pair(high_scores, random_engine);
 
     auto [mapq1, mapq2] = joint_mapq_from_high_scores(high_scores);
@@ -1810,7 +1823,6 @@ void rescue_read_last(
         auto best_aln_pair = high_scores[0];
         Alignment alignment1 = best_aln_pair.alignment1;
         Alignment alignment2 = best_aln_pair.alignment2;
-//        fprintf(stderr, "good a1 score %d, a2 score %d\n", alignment1.score, alignment2.score);
         if (swap_r1r2) {
             sam.add_pair(
                 alignment2, alignment1, record2, record1, read2.rc, read1.rc, mapq2, mapq1,
@@ -1883,7 +1895,6 @@ void align_PE_read_last(
     double secondary_dropoff = 2 * aligner.parameters.mismatch + aligner.parameters.gap_open;
 
     Timer extend_timer;
-//    fprintf(stderr, "type %d\n", align_tmp_res.type);
     if (align_tmp_res.type == 0) {
         // None of the reads have any NAMs
         sam.add_unmapped_pair(record1, record2);
@@ -1919,14 +1930,11 @@ void align_PE_read_last(
         int pos = 0;
         robin_hood::unordered_map<int, Alignment> is_aligned1;
         robin_hood::unordered_map<int, Alignment> is_aligned2;
-//        fprintf(stderr, "size1 %zu\n", align_tmp_res.todo_nams.size());
-//        fprintf(stderr, "size2 %d\n", align_tmp_res.type4_loop_size);
 
         Alignment a1_indv_max, a2_indv_max;
         {
 
             auto n1_max = align_tmp_res.todo_nams[pos];
-//            fprintf(stderr, "get n1 %d from %d\n", n1_max.nam_id, pos);
             a1_indv_max = align_tmp_res.align_res[pos];
             is_aligned1[n1_max.nam_id] = a1_indv_max;
 
@@ -1934,7 +1942,6 @@ void align_PE_read_last(
 
 
             auto n2_max = align_tmp_res.todo_nams[pos];
-//            fprintf(stderr, "get n2 %d from %d\n", n2_max.nam_id, pos);
             a2_indv_max = align_tmp_res.align_res[pos];
             is_aligned2[n2_max.nam_id] = a2_indv_max;
 
@@ -1947,23 +1954,19 @@ void align_PE_read_last(
         for(int i = 0; i < align_tmp_res.type4_loop_size; i++) {
             Nam n1 = align_tmp_res.type4_nams[i * 2];
             Nam n2 = align_tmp_res.type4_nams[i * 2 + 1];
-//            fprintf(stderr, "n1 %d, n2 %d\n", n1.nam_id, n2.nam_id);
 
             Alignment a1;
             // ref_start == -1 is a marker for a dummy NAM
             if (n1.ref_start >= 0) {
                 if (is_aligned1.find(n1.nam_id) != is_aligned1.end()) {
-//                    fprintf(stderr, "find n1 %d\n", n1.nam_id);
                     a1 = is_aligned1[n1.nam_id];
                 } else {
-//                    fprintf(stderr, "get n1 %d from %d\n", n1.nam_id, pos);
                     a1 = align_tmp_res.align_res[pos];
                     assert(n1.nam_id == align_tmp_res.todo_nams[pos].nam_id);
                     pos++;
                     is_aligned1[n1.nam_id] = a1;
                 }
             } else {
-//                fprintf(stderr, "get gg n1 %d from %d\n", n1.nam_id, pos);
                 a1 = align_tmp_res.align_res[pos];
                 assert(n2.nam_id == align_tmp_res.todo_nams[pos].nam_id);
                 pos++;
@@ -1977,17 +1980,14 @@ void align_PE_read_last(
             // ref_start == -1 is a marker for a dummy NAM
             if (n2.ref_start >= 0) {
                 if (is_aligned2.find(n2.nam_id) != is_aligned2.end()) {
-//                    fprintf(stderr, "find n2 %d\n", n2.nam_id);
                     a2 = is_aligned2[n2.nam_id];
                 } else {
-//                    fprintf(stderr, "get n2 %d from %d\n", n2.nam_id, pos);
                     a2 = align_tmp_res.align_res[pos];
                     assert(n2.nam_id == align_tmp_res.todo_nams[pos].nam_id);
                     pos++;
                     is_aligned2[n2.nam_id] = a2;
                 }
             } else {
-//                fprintf(stderr, "get gg n2 %d from %d\n", n2.nam_id, pos);
                 a2 = align_tmp_res.align_res[pos];
                 assert(n1.nam_id == align_tmp_res.todo_nams[pos].nam_id);
                 pos++;
@@ -2020,7 +2020,6 @@ void align_PE_read_last(
 
         }
         assert(pos == align_tmp_res.todo_nams.size());
-//        fprintf(stderr, "111\n");
 
         // Finally, add highest scores of both mates as individually mapped
         double combined_score =
@@ -2031,12 +2030,7 @@ void align_PE_read_last(
 
         std::sort(high_scores.begin(), high_scores.end(), by_score<ScoredAlignmentPair>);
         deduplicate_scored_pairs(high_scores);
-//        fprintf(stderr, "part4 : ");
-//        for(auto item : high_scores)
-//            fprintf(stderr, "%f ,", item.score);
-//        fprintf(stderr, "\n\n");
         pick_random_top_pair(high_scores, random_engine);
-//        fprintf(stderr, "111\n");
 
         auto [mapq1, mapq2] = joint_mapq_from_high_scores(high_scores);
         auto best_aln_pair = high_scores[0];
@@ -2044,14 +2038,10 @@ void align_PE_read_last(
         auto alignment2 = best_aln_pair.alignment2;
         if (map_param.max_secondary == 0) {
             bool is_proper = is_proper_pair(alignment1, alignment2, mu, sigma);
-//            fprintf(stderr, "111\n");
-
             sam.add_pair(
                 alignment1, alignment2, record1, record2, read1.rc, read2.rc, mapq1, mapq2, is_proper, true,
                 details
             );
-//            fprintf(stderr, "111\n");
-
         } else {
             auto max_out = std::min(high_scores.size(), (size_t)map_param.max_secondary);
             // remove eventual duplicates - comes from, e.g., adding individual best alignments above (if identical to joint best alignment)
@@ -2181,7 +2171,7 @@ void align_SE_read_part(
     details.nams = nams.size();
 
     Timer nam_sort_timer;
-//    std::sort(nams.begin(), nams.end(), by_score<Nam>);
+//#ifdef CPU_ACC_TAG
     std::sort(nams.begin(), nams.end(), [](const Nam &n1, const Nam &n2) {
         if(n1.score != n2.score) return n1.score > n2.score;
         if(n1.n_hits != n2.n_hits) return n1.n_hits > n2.n_hits;
@@ -2192,6 +2182,9 @@ void align_SE_read_part(
         if(n1.ref_id != n2.ref_id) return n1.ref_id < n2.ref_id;
         return n1.is_rc < n2.is_rc;
     });
+//#else
+//    std::sort(nams.begin(), nams.end(), by_score<Nam>);
+//#endif
     shuffle_top_nams(nams, random_engine);
     statistics.tot_sort_nams += nam_sort_timer.duration();
 

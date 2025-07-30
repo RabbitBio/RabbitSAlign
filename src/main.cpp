@@ -11,6 +11,8 @@
 #include <iomanip>
 #include <chrono>
 #include <random>
+#include <unordered_set>
+
 #ifdef _WIN32
 #include <io.h>
 #else
@@ -29,19 +31,42 @@
 #include "version.hpp"
 #include "buildconfig.hpp"
 #include "gpu_pipeline.h"
-
-#ifdef RABBIT_FX
 #include "FastxStream.h"
 #include "FastxChunk.h"
 #include "DataQueue.h"
 #include "Formater.h"
-#endif
+
+// --- Static variables and constants ---
+
+// Global logger instance
+static Logger& logger = Logger::get();
+
+// Constant definitions for memory sizes and buffer settings
+constexpr uint64_t GB_BYTE = 1024 * 1024 * 1024;
+constexpr int META_DATA_SIZE = 168; // Metadata size per read in GPU memory
+constexpr double GALLATIN_BASE_SIZE = 2.0 * GB_BYTE; // Base size for Gallatin GPU memory
+constexpr double GALLATIN_CHUNK_SIZE = 1.0 * GB_BYTE; // Size of each chunk in Gallatin GPU memory
+constexpr int OVERLAP_SIZE = 3; // Using triple buffering
+int G_num = 2; // Number of type B threads per GPU
+
+// Configurable stream processing sizes
+uint64_t STREAM_BATCH_SIZE = 1024ll;
+uint64_t STREAM_BATCH_SIZE_GPU = 4096ll;
+uint64_t MAX_QUERY_LEN = 600ll;
+uint64_t MAX_TARGET_LEN = 1000ll;
 
 
+// --- System Information Functions ---
+
+/**
+ * @brief Gets the number of NUMA nodes in the system.
+ * @details Reads /sys/devices/system/node/possible to determine the NUMA configuration.
+ * @return The number of NUMA nodes. Returns 1 if detection fails.
+ */
 int getNumaNodeCount() {
     std::ifstream file("/sys/devices/system/node/possible");
     if (!file.is_open()) {
-        return 1;
+        return 1; // Assume a single NUMA node if the file cannot be opened
     }
 
     std::string line;
@@ -49,16 +74,18 @@ int getNumaNodeCount() {
         size_t hyphen_pos = line.find('-');
         if (hyphen_pos == std::string::npos) {
             try {
+                // Format is a single number, e.g., "0"
                 int max_node = std::stoi(line);
                 return max_node + 1;
-            } catch (const std::invalid_argument& e) {
+            } catch (const std::exception&) {
                 return 1;
             }
         } else {
             try {
+                // Format is a range, e.g., "0-3"
                 int max_node = std::stoi(line.substr(hyphen_pos + 1));
                 return max_node + 1;
-            } catch (const std::invalid_argument& e) {
+            } catch (const std::exception&) {
                 return 1;
             }
         }
@@ -66,29 +93,39 @@ int getNumaNodeCount() {
     return 1;
 }
 
+/**
+ * @brief Gets the amount of available memory in the system.
+ * @details Reads /proc/meminfo and parses the "MemAvailable" field.
+ * @return The available memory in bytes. Returns -1 on failure.
+ */
 long long getAvailableMemory() {
     std::ifstream meminfo("/proc/meminfo");
+    if (!meminfo.is_open()) {
+        return -1;
+    }
     std::string line;
-    long long availableMemory = -1;
     while (std::getline(meminfo, line)) {
-        std::istringstream iss(line);
-        std::string key;
-        long long value;
-        std::string unit;
-        iss >> key >> value >> unit;
-        if (key == "MemAvailable:") {
-            availableMemory = value * 1024;  // Convert from kB to Bytes
-            break;
+        if (line.rfind("MemAvailable:", 0) == 0) {
+            std::istringstream iss(line);
+            std::string key;
+            long long value;
+            iss >> key >> value;
+            return value * 1024; // Convert from kB to Bytes
         }
     }
-    return availableMemory;
+    return -1;
 }
 
 
-static Logger& logger = Logger::get();
+// --- SAM Formatting and Parameter Logging ---
 
-/*
- * Return formatted SAM header as a string
+/**
+ * @brief Generates a SAM format header string.
+ * @param references The reference sequences.
+ * @param read_group_id The read group ID.
+ * @param read_group_fields Additional read group fields.
+ * @param cmd_line The command line used to execute the program.
+ * @return A formatted SAM header as a string.
  */
 std::string sam_header(const References& references, const std::string& read_group_id, const std::vector<std::string>& read_group_fields, const std::string& cmd_line) {
     std::stringstream out;
@@ -99,7 +136,7 @@ std::string sam_header(const References& references, const std::string& read_gro
     if (!read_group_id.empty()) {
         out << "@RG\tID:" << read_group_id;
         for (const auto& field : read_group_fields) {
-           out << '\t' << field;
+            out << '\t' << field;
         }
         out << '\n';
     }
@@ -107,30 +144,46 @@ std::string sam_header(const References& references, const std::string& read_gro
     return out.str();
 }
 
+/**
+ * @brief Issues a warning if the binary was compiled in Debug mode without optimizations.
+ */
 void warn_if_no_optimizations() {
     if (std::string(CMAKE_BUILD_TYPE) == "Debug") {
         logger.info() << "\n    ***** Binary was compiled without optimizations - this will be very slow *****\n\n";
     }
 }
 
+/**
+ * @brief Logs the indexing, mapping, and alignment parameters.
+ * @param index_parameters Parameters for indexing.
+ * @param map_param Parameters for mapping.
+ * @param aln_params Parameters for alignment.
+ */
 void log_parameters(const IndexParameters& index_parameters, const MappingParameters& map_param, const AlignmentParameters& aln_params) {
     logger.debug() << "Using" << std::endl
-        << "k: " << index_parameters.syncmer.k << std::endl
-        << "s: " << index_parameters.syncmer.s << std::endl
-        << "w_min: " << index_parameters.randstrobe.w_min << std::endl
-        << "w_max: " << index_parameters.randstrobe.w_max << std::endl
-        << "Read length (r): " << map_param.r << std::endl
-        << "Maximum seed length: " << index_parameters.randstrobe.max_dist + index_parameters.syncmer.k << std::endl
-        << "R: " << map_param.rescue_level << std::endl
-        << "Expected [w_min, w_max] in #syncmers: [" << index_parameters.randstrobe.w_min << ", " << index_parameters.randstrobe.w_max << "]" << std::endl
-        << "Expected [w_min, w_max] in #nucleotides: [" << (index_parameters.syncmer.k - index_parameters.syncmer.s + 1) * index_parameters.randstrobe.w_min << ", " << (index_parameters.syncmer.k - index_parameters.syncmer.s + 1) * index_parameters.randstrobe.w_max << "]" << std::endl
-        << "A: " << aln_params.match << std::endl
-        << "B: " << aln_params.mismatch << std::endl
-        << "O: " << aln_params.gap_open << std::endl
-        << "E: " << aln_params.gap_extend << std::endl
-        << "end bonus: " << aln_params.end_bonus << '\n';
+                   << "k: " << index_parameters.syncmer.k << std::endl
+                   << "s: " << index_parameters.syncmer.s << std::endl
+                   << "w_min: " << index_parameters.randstrobe.w_min << std::endl
+                   << "w_max: " << index_parameters.randstrobe.w_max << std::endl
+                   << "Read length (r): " << map_param.r << std::endl
+                   << "Maximum seed length: " << index_parameters.randstrobe.max_dist + index_parameters.syncmer.k << std::endl
+                   << "R: " << map_param.rescue_level << std::endl
+                   << "Expected [w_min, w_max] in #syncmers: [" << index_parameters.randstrobe.w_min << ", " << index_parameters.randstrobe.w_max << "]" << std::endl
+                   << "Expected [w_min, w_max] in #nucleotides: [" << (index_parameters.syncmer.k - index_parameters.syncmer.s + 1) * index_parameters.randstrobe.w_min << ", " << (index_parameters.syncmer.k - index_parameters.syncmer.s + 1) * index_parameters.randstrobe.w_max << "]" << std::endl
+                   << "A: " << aln_params.match << std::endl
+                   << "B: " << aln_params.mismatch << std::endl
+                   << "O: " << aln_params.gap_open << std::endl
+                   << "E: " << aln_params.gap_extend << std::endl
+                   << "end bonus: " << aln_params.end_bonus << '\n';
 }
 
+
+// --- Thread and Task Management ---
+
+/**
+ * @brief Checks if AVX2 instruction set is enabled at compile time.
+ * @return True if AVX2 is enabled, false otherwise.
+ */
 bool avx2_enabled() {
 #ifdef __AVX2__
     return true;
@@ -139,11 +192,17 @@ bool avx2_enabled() {
 #endif
 }
 
+/**
+ * @brief Creates an InputBuffer based on command-line options.
+ * @param opt The parsed command line options.
+ * @return An initialized InputBuffer object.
+ * @throws BadParameter if options are inconsistent (e.g., --interleaved with two files).
+ */
 InputBuffer get_input_buffer(const CommandLineOptions& opt) {
     if (opt.is_SE) {
         return InputBuffer(opt.reads_filename1, "", opt.chunk_size, false);
     } else if (opt.is_interleaved) {
-        if (opt.reads_filename2 != "") {
+        if (!opt.reads_filename2.empty()) {
             throw BadParameter("Cannot specify both --interleaved and specify two read files");
         }
         return InputBuffer(opt.reads_filename1, "", opt.chunk_size, true);
@@ -152,44 +211,54 @@ InputBuffer get_input_buffer(const CommandLineOptions& opt) {
     }
 }
 
-void show_progress_until_done(std::vector<int>& worker_done, std::vector<AlignmentStatistics>& stats) {
+/**
+ * @brief Displays a progress indicator to stderr until all worker threads are done.
+ * @param worker_done A vector of flags indicating if each worker thread has finished.
+ * @param stats A vector of alignment statistics from each thread.
+ */
+void show_progress_until_done(const std::vector<int>& worker_done, const std::vector<AlignmentStatistics>& stats) {
     Timer timer;
     bool reported = false;
-    bool done = false;
-    // Waiting time between progress updates
-    // Start with a small value so that there’s no delay if there are very few
-    // reads to align.
     auto time_to_wait = std::chrono::milliseconds(1);
-    while (!done) {
+
+    while (true) {
         std::this_thread::sleep_for(time_to_wait);
-        // Ramp up waiting time
+        // Exponentially increase wait time up to a maximum of 1 second
         time_to_wait = std::min(time_to_wait * 2, std::chrono::milliseconds(1000));
-        done = true;
-        for (auto is_done : worker_done) {
+
+        bool all_done = true;
+        for (int is_done : worker_done) {
             if (!is_done) {
-                done = false;
-                continue;
+                all_done = false;
+                break;
             }
         }
-        auto n_reads = 0ull;
-        for (auto& stat : stats) {
+        if (all_done) {
+            break;
+        }
+
+        uint64_t n_reads = 0;
+        for (const auto& stat : stats) {
             n_reads += stat.n_reads;
         }
+
         auto elapsed = timer.elapsed();
-        if (elapsed >= 1.0) {
-            std::cerr
-                << " Mapped "
-                << std::setw(12) << (n_reads / 1E6) << " M reads @ "
-                << std::setw(8) << (timer.elapsed() * 1E6 / n_reads) << " us/read                   \r";
+        if (elapsed >= 1.0 && n_reads > 0) {
+            std::cerr << " Mapped " << std::setw(12) << (n_reads / 1E6) << " M reads @ "
+                      << std::setw(8) << (elapsed * 1E6 / n_reads) << " us/read                   \r";
             reported = true;
         }
     }
+
     if (reported) {
         std::cerr << '\n';
     }
 }
 
-
+/**
+ * @brief Sets the CPU affinity for the current thread.
+ * @param cpu_id The ID of the CPU core to bind the thread to.
+ */
 void setThreadAffinity(int cpu_id) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
@@ -201,181 +270,180 @@ void setThreadAffinity(int cpu_id) {
     }
 }
 
+/**
+ * @brief Reads the strobemer index on a specific CPU core.
+ * @param index The StrobemerIndex object to populate.
+ * @param sti_path The path to the index file.
+ * @param cpu_id The ID of the CPU to run this task on.
+ */
 void readIndexOnCPU(StrobemerIndex& index, const std::string& sti_path, int cpu_id) {
     setThreadAffinity(cpu_id);
     index.read(sti_path);
 }
 
-#ifdef RABBIT_FX
-
-int producer_pe_fastq_task(std::string file, std::string file2, rabbit::fq::FastqDataPool &fastqPool, rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq) {
-	rabbit::fq::FastqFileReader *fqFileReader;
-//	fqFileReader = new rabbit::fq::FastqFileReader(file, fastqPool, false, file2, 1 << 12);
-	fqFileReader = new rabbit::fq::FastqFileReader(file, fastqPool, false, file2);
-	int n_chunks = 0;
-	int line_sum = 0;
-	while (true) {
-		rabbit::fq::FastqDataPairChunk *fqdatachunk = new rabbit::fq::FastqDataPairChunk;
-		fqdatachunk = fqFileReader->readNextPairChunk();
-		if (fqdatachunk == NULL) break;
-		//std::cout << "readed chunk: " << n_chunks << std::endl;
-		dq.Push(n_chunks, fqdatachunk);
-		n_chunks++;
-	}
-
-	dq.SetCompleted();
-	delete fqFileReader;
-	std::cerr << "file " << file << " has " << n_chunks << " chunks" << std::endl;
-	return 0;
+/**
+ * @brief Producer task for reading paired-end FASTQ data.
+ * @details Reads chunks of paired-end reads and pushes them to a data queue.
+ * @return 0 on completion.
+ */
+int producer_pe_fastq_task(std::string file, std::string file2, rabbit::fq::FastqDataPool& fastqPool, rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk>& dq, int nxtSize) {
+    rabbit::fq::FastqFileReader fqFileReader(file, fastqPool, false, file2, nxtSize);
+    int n_chunks = 0;
+    while (true) {
+        // Read the next chunk of paired-end data
+        rabbit::fq::FastqDataPairChunk* fqdatachunk = fqFileReader.readNextPairChunk();
+        if (fqdatachunk == nullptr) {
+            break; // End of file
+        }
+        dq.Push(n_chunks, fqdatachunk);
+        n_chunks++;
+    }
+    dq.SetCompleted();
+    std::cerr << "file " << file << " has " << n_chunks << " chunks" << std::endl;
+    return 0;
 }
 
-int producer_se_fastq_task(std::string file, rabbit::fq::FastqDataPool& fastqPool, rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> &dq){
-//	rabbit::fq::FastqFileReader fqFileReader(file, fastqPool, false, "", 1 << 12);
-	rabbit::fq::FastqFileReader fqFileReader(file, fastqPool, false, "");
-	rabbit::int64 n_chunks = 0;
-	while(true){ 
-		rabbit::fq::FastqDataChunk* fqdatachunk;// = new rabbit::fq::FastqDataChunk;
-		fqdatachunk = fqFileReader.readNextChunk(); 
-		if (fqdatachunk == NULL) break;
-		//std::cout << "readed chunk: " << n_chunks << std::endl;
-		dq.Push(n_chunks, fqdatachunk);
-		n_chunks++;
-	}
-	dq.SetCompleted();
-	std::cerr << "file " << file << " has " << n_chunks << " chunks" << std::endl;
-	return 0;
+/**
+ * @brief Producer task for reading single-end FASTQ data.
+ * @details Reads chunks of single-end reads and pushes them to a data queue.
+ * @return 0 on completion.
+ */
+int producer_se_fastq_task(std::string file, rabbit::fq::FastqDataPool& fastqPool, rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk>& dq, int nxtSize) {
+    rabbit::fq::FastqFileReader fqFileReader(file, fastqPool, false, "", nxtSize);
+    rabbit::int64 n_chunks = 0;
+    while (true) {
+        // Read the next chunk of single-end data
+        rabbit::fq::FastqDataChunk* fqdatachunk = fqFileReader.readNextChunk();
+        if (fqdatachunk == nullptr) {
+            break; // End of file
+        }
+        dq.Push(n_chunks, fqdatachunk);
+        n_chunks++;
+    }
+    dq.SetCompleted();
+    std::cerr << "file " << file << " has " << n_chunks << " chunks" << std::endl;
+    return 0;
 }
-#endif
 
 
-#define META_DATA_SIZE (168) // size of meta data per read in GPU memory
+// --- Memory Usage Calculation ---
 
-#define GALLATIN_BASE_SIZE (2.0 * GB_BYTE) // base size of Gallatin GPU memory
-#define GALLATIN_CHUNK_SIZE (1.0 * GB_BYTE) // size of each chunk in Gallatin GPU memory
-//#define GALLATIN_CHUNK_SIZE (0.3 * GB_BYTE) // size of each chunk in Gallatin GPU memory
-
-#define OVERLAP_SIZE 3 // triple buffering
-
-uint64_t STREAM_BATCH_SIZE = 1024ll;
-uint64_t STREAM_BATCH_SIZE_GPU = 4096ll;
-uint64_t MAX_QUERY_LEN = 600ll;
-uint64_t MAX_TARGET_LEN = 1000ll;
-
-const int G_num = 0; // number of typeB thread per GPU
-
+/**
+ * @brief Calculates the estimated memory usage for single-end mode.
+ * @return The estimated memory usage in bytes.
+ */
 uint64_t calculateMemoryUsageSE(int total_cpu_num, int gpu_num, int chunk_num, int eval_read_len, int chunk_size, int max_tries, uint64_t ref_index_size) {
     int total_read_num = chunk_num * chunk_size / 2 / eval_read_len;
     int total_read_len = total_read_num * eval_read_len;
 
-    // GPUAlignTmpRes vector item size
     uint64_t align_res_item_size = 4 * sizeof(int) + 2 * sizeof(Nam) + sizeof(GPUAlignment) + sizeof(CigarData) + sizeof(TODOInfos);
-    // total size to reserve for GPUAlignTmpRes vector
     uint64_t align_res_vec_size = total_read_num * (max_tries * 2 + 2) * align_res_item_size;
-    // total align_res size
     uint64_t align_res_total_size = total_read_num * 2 * sizeof(GPUAlignTmpRes) * OVERLAP_SIZE + align_res_vec_size * OVERLAP_SIZE;
-
-    // meta data size
     uint64_t meta_data_size = total_read_num * META_DATA_SIZE;
-
-    // seq data size
     uint64_t seq_data_size = total_read_num * 4 + total_read_len * 2;
-
-    // device_todo memory size
     uint64_t device_todo_mem_size = chunk_num * DEVICE_TODO_SIZE_PER_CHUNK * 3;
 
-    int C_num = total_cpu_num / gpu_num - G_num; // number of typeA threads per GPU
+    int C_num = total_cpu_num / gpu_num - G_num;
     double SIZE0 = G_num * MAX_GPU_SSW_SIZE + C_num * MAX_CPU_SSW_SIZE;
     double SIZE1 = G_num * (align_res_total_size + meta_data_size + seq_data_size + device_todo_mem_size);
     double SIZE2 = GALLATIN_BASE_SIZE + chunk_num * GALLATIN_CHUNK_SIZE * 0.75;
     double SIZE3 = ref_index_size;
-//    std::cout << SIZE0 / GB_BYTE << " " << SIZE1 / GB_BYTE << " " << SIZE2 / GB_BYTE << " " << SIZE3 / GB_BYTE << std::endl;
-    double N = SIZE0 + SIZE1 + SIZE2 + SIZE3;
-    return N;
+
+    return static_cast<uint64_t>(SIZE0 + SIZE1 + SIZE2 + SIZE3);
 }
 
+/**
+ * @brief Calculates the estimated memory usage for paired-end mode.
+ * @return The estimated memory usage in bytes.
+ */
 uint64_t calculateMemoryUsagePE(int total_cpu_num, int gpu_num, int chunk_num, int eval_read_len, int chunk_size, int max_tries, uint64_t ref_index_size) {
     int total_read_num = chunk_num * chunk_size / 2 / eval_read_len;
     int total_read_len = total_read_num * eval_read_len;
 
-    // GPUAlignTmpRes vector item size
     uint64_t align_res_item_size = 4 * sizeof(int) + 2 * sizeof(Nam) + sizeof(GPUAlignment) + sizeof(CigarData) + sizeof(TODOInfos);
-    // total size to reserve for GPUAlignTmpRes vector
     uint64_t align_res_vec_size = total_read_num * (max_tries * 2 + 2) * align_res_item_size;
-    // total align_res size
     uint64_t align_res_total_size = total_read_num * 2 * sizeof(GPUAlignTmpRes) * OVERLAP_SIZE + align_res_vec_size * OVERLAP_SIZE;
-
-    // meta data size
     uint64_t meta_data_size = total_read_num * META_DATA_SIZE;
-
-    // seq data size
     uint64_t seq_data_size = total_read_num * 8 + total_read_len * 4;
-
-    // device_todo memory size
     uint64_t device_todo_mem_size = chunk_num * DEVICE_TODO_SIZE_PER_CHUNK * 3;
 
-    int C_num = total_cpu_num / gpu_num - G_num; // number of typeA threads per GPU
+    int C_num = total_cpu_num / gpu_num - G_num;
     double SIZE0 = G_num * MAX_GPU_SSW_SIZE + C_num * MAX_CPU_SSW_SIZE;
     double SIZE1 = G_num * (align_res_total_size + meta_data_size + seq_data_size + device_todo_mem_size);
     double SIZE2 = GALLATIN_BASE_SIZE + chunk_num * GALLATIN_CHUNK_SIZE;
     double SIZE3 = ref_index_size;
-//    std::cout << SIZE0 / GB_BYTE << " " << SIZE1 / GB_BYTE << " " << SIZE2 / GB_BYTE << " " << SIZE3 / GB_BYTE << std::endl;
-    double N = SIZE0 + SIZE1 + SIZE2 + SIZE3;
-    return N;
+
+    return static_cast<uint64_t>(SIZE0 + SIZE1 + SIZE2 + SIZE3);
 }
 
-int calculateMaxChunkNum(int total_cpu_num, int gpu_num, uint64_t GPU_mem_size, int is_se, int eval_read_len, int chunk_size, int max_tries, uint64_t ref_index_size) {
+/**
+ * @brief Calculates the maximum number of chunks that can be processed given the available GPU memory.
+ * @return The maximum valid number of chunks.
+ */
+int calculateMaxChunkNum(int total_cpu_num, int gpu_num, uint64_t GPU_mem_size, bool is_se, int eval_read_len, int chunk_size, int max_tries, uint64_t ref_index_size) {
     printf("Calculating max chunk_num for total_cpu_num: %d, gpu_num: %d, GPU_mem_size: %llu GB, is_se: %d, eval_read_len: %d, chunk_size: %d, max_tries: %d, ref_index_size: %llu GB\n",
            total_cpu_num, gpu_num, GPU_mem_size / GB_BYTE, is_se, eval_read_len, chunk_size, max_tries, ref_index_size / GB_BYTE);
-    int chunk_num = 1;
-    while (chunk_num <= 96) {
-        uint64_t memory_usage;
-        if (is_se) memory_usage = calculateMemoryUsageSE(total_cpu_num, gpu_num, chunk_num, eval_read_len, chunk_size, max_tries, ref_index_size);
-        else memory_usage = calculateMemoryUsagePE(total_cpu_num, gpu_num, chunk_num, eval_read_len, chunk_size, max_tries, ref_index_size);
+
+    for (int chunk_num = 1; chunk_num <= 96; ++chunk_num) {
+        uint64_t memory_usage = is_se
+                                ? calculateMemoryUsageSE(total_cpu_num, gpu_num, chunk_num, eval_read_len, chunk_size, max_tries, ref_index_size)
+                                : calculateMemoryUsagePE(total_cpu_num, gpu_num, chunk_num, eval_read_len, chunk_size, max_tries, ref_index_size);
+
         if (memory_usage > GPU_mem_size) {
             return chunk_num - 1;
         }
-        chunk_num++;
     }
-    return chunk_num - 1; // Return the last valid chunk_num
+    return 96; // Return the maximum tested value if all fit
 }
 
 
-#include <vector>
-#include <iostream>
-#include <cassert>
-#include <unordered_set>
-#include <cmath>
+// --- Thread Assignment ---
 
+/**
+ * @brief Represents the assignment of a thread to specific resources (CPU, GPU, NUMA node).
+ */
 struct ThreadAssignment {
     int thread_id;
     int async_thread_id;
     int numa_node;
     int gpu_id;
-    int flag;
-    int pass;
+    int flag; // Flag to indicate special roles (e.g., GPU thread)
+    int pass; // Flag to indicate if the thread should be skipped (e.g., auxiliary GPU thread)
 };
 
+/**
+ * @brief Evenly selects a specified number of elements from a total range.
+ * @param total The total number of items to select from.
+ * @param count The number of items to select.
+ * @return A vector of selected indices.
+ */
 std::vector<int> evenly_select(int total, int count) {
     std::vector<int> result;
-    if (count == 0) return result;
+    if (count <= 0 || total <= 0) {
+        return result;
+    }
+    if (count > total) {
+        count = total;
+    }
+
     double step = static_cast<double>(total) / count;
     for (int i = 0; i < count; ++i) {
-        int idx = static_cast<int>(i * step);
-        if (idx >= total) idx = total - 1;
-        result.push_back(idx);
+        result.push_back(static_cast<int>(i * step));
     }
     return result;
 }
 
+/**
+ * @brief Assigns threads to CPUs and GPUs based on system topology and user requests.
+ * @details This function creates a mapping of threads to resources, flagging some for GPU tasks.
+ * @return A vector of ThreadAssignment structs.
+ */
 std::vector<ThreadAssignment> assign_threads_fixed_with_flags(int total_cpu_num, int total_gpu_num, int cpu_num, int gpu_num, int numa_num) {
-
     std::cout << "total_cpu_num: " << total_cpu_num << ", use " << cpu_num << std::endl;
     std::cout << "total_gpu_num: " << total_gpu_num << ", use " << gpu_num << std::endl;
 
     std::vector<ThreadAssignment> assignments;
-
     std::vector<int> selected_threads = evenly_select(total_cpu_num, cpu_num);
-
     std::vector<int> main_gpu_indices = evenly_select(cpu_num, gpu_num * G_num);
     std::unordered_set<int> main_gpu_tids;
     std::unordered_set<int> aux_gpu_tids;
@@ -419,6 +487,16 @@ std::vector<ThreadAssignment> assign_threads_fixed_with_flags(int total_cpu_num,
 }
 
 
+// --- Main Application Logic ---
+
+/**
+ * @brief Sets the alignment scores for a specific GPU.
+ * @param gpu_id The ID of the target GPU.
+ * @param match_score Score for a match.
+ * @param mismatch_score Penalty for a mismatch.
+ * @param gap_open_score Penalty for opening a gap.
+ * @param gap_extend_score Penalty for extending a gap.
+ */
 void set_scores(int gpu_id, int match_score, int mismatch_score, int gap_open_score, int gap_extend_score) {
     cudaSetDevice(gpu_id);
     gasal_subst_scores sub_scores;
@@ -429,6 +507,12 @@ void set_scores(int gpu_id, int match_score, int mismatch_score, int gap_open_sc
     gasal_copy_subst_scores(&sub_scores);
 }
 
+/**
+ * @brief Main function to run the rabbitsalign pipeline.
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return EXIT_SUCCESS on success, EXIT_FAILURE on error.
+ */
 int run_rabbitsalign(int argc, char **argv) {
     auto opt = parse_command_line_arguments(argc, argv);
 
@@ -450,41 +534,44 @@ int run_rabbitsalign(int argc, char **argv) {
     }
 
     int eval_read_len = opt.r;
+#if !defined(CPU_ACC_TAG) && !defined(GPU_ACC_TAG)
 //    MAX_QUERY_LEN = eval_read_len + 100;
-//    MAX_TARGET_LEN = eval_read_len * 2;
-
+//    MAX_TARGET_LEN = eval_read_len * 4;
+#endif
     logger.info() << "MAX_QUERY_LEN: " << MAX_QUERY_LEN << ", MAX_TARGET_LEN: " << MAX_TARGET_LEN << std::endl;
 
-    int fx_batch_size = 1 << 22;
-    //int fx_batch_size = 1 << 20;
+    G_num = opt.threads_per_gpus;
 
-#ifdef RABBIT_FX
+    int fx_batch_size = 1 << 22;
+    int nxt_size = fx_batch_size / 4;
+    if (eval_read_len <= 500) {
+        nxt_size = 1 << 12;
+    }
+
     rabbit::fq::FastqDataPool fastqPool(4096, fx_batch_size);
     rabbit::core::TDataQueue<rabbit::fq::FastqDataChunk> queue_se(4096, 1);
     rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> queue_pe(4096, 1);
-    std::thread *producer;
-    if(!opt.only_gen_index) {
-        if(opt.is_SE) {
-            producer = new std::thread(producer_se_fastq_task, opt.reads_filename1, std::ref(fastqPool), std::ref(queue_se));
-        } else if(opt.is_interleaved) {
-            producer = new std::thread(producer_se_fastq_task, opt.reads_filename1, std::ref(fastqPool), std::ref(queue_se));
+
+    std::thread producer_thread;
+    if (!opt.only_gen_index) {
+        if (opt.is_SE || opt.is_interleaved) {
+            producer_thread = std::thread(producer_se_fastq_task, opt.reads_filename1, std::ref(fastqPool), std::ref(queue_se), nxt_size);
         } else {
-            producer = new std::thread(producer_pe_fastq_task, opt.reads_filename1, opt.reads_filename2, std::ref(fastqPool), std::ref(queue_pe));
+            producer_thread = std::thread(producer_pe_fastq_task, opt.reads_filename1, opt.reads_filename2, std::ref(fastqPool), std::ref(queue_pe), nxt_size);
         }
     }
-#else
-    input_buffer.rewind_reset();
-#endif
+
     IndexParameters index_parameters = IndexParameters::from_read_length(
-        opt.r,
-        opt.k_set ? opt.k : IndexParameters::DEFAULT,
-        opt.s_set ? opt.s : IndexParameters::DEFAULT,
-        opt.l_set ? opt.l : IndexParameters::DEFAULT,
-        opt.u_set ? opt.u : IndexParameters::DEFAULT,
-        opt.c_set ? opt.c : IndexParameters::DEFAULT,
-        opt.max_seed_len_set ? opt.max_seed_len : IndexParameters::DEFAULT
+            opt.r,
+            opt.k_set ? opt.k : IndexParameters::DEFAULT,
+            opt.s_set ? opt.s : IndexParameters::DEFAULT,
+            opt.l_set ? opt.l : IndexParameters::DEFAULT,
+            opt.u_set ? opt.u : IndexParameters::DEFAULT,
+            opt.c_set ? opt.c : IndexParameters::DEFAULT,
+            opt.max_seed_len_set ? opt.max_seed_len : IndexParameters::DEFAULT
     );
     logger.debug() << index_parameters << '\n';
+
     AlignmentParameters aln_params;
     aln_params.match = opt.A;
     aln_params.mismatch = opt.B;
@@ -504,8 +591,6 @@ int run_rabbitsalign(int argc, char **argv) {
     map_param.details = opt.details;
     map_param.verify();
 
-
-
     log_parameters(index_parameters, map_param, aln_params);
     logger.info() << "CPU Threads: " << opt.n_threads << std::endl;
     logger.info() << "GPU Numbers: " << opt.n_gpus << std::endl;
@@ -515,57 +600,58 @@ int run_rabbitsalign(int argc, char **argv) {
         return 1;
     }
 
-//    assert(k <= (w/2)*w_min && "k should be smaller than (w/2)*w_min to avoid creating short strobemers");
-
-    // Create index
+    // Load reference genome
     References references;
     Timer read_refs_timer;
     references = References::from_fasta(opt.ref_filename);
     logger.info() << "Time reading reference: " << read_refs_timer.elapsed() << " s\n";
 
     logger.info() << "Reference size: " << references.total_length() / 1E6 << " Mbp ("
-        << references.size() << " contig" << (references.size() == 1 ? "" : "s")
-        << "; largest: "
-        << (*std::max_element(references.lengths.begin(), references.lengths.end()) / 1E6) << " Mbp)\n";
+                  << references.size() << " contig" << (references.size() == 1 ? "" : "s")
+                  << "; largest: "
+                  << (*std::max_element(references.lengths.begin(), references.lengths.end()) / 1E6) << " Mbp)\n";
     if (references.total_length() == 0) {
         throw InvalidFasta("No reference sequences found");
     }
 
+    // NUMA-awareness logic
     int numa_num = getNumaNodeCount();
-    long long mem_avali = getAvailableMemory();
-    bool use_good_numa = 1;
+    long long mem_avail = getAvailableMemory();
+    bool use_good_numa = true;
 #ifdef OPT_NUMA_CLOSE
-    use_good_numa = 0;
+    use_good_numa = false;
 #endif
-    if(numa_num * (15ll << 30) > mem_avali * 0.8) {
-        use_good_numa = 0;
+    if (numa_num * (15ll << 30) > mem_avail * 0.8) {
+        use_good_numa = false;
     }
-    if(numa_num == 1) {
-        use_good_numa = 0;
+    if (numa_num == 1) {
+        use_good_numa = false;
     }
-    if(!opt.use_index) {
-        use_good_numa = 0;
+    if (!opt.use_index) {
+        use_good_numa = false;
     }
     fprintf(stderr, "use_good_numa is %d\n", use_good_numa);
 
     StrobemerIndex index(references, index_parameters, opt.bits);
     StrobemerIndex index2(references, index_parameters, opt.bits);
-    int totalCPUs;
-    totalCPUs = std::thread::hardware_concurrency();
+    int totalCPUs = std::thread::hardware_concurrency();
     int totalGPUs = 0;
     cudaError_t err = cudaGetDeviceCount(&totalGPUs);
     if (err != cudaSuccess) {
         std::cerr << "CUDA error: " << cudaGetErrorString(err) << std::endl;
         return 1;
     }
+
     size_t free_memory, total_memory;
+    cudaSetDevice(0); // Check memory on first GPU
     err = cudaMemGetInfo(&free_memory, &total_memory);
     if (err != cudaSuccess) {
         std::cerr << "CUDA error: " << cudaGetErrorString(err) << std::endl;
         return -1;
     }
     logger.info() << "Total CPUs: " << totalCPUs << ", Total GPUs: " << totalGPUs << std::endl;
-    logger.info() << "Available memory: " << free_memory / (1024 * 1024) << " MB, Total memory: " << total_memory / (1024 * 1024) << " MB\n";
+    logger.info() << "Available GPU memory: " << free_memory / (1024 * 1024) << " MB, Total GPU memory: " << total_memory / (1024 * 1024) << " MB\n";
+
     if (opt.use_index) {
         // Read the index from a file
         assert(!opt.only_gen_index);
@@ -573,44 +659,42 @@ int run_rabbitsalign(int argc, char **argv) {
         std::string sti_path = opt.ref_filename + index_parameters.filename_extension();
         logger.info() << "Reading index from " << sti_path << '\n';
 
-
-		fprintf(stderr, "read index1\n");
+        fprintf(stderr, "read index1\n");
         std::thread thread1(readIndexOnCPU, std::ref(index), sti_path, 0);
 
-        if(use_good_numa) {
+        if (use_good_numa) {
             fprintf(stderr, "read index2\n");
             std::thread thread2(readIndexOnCPU, std::ref(index2), sti_path, totalCPUs / 2);
             thread2.join();
         }
         thread1.join();
 
-
         logger.debug() << "Bits used to index buckets: " << index.get_bits() << "\n";
         logger.info() << "Total time reading index: " << read_index_timer.elapsed() << " s\n";
     } else {
+        // Build the index from the reference
         logger.debug() << "Bits used to index buckets: " << index.get_bits() << "\n";
         logger.info() << "Indexing ...\n";
         Timer index_timer;
         index.populate(opt.f, opt.n_threads);
-        //index.populate_fast(opt.f, opt.n_threads);
-        
-        logger.info() << "  Time counting seeds: " << index.stats.elapsed_counting_hashes.count() << " s" <<  std::endl;
-        logger.info() << "  Time generating seeds: " << index.stats.elapsed_generating_seeds.count() << " s" <<  std::endl;
-        logger.info() << "  Time sorting seeds: " << index.stats.elapsed_sorting_seeds.count() << " s" <<  std::endl;
-        logger.info() << "  Time generating hash table index: " << index.stats.elapsed_hash_index.count() << " s" <<  std::endl;
+
+        logger.info() << "  Time counting seeds: " << index.stats.elapsed_counting_hashes.count() << " s" << std::endl;
+        logger.info() << "  Time generating seeds: " << index.stats.elapsed_generating_seeds.count() << " s" << std::endl;
+        logger.info() << "  Time sorting seeds: " << index.stats.elapsed_sorting_seeds.count() << " s" << std::endl;
+        logger.info() << "  Time generating hash table index: " << index.stats.elapsed_hash_index.count() << " s" << std::endl;
         logger.info() << "Total time indexing: " << index_timer.elapsed() << " s\n";
 
         logger.debug()
-            << "Index statistics\n"
-            << "  Total strobemers:    " << std::setw(14) << index.stats.tot_strobemer_count << '\n'
-            << "  Distinct strobemers: " << std::setw(14) << index.stats.distinct_strobemers << " (100.00%)\n"
-            << "    1 occurrence:      " << std::setw(14) << index.stats.tot_occur_once
+                << "Index statistics\n"
+                << "  Total strobemers:    " << std::setw(14) << index.stats.tot_strobemer_count << '\n'
+                << "  Distinct strobemers: " << std::setw(14) << index.stats.distinct_strobemers << " (100.00%)\n"
+                << "    1 occurrence:      " << std::setw(14) << index.stats.tot_occur_once
                 << " (" << std::setw(6) << (100.0 * index.stats.tot_occur_once / index.stats.distinct_strobemers) << "%)\n"
-            << "    2..100 occurrences:" << std::setw(14) << index.stats.tot_mid_ab
+                << "    2..100 occurrences:" << std::setw(14) << index.stats.tot_mid_ab
                 << " (" << std::setw(6) << (100.0 * index.stats.tot_mid_ab / index.stats.distinct_strobemers) << "%)\n"
-            << "    >100 occurrences:  " << std::setw(14) << index.stats.tot_high_ab
+                << "    >100 occurrences:  " << std::setw(14) << index.stats.tot_high_ab
                 << " (" << std::setw(6) << (100.0 * index.stats.tot_high_ab / index.stats.distinct_strobemers) << "%)\n"
-            ;
+                ;
         if (index.stats.tot_high_ab >= 1) {
             logger.debug() << "Ratio distinct to highly abundant: " << index.stats.distinct_strobemers / index.stats.tot_high_ab << std::endl;
         }
@@ -619,23 +703,23 @@ int run_rabbitsalign(int argc, char **argv) {
         }
         logger.debug() << "Filtered cutoff index: " << index.stats.index_cutoff << std::endl;
         logger.debug() << "Filtered cutoff count: " << index.stats.filter_cutoff << std::endl;
-        
+
         if (!opt.logfile_name.empty()) {
             index.print_diagnostics(opt.logfile_name, index_parameters.syncmer.k);
             logger.debug() << "Finished printing log stats" << std::endl;
         }
+
         if (opt.only_gen_index) {
             Timer index_writing_timer;
             std::string sti_path = opt.ref_filename + index_parameters.filename_extension();
             logger.info() << "Writing index to " << sti_path << '\n';
-            index.write(opt.ref_filename + index_parameters.filename_extension());
+            index.write(sti_path);
             logger.info() << "Total time writing index: " << index_writing_timer.elapsed() << " s\n";
             return EXIT_SUCCESS;
         }
     }
 
     // Map/align reads
-        
     Timer map_align_timer;
     map_param.rescue_cutoff = map_param.rescue_level < 100 ? map_param.rescue_level * index.filter_cutoff : 1000;
     logger.debug() << "Using rescue cutoff: " << map_param.rescue_cutoff << std::endl;
@@ -646,43 +730,34 @@ int run_rabbitsalign(int argc, char **argv) {
     if (!opt.write_to_stdout) {
         of.open(opt.output_file_name);
         buf = of.rdbuf();
-    }
-    else {
+    } else {
         buf = std::cout.rdbuf();
     }
-
     std::ostream out(buf);
 
     if (map_param.is_sam_out) {
         std::stringstream cmd_line;
-        for(int i = 0; i < argc; ++i) {
+        for (int i = 0; i < argc; ++i) {
             cmd_line << argv[i] << " ";
         }
-
         out << sam_header(references, opt.read_group_id, opt.read_group_fields, cmd_line.str());
     }
 
-    std::vector<AlignmentStatistics> log_stats_vec(opt.n_threads);
-
-    logger.info() << "Running in " << (opt.is_SE ? "single-end" : "paired-end") << " mode" << std::endl;
-
     OutputBuffer output_buffer(out);
 
-    uint64_t ref_size = 0;
-    uint64_t index_size = 0;
-    ref_size += references.size() * sizeof(my_string);
-    ref_size += references.total_length() * sizeof(char);
-    ref_size += references.size() * sizeof(int);
-    index_size += index.randstrobes.size() * sizeof(RefRandstrobe);
-    index_size += index.randstrobe_start_indices.size() * sizeof(StrobemerIndex::bucket_index_t);
+    std::vector<AlignmentStatistics> log_stats_vec(opt.n_threads);
+    logger.info() << "Running in " << (opt.is_SE ? "single-end" : "paired-end") << " mode" << std::endl;
+
+    uint64_t ref_size = references.size() * sizeof(my_string) + references.total_length() * sizeof(char) + references.size() * sizeof(int);
+    uint64_t index_size = index.randstrobes.size() * sizeof(RefRandstrobe) + index.randstrobe_start_indices.size() * sizeof(StrobemerIndex::bucket_index_t);
 
     int max_chunk_num = calculateMaxChunkNum(opt.n_threads, opt.n_gpus, free_memory, opt.is_SE, eval_read_len, fx_batch_size, map_param.max_tries, ref_size + index_size);
     if (max_chunk_num < 1) {
-        logger.error() << "Not enough memory to run rabbitsalign. "
-            << "Please reduce the number of threads, or increase the available memory.\n";
+        logger.error() << "Not enough memory to run rabbitsalign. Please reduce the number of threads or increase available memory.\n";
         return -1;
     }
-    int chunk_num = max_chunk_num - (max_chunk_num % 2);
+    int chunk_num = max_chunk_num - (max_chunk_num % 2); // Ensure even number
+
     uint64_t last_mem_size = 0;
     if (opt.is_SE) {
         auto res = calculateMemoryUsageSE(opt.n_threads, opt.n_gpus, chunk_num, eval_read_len, fx_batch_size, map_param.max_tries, ref_size + index_size);
@@ -710,21 +785,21 @@ int run_rabbitsalign(int argc, char **argv) {
         }
         if (last_mem_size < 0) last_mem_size = 0;
         gallatin_num_bytes = GALLATIN_BASE_SIZE + chunk_num * GALLATIN_CHUNK_SIZE + last_mem_size;
-//        logger.info() << "resize BATCH size to " << STREAM_BATCH_SIZE << " and GPU BATCH size to " << STREAM_BATCH_SIZE_GPU << std::endl;
-//        logger.info() << "now chunk num is " << chunk_num << " and gallatin_num_bytes is " << gallatin_num_bytes / GB_BYTE << " GB" << std::endl;
+        logger.info() << "resize BATCH size to " << STREAM_BATCH_SIZE << " and GPU BATCH size to " << STREAM_BATCH_SIZE_GPU << std::endl;
+        logger.info() << "now chunk num is " << chunk_num << " and gallatin_num_bytes is " << gallatin_num_bytes / GB_BYTE << " GB" << std::endl;
     }
 
     logger.info() << "BATCH size: " << STREAM_BATCH_SIZE << " and GPU BATCH size: " << STREAM_BATCH_SIZE_GPU << std::endl;
     logger.info() << "Additional memory for Gallatin: " << last_mem_size / (1024 * 1024) << " MB\n";
 
     logger.info() << "Gallatin memory usage: " << gallatin_num_bytes / (1024 * 1024) << " MB\n";
+
     logger.info() << "Using chunk size: " << chunk_num << std::endl;
     uint64_t gallatin_seed = 13;
     for (int i = 0; i < opt.n_gpus; i++) {
         set_scores(i, aln_params.match, aln_params.mismatch, aln_params.gap_open, aln_params.gap_extend);
     }
 
-//    chunk_num = 1;
     int batch_read_num = chunk_num * fx_batch_size / 2 / eval_read_len;
     int batch_total_read_len = batch_read_num * eval_read_len;
     logger.info() << "Batch read number: " << batch_read_num << std::endl;
@@ -736,92 +811,85 @@ int run_rabbitsalign(int argc, char **argv) {
         init_shared_data(references, index, i, 0);
         init_mm_safe(gallatin_num_bytes, gallatin_seed, i);
     }
-    for (int i = 0; i < opt.n_threads; i++) {
+    for (size_t i = 0; i < assignments.size(); i++) {
         if (assignments[i].flag == 1 && assignments[i].pass == 0) {
             init_global_big_data(assignments[i].thread_id, assignments[i].gpu_id, map_param.max_tries, batch_read_num);
         }
     }
 
-
     double tt0 = GetTime();
-
     std::vector<std::thread> workers;
-    std::vector<int> worker_done(opt.n_threads);  // each thread sets its entry to 1 when it’s done
+    std::vector<int> worker_done(opt.n_threads, 0);
 
-
-#ifdef RABBIT_FX
-
+    // Main consumer thread creation loop
     if(opt.is_SE) {
         //SE
         fprintf(stderr, "SE module RABBIT_FX\n");
         if(use_good_numa) {
             for (int i = 0; i < opt.n_threads / 2; ++i) {
                 if (assignments[i].flag) {
-//                if (0) {
                     if (assignments[i].pass) {
 //                        printf("gpu thread %d skip\n", i);
                         continue;
                     }
                     std::thread consumer(perform_task_async_se_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
-                            std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                            std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                            std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
-                            std::ref(fastqPool), std::ref(queue_se), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
-                            batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
+                                         std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                                         std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                                         std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
+                                         std::ref(fastqPool), std::ref(queue_se), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
+                                         batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
                     workers.push_back(std::move(consumer));
                 } else if (!opt.only_gpu) {
                     std::thread consumer(perform_task_async_se_fx, std::ref(input_buffer), std::ref(output_buffer),
-                            std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                            std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                            std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
-                            std::ref(fastqPool), std::ref(queue_se), use_good_numa, assignments[i].gpu_id);
+                                         std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                                         std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                                         std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
+                                         std::ref(fastqPool), std::ref(queue_se), use_good_numa, assignments[i].gpu_id);
                     workers.push_back(std::move(consumer));
                 }
             }
             for (int i = opt.n_threads / 2; i < opt.n_threads; ++i) {
                 if (assignments[i].flag) {
-//                if (0) {
                     if (assignments[i].pass) {
 //                        printf("gpu thread %d skip\n", i);
                         continue;
                     }
                     std::thread consumer(perform_task_async_se_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
-                            std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                            std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                            std::ref(index2), std::ref(opt.read_group_id), assignments[i].thread_id,
-                            std::ref(fastqPool), std::ref(queue_se), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
-                            batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
+                                         std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                                         std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                                         std::ref(index2), std::ref(opt.read_group_id), assignments[i].thread_id,
+                                         std::ref(fastqPool), std::ref(queue_se), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
+                                         batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
                     workers.push_back(std::move(consumer));
                 } else if (!opt.only_gpu) {
                     std::thread consumer(perform_task_async_se_fx, std::ref(input_buffer), std::ref(output_buffer),
-                            std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                            std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                            std::ref(index2), std::ref(opt.read_group_id), assignments[i].thread_id,
-                            std::ref(fastqPool), std::ref(queue_se), use_good_numa, assignments[i].gpu_id);
+                                         std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                                         std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                                         std::ref(index2), std::ref(opt.read_group_id), assignments[i].thread_id,
+                                         std::ref(fastqPool), std::ref(queue_se), use_good_numa, assignments[i].gpu_id);
                     workers.push_back(std::move(consumer));
                 }
             }
         } else {
             for (int i = 0; i < opt.n_threads; ++i) {
                 if (assignments[i].flag) {
-//                if (0) {
                     if (assignments[i].pass) {
 //                        printf("gpu thread %d skip\n", i);
                         continue;
                     }
                     std::thread consumer(perform_task_async_se_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
-                            std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                            std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                            std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
-                            std::ref(fastqPool), std::ref(queue_se), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
-                            batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
+                                         std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                                         std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                                         std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
+                                         std::ref(fastqPool), std::ref(queue_se), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
+                                         batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
                     workers.push_back(std::move(consumer));
                 } else if (!opt.only_gpu) {
                     std::thread consumer(perform_task_async_se_fx, std::ref(input_buffer), std::ref(output_buffer),
-                            std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                            std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                            std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
-                            std::ref(fastqPool), std::ref(queue_se), use_good_numa, assignments[i].gpu_id);
+                                         std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                                         std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                                         std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
+                                         std::ref(fastqPool), std::ref(queue_se), use_good_numa, assignments[i].gpu_id);
                     workers.push_back(std::move(consumer));
                 }
             }
@@ -839,18 +907,18 @@ int run_rabbitsalign(int argc, char **argv) {
                         continue;
                     }
                     std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
-                            std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                            std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                            std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
-                            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
-                            batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
+                                         std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                                         std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                                         std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
+                                         std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
+                                         batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
                     workers.push_back(std::move(consumer));
                 } else if (!opt.only_gpu) {
                     std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
-                            std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                            std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                            std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
-                            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
+                                         std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                                         std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                                         std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
+                                         std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
                     workers.push_back(std::move(consumer));
                 }
             }
@@ -861,96 +929,98 @@ int run_rabbitsalign(int argc, char **argv) {
                         continue;
                     }
                     std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
-                            std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                            std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                            std::ref(index2), std::ref(opt.read_group_id), assignments[i].thread_id,
-                            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
-                            batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
+                                         std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                                         std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                                         std::ref(index2), std::ref(opt.read_group_id), assignments[i].thread_id,
+                                         std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
+                                         batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
                     workers.push_back(std::move(consumer));
                 } else if (!opt.only_gpu) {
                     std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
-                            std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                            std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                            std::ref(index2), std::ref(opt.read_group_id), assignments[i].thread_id,
-                            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
+                                         std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                                         std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                                         std::ref(index2), std::ref(opt.read_group_id), assignments[i].thread_id,
+                                         std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
                     workers.push_back(std::move(consumer));
                 }
             }
         } else {
             for (int i = 0; i < opt.n_threads; ++i) {
                 if (assignments[i].flag) {
-                //if (0) {
                     if (assignments[i].pass) {
 //                        printf("gpu thread %d skip\n", i);
                         continue;
                     }
                     std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
-                            std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                            std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                            std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
-                            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
-                            batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
+                                         std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                                         std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                                         std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
+                                         std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
+                                         batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
                     workers.push_back(std::move(consumer));
                 } else if (!opt.only_gpu) {
                     std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
-                            std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
-                            std::ref(map_param), std::ref(index_parameters), std::ref(references),
-                            std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
-                            std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
+                                         std::ref(log_stats_vec[i]), std::ref(worker_done[i]), std::ref(aln_params),
+                                         std::ref(map_param), std::ref(index_parameters), std::ref(references),
+                                         std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
+                                         std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id);
                     workers.push_back(std::move(consumer));
                 }
             }
         }
     }
-    if (opt.show_progress && isatty(2)) {
+
+    if (opt.show_progress && isatty(fileno(stderr))) {
         show_progress_until_done(worker_done, log_stats_vec);
     }
+
     for (auto& worker : workers) {
         worker.join();
     }
-    producer->join();
-    delete producer;
-
-
-#else
-
-    logger.error("pls use fx mode\n");
-    return -1;
-
-#endif
+    if (producer_thread.joinable()) {
+        producer_thread.join();
+    }
 
     logger.info() << "Done!\n";
     fprintf(stderr, "consumer cost %.2f\n", GetTime() - tt0);
 
     AlignmentStatistics tot_statistics;
-    for (auto& it : log_stats_vec) {
+    for (const auto& it : log_stats_vec) {
         tot_statistics += it;
     }
 
     logger.info() << "Total mapping sites tried: " << tot_statistics.tot_all_tried << std::endl
-        << "Total calls to ssw: " << tot_statistics.tot_aligner_calls << std::endl
-        << "Inconsistent NAM ends: " << tot_statistics.inconsistent_nams << std::endl
-        << "Tried NAM rescue: " << tot_statistics.nam_rescue << std::endl
-        << "Mates rescued by alignment: " << tot_statistics.tot_rescued << std::endl
-        << "Total time mapping: " << map_align_timer.elapsed() << " s." << std::endl
-        << "Total time reading read-file(s): " << tot_statistics.tot_read_file.count() / opt.n_threads << " s." << std::endl
-        << "Total time creating strobemers: " << tot_statistics.tot_construct_strobemers.count() / opt.n_threads << " s." << std::endl
-        << "Total time finding NAMs (non-rescue mode): " << tot_statistics.tot_find_nams.count() / opt.n_threads << " s." << std::endl
-        << "Total time finding NAMs (rescue mode): " << tot_statistics.tot_time_rescue.count() / opt.n_threads << " s." << std::endl;
+                  << "Total calls to ssw: " << tot_statistics.tot_aligner_calls << std::endl
+                  << "Inconsistent NAM ends: " << tot_statistics.inconsistent_nams << std::endl
+                  << "Tried NAM rescue: " << tot_statistics.nam_rescue << std::endl
+                  << "Mates rescued by alignment: " << tot_statistics.tot_rescued << std::endl
+                  << "Total time mapping: " << map_align_timer.elapsed() << " s." << std::endl
+                  << "Total time reading read-file(s): " << tot_statistics.tot_read_file.count() / opt.n_threads << " s." << std::endl
+                  << "Total time creating strobemers: " << tot_statistics.tot_construct_strobemers.count() / opt.n_threads << " s." << std::endl
+                  << "Total time finding NAMs (non-rescue mode): " << tot_statistics.tot_find_nams.count() / opt.n_threads << " s." << std::endl
+                  << "Total time finding NAMs (rescue mode): " << tot_statistics.tot_time_rescue.count() / opt.n_threads << " s." << std::endl;
     //<< "Total time finding NAMs ALTERNATIVE (candidate sites): " << tot_find_nams_alt.count()/opt.n_threads  << " s." <<  std::endl;
     logger.info() << "Total time sorting NAMs (candidate sites): " << tot_statistics.tot_sort_nams.count() / opt.n_threads << " s." << std::endl
-        << "Total time base level alignment (ssw): " << tot_statistics.tot_extend.count() / opt.n_threads << " s." << std::endl
-        << "Total time writing alignment to files: " << tot_statistics.tot_write_file.count() << " s." << std::endl;
+                  << "Total time base level alignment (ssw): " << tot_statistics.tot_extend.count() / opt.n_threads << " s." << std::endl
+                  << "Total time writing alignment to files: " << tot_statistics.tot_write_file.count() << " s." << std::endl;
     return EXIT_SUCCESS;
 }
 
+/**
+ * @brief Main entry point of the application.
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return Exit code.
+ */
 int main(int argc, char **argv) {
     try {
         return run_rabbitsalign(argc, argv);
-    } catch (BadParameter& e) {
+    } catch (const BadParameter& e) {
         logger.error() << "A parameter is invalid: " << e.what() << std::endl;
     } catch (const std::runtime_error& e) {
-        logger.error() << "rabbitsalign: " << e.what() << std::endl;
+        logger.error() << "rabbitsalign runtime error: " << e.what() << std::endl;
+    } catch (const std::exception& e) {
+        logger.error() << "An unexpected error occurred: " << e.what() << std::endl;
     }
     return EXIT_FAILURE;
 }

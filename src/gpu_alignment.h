@@ -13,7 +13,7 @@ __device__ uint8_t gpu_get_mapq(const my_vector<Nam>& nams, const Nam& n_max);
 __device__ float gpu_top_dropoff(my_vector<Nam>& nams);
 
 // Functions to prepare data for alignment
-__device__ void gpu_part2_extend_seed_get_str(GPUAlignTmpRes& align_tmp_res, int j, const GPURead& read1, const GPURead& read2, const GPUReferences& references, int read_id, int* d_todo_cnt, char* d_query_ptr, char* d_ref_ptr, int* d_query_offset, int* d_ref_offset);
-__device__ void gpu_part2_rescue_mate_get_str(GPUAlignTmpRes& align_tmp_res, int j, const GPURead& read1, const GPURead& read2, const GPUReferences& references, float mu, float sigma, int read_id, int* d_todo_cnt, char* d_query_ptr, char* d_ref_ptr, int* d_query_offset, int* d_ref_offset);
+__device__ void gpu_part2_extend_seed_get_str(GPUAlignTmpRes& align_tmp_res, int j, const GPURead& read1, const GPURead& read2, const GPUReferences& references, int* d_todo_cnt, char* d_query_ptr, char* d_ref_ptr, int* d_query_offset, int* d_ref_offset);
+__device__ void gpu_part2_rescue_mate_get_str(GPUAlignTmpRes& align_tmp_res, int j, const GPURead& read1, const GPURead& read2, const GPUReferences& references, float mu, float sigma, int* d_todo_cnt, char* d_query_ptr, char* d_ref_ptr, int* d_query_offset, int* d_ref_offset);
 
 #endif //RABBITSALIGN_GPU_ALIGNMENT_H

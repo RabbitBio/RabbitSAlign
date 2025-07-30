@@ -46,7 +46,7 @@ sed -i "s|/usr/local/cuda|$CUDA_PATH|g" CMakeLists.txt
 echo "Compiling the main project..."
 mkdir -p build
 cd build
-cmake .. -DENABLE_AVX=ON -DUSE_RABBITFX=ON -DCLOSE_NUMA_OPT=OFF -DCMAKE_BUILD_TYPE=release
+cmake .. -DENABLE_AVX=ON -DCLOSE_NUMA_OPT=OFF -DCMAKE_BUILD_TYPE=release
 make -j8
 
 echo "build successfully."

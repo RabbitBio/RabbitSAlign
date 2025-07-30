@@ -95,6 +95,7 @@ __device__ void add_to_hits_per_ref(
 __global__ void gpu_get_randstrobes(
         int num_tasks,
         int read_num,
+        int base_read_num,
         int *pre_sum,
         int *lens,
         char *all_seqs,
@@ -105,8 +106,8 @@ __global__ void gpu_get_randstrobes(
 ) {
     int id = blockIdx.x * blockDim.x + threadIdx.x;
     if (id < num_tasks) {
-        int read_id = id % read_num;
-        int is_read2 = id / read_num;
+        int read_id = (id + base_read_num) % read_num;
+        int is_read2 = (id + base_read_num) / read_num;
         size_t len;
         char *seq, *rc;
         if (is_read2 == 0) {
@@ -374,12 +375,12 @@ __global__ void gpu_rescue_get_hits(
         int cnt0 = 0, cnt1 = 0;
         for (int i = 0; i < hits_t0.size(); i++) {
             RescueHit &rh = hits_t0[i];
-            if ((rh.count > rescue_cutoff && cnt0 >= 5) || rh.count > 100) break;
+            if ((rh.count > rescue_cutoff && cnt0 >= 5) || rh.count > rescue_threshold) break;
             cnt0++;
         }
         for (int i = 0; i < hits_t1.size(); i++) {
             RescueHit &rh = hits_t1[i];
-            if ((rh.count > rescue_cutoff && cnt1 >= 5) || rh.count > 100) break;
+            if ((rh.count > rescue_cutoff && cnt1 >= 5) || rh.count > rescue_threshold) break;
             cnt1++;
         }
 

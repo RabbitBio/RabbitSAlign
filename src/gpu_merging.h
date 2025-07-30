@@ -9,6 +9,7 @@ __device__ void merge_hits_seg(const my_vector<my_pair<int, Hit>>& original_hits
 __device__ void merge_hits(my_vector<my_pair<int, Hit>>& hits_per_ref, int k, bool is_revcomp, my_vector<Nam>& nams);
 __device__ void gpu_shuffle_top_nams(my_vector<Nam>& nams);
 __device__ void sort_nams_by_score(my_vector<Nam>& nams, int mx_num);
+__device__ void sort_nam_pairs_by_score(my_vector<gpu_NamPair>& joint_nam_scores, int mx_num);
 
 // CUB-based sorting utilities
 my_pair<int*, int*> sort_all_hits_with_cub(int todo_cnt, my_vector<my_pair<int, Hit>>* hits_per_refs, int* global_todo_ids, cudaStream_t stream,

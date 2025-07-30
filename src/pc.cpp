@@ -490,8 +490,6 @@ bool gasal_fail(const std::string_view& query_str, const std::string_view& ref_s
     return false;
 }
 
-#ifdef RABBIT_FX
-
 klibpp::KSeq ConvertNeo2KSeq(neoReference ref) {
     klibpp::KSeq res;
     res.name = std::string((char *) ref.base + ref.pname, ref.lname);
@@ -828,7 +826,6 @@ void perform_task_async_se_fx(
     );
 
 }
-#endif
 
 void perform_task_async_se(
     InputBuffer& input_buffer,
@@ -1113,8 +1110,6 @@ void perform_task_async_se(
     //);
 
 }
-
-#ifdef RABBIT_FX
 
 void perform_task_async_pe_fx(
     InputBuffer& input_buffer,
@@ -1543,7 +1538,6 @@ void perform_task_async_pe_fx(
         time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
     );
 }
-#else
 
 void perform_task_async_pe(
     InputBuffer& input_buffer,
@@ -1911,4 +1905,3 @@ void perform_task_async_pe(
     //    time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
     //);
 }
-#endif

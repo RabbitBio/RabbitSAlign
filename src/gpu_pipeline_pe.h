@@ -27,33 +27,4 @@ void perform_task_async_pe_fx_GPU(
         const bool unordered_output
 );
 
-
-// --- Declaraciones de Kernels de PE ---
-__global__ void gpu_pre_cal_type(
-        int num_tasks,
-        float dropoff_threshold,
-        my_vector<Nam> *global_nams,
-        GPUInsertSizeDistribution& isize_est,
-        int *global_todo_ids);
-
-__global__ void gpu_align_PE01234(
-        int num_tasks,
-        int s_len,
-        IndexParameters *index_para,
-        uint64_t *global_align_info,
-        AlignmentParameters* aligner_parameters,
-        int *pre_sum,
-        int *lens,
-        char *all_seqs,
-        GPUReferences *global_references,
-        MappingParameters *mapping_parameters,
-        my_vector<Nam> *global_nams,
-        GPUInsertSizeDistribution& isize_est,
-        int *global_todo_ids,
-        GPUAlignTmpRes *global_align_res,
-        int* d_todo_cnt,
-        char* d_query_ptr, char* d_ref_ptr,
-        int* d_query_offset, int* d_ref_offset
-);
-
 #endif //RABBITSALIGN_GPU_PIPELINE_PE_H

@@ -14,6 +14,26 @@ __device__ size_t my_lower_bound(my_pair<int, Hit>* hits, size_t i_start, size_t
     return left;
 }
 
+__device__ void check_hits(my_vector<my_pair<int, Hit>> &hits_per_ref) {
+    if (hits_per_ref.size() < 2) return;
+    for(int i = 0; i < hits_per_ref.size() - 1; i++) {
+        if(hits_per_ref[i].first > hits_per_ref[i + 1].first) {
+            printf("sort error [%d,%d] [%d,%d]\n", hits_per_ref[i].first, hits_per_ref[i].second.query_start, hits_per_ref[i + 1].first, hits_per_ref[i + 1].second.query_start);
+            assert(false);
+        }
+        if(hits_per_ref[i].first == hits_per_ref[i + 1].first && hits_per_ref[i].second.query_start > hits_per_ref[i + 1].second.query_start) {
+            printf("sort error [%d,%d] [%d,%d]\n", hits_per_ref[i].first, hits_per_ref[i].second.query_start, hits_per_ref[i + 1].first, hits_per_ref[i + 1].second.query_start);
+            assert(false);
+        }
+//        if(hits_per_ref[i].first == hits_per_ref[i + 1].first && hits_per_ref[i].second.query_start == hits_per_ref[i + 1].second.query_start &&
+//           hits_per_ref[i].second.ref_start > hits_per_ref[i + 1].second.ref_start) {
+//            printf("sort error [%d,%d,%d] [%d,%d,%d]\n", hits_per_ref[i].first, hits_per_ref[i].second.query_start, hits_per_ref[i].second.ref_start,
+//                   hits_per_ref[i + 1].first, hits_per_ref[i + 1].second.query_start, hits_per_ref[i + 1].second.ref_start);
+//            assert(false);
+//        }
+    }
+}
+
 __device__ void sort_hits_single(
         my_vector<my_pair<int, Hit>>& hits_per_ref
 ) {
@@ -68,10 +88,10 @@ __device__ void salign_merge_hits(
             while(i_end < hits_size && hits[i_end].second.query_start == hits[i].second.query_start) i_end++;
             i = i_end;
             i_size = i_end - i_start;
-            //for(int j = 0; j < i_size - 1; j++) {
-            //    assert(hits[i_start + j].second.ref_start <= hits[i_start + j + 1].second.ref_start);
-            //}
-            //quick_sort(&(hits[i_start]), i_size);
+//            for(int j = 0; j < i_size - 1; j++) {
+//                assert(hits[i_start + j].second.ref_start <= hits[i_start + j + 1].second.ref_start);
+//            }
+            quick_sort(&(hits[i_start]), i_size);
             is_added.clear();
             for(size_t j = 0; j < i_size; j++) is_added.push_back(false);
             int query_start = hits[i_start].second.query_start;
@@ -474,7 +494,9 @@ __device__ void merge_hits(
 
 
 __device__ void gpu_shuffle_top_nams(my_vector<Nam>& nams) {
+#ifdef GPU_ACC_TAG
     return;
+#endif
     unsigned int seed = 1234567u;
     if (nams.empty()) {
         return;
@@ -574,6 +596,56 @@ __device__ void sort_nams_single_check(
     });
 }
 
+__device__ void sort_nam_pairs_by_score(my_vector<gpu_NamPair>& joint_nam_scores, int mx_num) {
+    int* head = (int*)my_malloc(key_mod_val * sizeof(int));
+    my_vector<ref_ids_edge> edges;
+    for (int i = 0; i < key_mod_val; i++) head[i] = -1;
+    int score_group_num = 0;
+    for (int i = 0; i < joint_nam_scores.size(); i++) {
+        int score_key = (int)(joint_nam_scores[i].score);
+        int score_rank = find_ref_ids(score_key, head, edges.data);
+        if (score_rank == -1) {
+            score_rank = score_group_num;
+            int key = score_key % key_mod_val;
+            edges.push_back({head[key], score_key});
+            head[key] = score_group_num++;
+        }
+    }
+    if (score_group_num <= 1) {
+        my_free(head);
+        return;
+    }
+    my_vector<my_pair<int, my_vector<gpu_NamPair>*>> all_nams(score_group_num);
+    all_nams.length = score_group_num;
+    my_vector<gpu_NamPair>* all_vecs = (my_vector<gpu_NamPair>*)my_malloc(score_group_num * sizeof(my_vector<gpu_NamPair>));
+    for (int i = 0; i < score_group_num; i++) {
+        all_nams[i].first = -1;
+        all_nams[i].second = &all_vecs[i];
+        all_nams[i].second->init();
+    }
+    for (int i = 0; i < joint_nam_scores.size(); i++) {
+        int score_key = (int)(joint_nam_scores[i].score);
+        int score_rank = find_ref_ids(score_key, head, edges.data);
+        assert(score_rank >= 0 && score_rank < score_group_num);
+        all_nams[score_rank].first = score_key;
+        all_nams[score_rank].second->push_back(joint_nam_scores[i]);
+    }
+    joint_nam_scores.clear();
+    quick_sort_iterative(&(all_nams[0]), 0, all_nams.size() - 1,
+                         [](const my_pair<int, my_vector<gpu_NamPair>*>& a, const my_pair<int, my_vector<gpu_NamPair>*>& b) {
+                             return a.first > b.first;
+                         });
+    for (int i = 0; i < all_nams.size(); i++) {
+        for (int j = 0; j < all_nams[i].second->size(); j++) {
+            if (joint_nam_scores.size() == mx_num) break;
+            joint_nam_scores.push_back((*all_nams[i].second)[j]);
+        }
+        all_nams[i].second->release();
+    }
+    my_free(head);
+    my_free(all_vecs);
+}
+
 
 __device__ void sort_nams_by_score(my_vector<Nam>& nams, int mx_num) {
     int* head = (int*)my_malloc(key_mod_val * sizeof(int));
@@ -625,15 +697,56 @@ __device__ void sort_nams_by_score(my_vector<Nam>& nams, int mx_num) {
     my_free(all_vecs);
 }
 
-// ====================================================================================
-// Step 1: Define New CUDA Kernels for Data Preparation and Reordering
-// ====================================================================================
+__device__ void sort_nams_by_hits(my_vector<Nam>& nams, int mx_num) {
+    int* head = (int*)my_malloc(key_mod_val * sizeof(int));
+    my_vector<ref_ids_edge> edges;
+    for (int i = 0; i < key_mod_val; i++) head[i] = -1;
+    int score_group_num = 0;
+    for (int i = 0; i < nams.size(); i++) {
+        int score_key = (int)(nams[i].n_hits);
+        int score_rank = find_ref_ids(score_key, head, edges.data);
+        if (score_rank == -1) {
+            score_rank = score_group_num;
+            int key = score_key % key_mod_val;
+            edges.push_back({head[key], score_key});
+            head[key] = score_group_num++;
+        }
+    }
+    if (score_group_num <= 1) {
+        my_free(head);
+        return;
+    }
+    my_vector<my_pair<int, my_vector<Nam>*>> all_nams(score_group_num);
+    all_nams.length = score_group_num;
+    my_vector<Nam>* all_vecs = (my_vector<Nam>*)my_malloc(score_group_num * sizeof(my_vector<Nam>));
+    for (int i = 0; i < score_group_num; i++) {
+        all_nams[i].first = -1;
+        all_nams[i].second = &all_vecs[i];
+        all_nams[i].second->init();
+    }
+    for (int i = 0; i < nams.size(); i++) {
+        int score_key = (int)(nams[i].n_hits);
+        int score_rank = find_ref_ids(score_key, head, edges.data);
+        assert(score_rank >= 0 && score_rank < score_group_num);
+        all_nams[score_rank].first = score_key;
+        all_nams[score_rank].second->push_back(nams[i]);
+    }
+    nams.clear();
+    quick_sort_iterative(&(all_nams[0]), 0, all_nams.size() - 1,
+                         [](const my_pair<int, my_vector<Nam>*>& a, const my_pair<int, my_vector<Nam>*>& b) {
+                             return a.first > b.first;
+                         });
+    for (int i = 0; i < all_nams.size(); i++) {
+        for (int j = 0; j < all_nams[i].second->size(); j++) {
+            if (nams.size() == mx_num) break;
+            nams.push_back((*all_nams[i].second)[j]);
+        }
+        all_nams[i].second->release();
+    }
+    my_free(head);
+    my_free(all_vecs);
+}
 
-/**
- * @brief Kernel 1: Get the size of each vector to be sorted.
- * This is the first step to determine the total number of elements and
- * the boundaries for each segment.
- */
 __global__ void get_task_sizes_kernel(
         int num_tasks,
         const my_vector<my_pair<int, Hit>>* all_task_vectors,
@@ -647,10 +760,6 @@ __global__ void get_task_sizes_kernel(
     }
 }
 
-/**
- * @brief Kernel 2: Flatten the vectors into large key and value arrays for CUB.
- * The key is the ref_id, and the value is the original index of the hit (0, 1, 2, ...).
- */
 __global__ void marshal_data_for_sort_kernel(
         int num_tasks,
         const my_vector<my_pair<int, Hit>>* all_task_vectors,
@@ -672,12 +781,6 @@ __global__ void marshal_data_for_sort_kernel(
     }
 }
 
-/**
- * @brief Kernel 3: Reorder the original Hit objects based on the sorted indices.
- * This "gather" operation uses the sorted value array (which now contains sorted
- * original indices) to read from the original Hit array and write to a new
- * buffer in the correct, sorted order.
- */
 __global__ void reorder_hits_kernel(
         int num_tasks,
         const my_vector<my_pair<int, Hit>>* original_vectors,
@@ -688,13 +791,7 @@ __global__ void reorder_hits_kernel(
 {
     int global_hit_idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    // This kernel is launched with one thread per hit, so no inner loop is needed.
-    // We need to figure out which task this hit belongs to.
-    // (A more advanced version could use shared memory to optimize this search)
     if (global_hit_idx < task_offsets[num_tasks]) {
-        // Find which segment this thread belongs to.
-        // upper_bound finds the first offset > global_hit_idx.
-        // The segment index is the one before that.
         int upper_bound_idx = cub::UpperBound(task_offsets, num_tasks + 1, global_hit_idx);
         int task_id = upper_bound_idx - 1;
 
@@ -728,15 +825,6 @@ __global__ void update_vector_pointers_kernel(
     }
 }
 
-
-// ====================================================================================
-// Step 2: Create a Host-Side Orchestration Function
-// ====================================================================================
-
-/**
- * @brief Host function to manage the entire sorting process for one set of hits.
- * This replaces the old gpu_sort_hits kernel entirely.
- */
 my_pair<int*, int*> sort_all_hits_with_cub(
         int todo_cnt,
         my_vector<my_pair<int, Hit>>* hits_per_refs,
@@ -775,7 +863,6 @@ my_pair<int*, int*> sort_all_hits_with_cub(
     cudaStreamSynchronize(stream);
     *gpu_cost3_1 += GetTime() - t0;
 
-//    printf("total hits %d\n", total_hits);
 
     if (total_hits == 0) {
         cudaFree(d_task_sizes);
@@ -837,10 +924,13 @@ __global__ void gpu_sort_hits(
     int id = blockIdx.x * blockDim.x + threadIdx.x;
     if (id < num_tasks) {
         int real_id = global_todo_ids[id];
+#ifdef GPU_ACC_TAG
         sort_hits_single(hits_per_ref0s[real_id]);
         sort_hits_single(hits_per_ref1s[real_id]);
-//        sort_hits_by_refid(hits_per_ref0s[real_id]);
-//        sort_hits_by_refid(hits_per_ref1s[real_id]);
+#else
+        sort_hits_by_refid(hits_per_ref0s[real_id]);
+        sort_hits_by_refid(hits_per_ref1s[real_id]);
+#endif
 //        check_hits(hits_per_ref0s[real_id]);
 //        check_hits(hits_per_ref1s[real_id]);
     }
@@ -855,10 +945,13 @@ __global__ void gpu_rescue_sort_hits(
     int id = blockIdx.x * blockDim.x + threadIdx.x;
     if (id < num_tasks) {
         int real_id = global_todo_ids[id];
+#ifdef GPU_ACC_TAG
         sort_hits_single(hits_per_ref0s[real_id]);
         sort_hits_single(hits_per_ref1s[real_id]);
-//        sort_hits_by_refid(hits_per_ref0s[real_id]);
-//        sort_hits_by_refid(hits_per_ref1s[real_id]);
+#else
+        sort_hits_by_refid(hits_per_ref0s[real_id]);
+        sort_hits_by_refid(hits_per_ref1s[real_id]);
+#endif
 //        check_hits(hits_per_ref0s[real_id]);
 //        check_hits(hits_per_ref1s[real_id]);
     }
@@ -930,14 +1023,9 @@ __global__ void gpu_rescue_merge_hits_get_nams(
     int id = blockIdx.x * blockDim.x + threadIdx.x;
     if (id < num_tasks){
         int real_id = global_todo_ids[id];
-        my_vector<Nam> *nams = (my_vector<Nam>*)my_malloc(sizeof(my_vector<Nam>));
-        nams->init(8);
-//        salign_merge_hits(hits_per_ref0s[real_id], index_para->syncmer.k, 0, *nams);
-//        salign_merge_hits(hits_per_ref1s[real_id], index_para->syncmer.k, 1, *nams);
-        merge_hits(hits_per_ref0s[real_id], index_para->syncmer.k, 0, *nams);
-        merge_hits(hits_per_ref1s[real_id], index_para->syncmer.k, 1, *nams);
-        global_nams[real_id] = *nams;
-        my_free(nams);
+        global_nams[real_id].init(8);
+        salign_merge_hits(hits_per_ref0s[real_id], index_para->syncmer.k, 0, global_nams[real_id]);
+        salign_merge_hits(hits_per_ref1s[real_id], index_para->syncmer.k, 1, global_nams[real_id]);
         hits_per_ref0s[real_id].release();
         hits_per_ref1s[real_id].release();
     }
@@ -954,14 +1042,18 @@ __global__ void gpu_sort_nams(
     if (id < num_tasks) {
         int max_tries = mapping_parameters->max_tries;
         if (is_se) {
+#ifdef GPU_ACC_TAG
             sort_nams_single_check(global_nams[id]);
-//            sort_nams_by_score(global_nams[id], max_tries);
+#else
+            sort_nams_by_score(global_nams[id], max_tries);
             global_nams[id].length = my_min(global_nams[id].length, max_tries);
+#endif
         } else {
+#ifdef GPU_ACC_TAG
             sort_nams_single_check(global_nams[id]);
-            //sort_nams_by_score(global_nams[id], max_tries * 2);
-            //global_nams[id].length = my_min(global_nams[id].length, max_tries * 2);
-//            sort_nams_by_score(global_nams[id], 1e9);
+#else
+            sort_nams_by_score(global_nams[id], 1e9);
+#endif
         }
         gpu_shuffle_top_nams(global_nams[id]);
     }

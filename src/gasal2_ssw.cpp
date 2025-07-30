@@ -74,27 +74,14 @@ void solve_ssw_on_gpu(
     static uint8_t* query_seq_mod = &query_seq_mod_vec[0];
     static uint8_t* target_seq_mod = &target_seq_mod_vec[0];
 
-    int maximum_sequence_length_query = 0;
-    int maximum_sequence_length_target = 0;
-
-    for (size_t i = 0; i < query_seqs.size(); i++) {
-        //        query_headers[i] += std::to_string(i);
-        if(query_seqs[i].length() > MAX_QUERY_LEN) query_seqs[i] = query_seqs[i].substr(0, MAX_QUERY_LEN);
-        maximum_sequence_length_query = MAX(maximum_sequence_length_query, query_seqs[i].length());
+    for (size_t i = 0; i < total_seqs; i++) {
+        if (query_seqs[i].length() > MAX_QUERY_LEN) {
+            query_seqs[i] = query_seqs[i].substr(0, MAX_QUERY_LEN);
+        }
+        if(target_seqs[i].length() > MAX_TARGET_LEN) {
+            target_seqs[i] = target_seqs[i].substr(0, MAX_TARGET_LEN);
+        }
     }
-    for (size_t i = 0; i < target_seqs.size(); i++) {
-        //        target_headers[i] += std::to_string(i);
-        if(target_seqs[i].length() > MAX_TARGET_LEN) target_seqs[i] = target_seqs[i].substr(0, MAX_TARGET_LEN);
-        maximum_sequence_length_target = MAX(maximum_sequence_length_target, target_seqs[i].length());
-    }
-
-    if(maximum_sequence_length_query > MAX_QUERY_LEN) {
-        std::cerr << "gasal2 : read size is too big, " <<  maximum_sequence_length_query << " > " << MAX_QUERY_LEN << std::endl;
-        exit(0);
-    }
-    assert(maximum_sequence_length_query <= MAX_QUERY_LEN);
-    assert(maximum_sequence_length_target <= MAX_TARGET_LEN);
-
 
     static gasal_gpu_storage_v gpu_storage_vecs[THREAD_NUM_MAX];
     if (cnt[thread_id] == 1) {
@@ -301,27 +288,14 @@ void solve_ssw_on_gpu(
     static uint8_t* query_seq_mod = &query_seq_mod_vec[0];
     static uint8_t* target_seq_mod = &target_seq_mod_vec[0];
 
-    int maximum_sequence_length_query = 0;
-    int maximum_sequence_length_target = 0;
-
-    for (size_t i = 0; i < query_seqs.size(); i++) {
-        //        query_headers[i] += std::to_string(i);
-        if(query_seqs[i].length() > MAX_QUERY_LEN) query_seqs[i] = query_seqs[i].substr(0, MAX_QUERY_LEN);
-        maximum_sequence_length_query = MAX(maximum_sequence_length_query, query_seqs[i].length());
+    for (size_t i = 0; i < total_seqs; i++) {
+        if (query_seqs[i].length() > MAX_QUERY_LEN) {
+            query_seqs[i] = query_seqs[i].substr(0, MAX_QUERY_LEN);
+        }
+        if(target_seqs[i].length() > MAX_TARGET_LEN) {
+            target_seqs[i] = target_seqs[i].substr(0, MAX_TARGET_LEN);
+        }
     }
-    for (size_t i = 0; i < target_seqs.size(); i++) {
-        //        target_headers[i] += std::to_string(i);
-        if(target_seqs[i].length() > MAX_TARGET_LEN) target_seqs[i] = target_seqs[i].substr(0, MAX_TARGET_LEN);
-        maximum_sequence_length_target = MAX(maximum_sequence_length_target, target_seqs[i].length());
-    }
-
-    if(maximum_sequence_length_query > MAX_QUERY_LEN) {
-        std::cerr << "gasal2 : read size is too big, " <<  maximum_sequence_length_query << " > " << MAX_QUERY_LEN << std::endl;
-        exit(0);
-    }
-    assert(maximum_sequence_length_query <= MAX_QUERY_LEN);
-    assert(maximum_sequence_length_target <= MAX_TARGET_LEN);
-
 
     static gasal_gpu_storage_v gpu_storage_vecs[THREAD_NUM_MAX];
     if (cnt[thread_id] == 1) {
@@ -545,27 +519,14 @@ void solve_ssw_on_gpu2(
         cudaMallocManaged(&global_target_offsets[thread_id], STREAM_BATCH_SIZE_GPU * sizeof(uint32_t));
     }
 
-    int maximum_sequence_length_query = 0;
-    int maximum_sequence_length_target = 0;
-
-    for (size_t i = 0; i < query_seqs.size(); i++) {
-        //        query_headers[i] += std::to_string(i);
-        if(query_seqs[i].length() > MAX_QUERY_LEN) query_seqs[i] = query_seqs[i].substr(0, MAX_QUERY_LEN);
-        maximum_sequence_length_query = MAX(maximum_sequence_length_query, query_seqs[i].length());
+    for (size_t i = 0; i < total_seqs; i++) {
+        if (query_seqs[i].length() > MAX_QUERY_LEN) {
+            query_seqs[i] = query_seqs[i].substr(0, MAX_QUERY_LEN);
+        }
+        if(target_seqs[i].length() > MAX_TARGET_LEN) {
+            target_seqs[i] = target_seqs[i].substr(0, MAX_TARGET_LEN);
+        }
     }
-    for (size_t i = 0; i < target_seqs.size(); i++) {
-        //        target_headers[i] += std::to_string(i);
-        if(target_seqs[i].length() > MAX_TARGET_LEN) target_seqs[i] = target_seqs[i].substr(0, MAX_TARGET_LEN);
-        maximum_sequence_length_target = MAX(maximum_sequence_length_target, target_seqs[i].length());
-    }
-
-    if(maximum_sequence_length_query > MAX_QUERY_LEN) {
-        std::cerr << "gasal2 : read size is too big, " <<  maximum_sequence_length_query << " > " << MAX_QUERY_LEN << std::endl;
-        exit(0);
-    }
-    assert(maximum_sequence_length_query <= MAX_QUERY_LEN);
-    assert(maximum_sequence_length_target <= MAX_TARGET_LEN);
-
 
     static gasal_gpu_storage_v gpu_storage_vecs[THREAD_NUM_MAX];
     if (cnt[thread_id] == 1) {
@@ -860,25 +821,14 @@ void solve_ssw_on_gpu_pre_copy(
     static uint8_t* query_seq_mod = &query_seq_mod_vec[0];
     static uint8_t* target_seq_mod = &target_seq_mod_vec[0];
 
-    int maximum_sequence_length_query = 0;
-    int maximum_sequence_length_target = 0;
-
-    for (size_t i = 0; i < query_seqs.size(); i++) {
-        if(query_seqs[i] > MAX_QUERY_LEN) query_seqs[i] = MAX_QUERY_LEN;
-        maximum_sequence_length_query = MAX(maximum_sequence_length_query, query_seqs[i]);
+    for (size_t i = 0; i < total_seqs; i++) {
+        if (query_seqs[i] > MAX_QUERY_LEN) {
+            query_seqs[i] = MAX_QUERY_LEN;
+        }
+        if(target_seqs[i] > MAX_TARGET_LEN) {
+            target_seqs[i] = MAX_TARGET_LEN;
+        }
     }
-    for (size_t i = 0; i < target_seqs.size(); i++) {
-        if(target_seqs[i] > MAX_TARGET_LEN) target_seqs[i] = MAX_TARGET_LEN;
-        maximum_sequence_length_target = MAX(maximum_sequence_length_target, target_seqs[i]);
-    }
-
-    if(maximum_sequence_length_query > MAX_QUERY_LEN) {
-        std::cerr << "gasal2 : read size is too big, " <<  maximum_sequence_length_query << " > " << MAX_QUERY_LEN << std::endl;
-        exit(0);
-    }
-    assert(maximum_sequence_length_query <= MAX_QUERY_LEN);
-    assert(maximum_sequence_length_target <= MAX_TARGET_LEN);
-
 
     static gasal_gpu_storage_v gpu_storage_vecs[THREAD_NUM_MAX];
     if (cnt[thread_id] == 1) {

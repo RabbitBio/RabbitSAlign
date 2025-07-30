@@ -21,40 +21,6 @@ __device__ bool gpu_has_shared_substring(const my_string& read_seq, const my_str
         }
     }
     return false;
-
-    //my_vector<uint32_t> hash0;
-    __shared__ uint32_t g_hash0[50 * 32];
-    uint32_t *hash0 = &(g_hash0[threadIdx.x * 50]);
-    int N = 0;
-    for (int i = 0; i + sub_size < read_seq.size(); i += step_size) {
-        uint32_t h = 0;
-        for (int j = 0; j < sub_size; ++j) {
-            unsigned char base = read_seq[i + j];
-            uint8_t code = gpu_nt2int_mod8[base % 8];
-            h = (h << 2) | code;
-        }
-        hash0[N++] = h;
-        //assert(N <= 50);
-        //hash0.push_back(h);
-        //N++;
-    }
-    quick_sort(&(hash0[0]), N);
-    for (int i = 0; i + sub_size < ref_seq.size(); i++) {
-        uint32_t h = 0;
-        for (int j = 0; j < sub_size; ++j) {
-            unsigned char base = ref_seq[i + j];
-            uint8_t code = gpu_nt2int_mod8[base % 8];
-            h = (h << 2) | code;
-        }
-        int left = 0, right = N - 1;
-        while (left <= right) {
-            int mid = (left + right) / 2;
-            if (hash0[mid] == h) return true;
-            else if (hash0[mid] < h) left = mid + 1;
-            else right = mid - 1;
-        }
-    }
-    return false;
 }
 
 __device__ void my_hamming_align(const my_string &query, const my_string &ref, int match, int mismatch, int end_bonus, GPUAlignmentInfo& aln) {
@@ -176,10 +142,10 @@ __device__ bool gpu_extend_seed_part(
 
             // MODIFICATION: Check if the CIGAR is too long.
             // If so, revert to gapped alignment to trigger CPU-side handling.
-            if (info.cigar.size() + 1 > MAX_CIGAR_ITEM) {
-                //printf("Warning: CIGAR too long -- %d, reverting to gapped alignment.\n", info.cigar.size() + 1);
-                gapped = true;
-            }
+//            if (info.cigar.size() + 1 > MAX_CIGAR_ITEM) {
+//                //printf("Warning: CIGAR too long -- %d, reverting to gapped alignment.\n", info.cigar.size() + 1);
+//                gapped = true;
+//            }
         }
     }
 
@@ -361,7 +327,6 @@ __device__ void gpu_part2_extend_seed_get_str(
         const GPURead& read1,
         const GPURead& read2,
         const GPUReferences& references,
-        int read_id,
         int* d_todo_cnt,
         char* d_query_ptr, char* d_ref_ptr,
         int* d_query_offset, int* d_ref_offset
@@ -415,7 +380,6 @@ __device__ void gpu_part2_rescue_mate_get_str(
         const GPUReferences& references,
         float mu,
         float sigma,
-        int read_id,
         int* d_todo_cnt,
         char* d_query_ptr, char* d_ref_ptr,
         int* d_query_offset, int* d_ref_offset

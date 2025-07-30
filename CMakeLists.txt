@@ -5,11 +5,12 @@ project(RabbitSAlign VERSION 0.0.1)
 find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 find_package(OpenMP REQUIRED)
-#find_package(MPI REQUIRED)
+
+#add_compile_definitions(CPU_ACC_TAG)
+#add_compile_definitions(GPU_ACC_TAG)
 
 
 option(ENABLE_AVX "Enable AVX2 support" OFF)
-option(USE_RABBITFX "Parse input FASTA with RabbitFX" OFF)
 option(CLOSE_NUMA_OPT "Close NUMA optimization" OFF)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -37,11 +38,9 @@ if(CLOSE_NUMA_OPT)
     add_compile_definitions(OPT_NUMA_CLOSE)
 endif()
 
-if(USE_RABBITFX)
-    add_compile_definitions(RABBIT_FX)
-    include_directories(RabbitFX/build/include)
-    link_directories(RabbitFX/build/lib)
-endif()
+include_directories(RabbitFX/build/include)
+link_directories(RabbitFX/build/lib)
+
 
 include(FetchContent)
 
@@ -98,7 +97,6 @@ set(SOURCES
         src/gpu_pipeline_se.cu
 )
 
-#include_directories(src/ src/include ext/ ${PROJECT_BINARY_DIR} ${MPI_C_INCLUDE_DIRS})
 include_directories(src/ src/include ext/ ${PROJECT_BINARY_DIR})
 
 add_executable(rabbitsalign ${SOURCES})
@@ -115,12 +113,10 @@ target_link_libraries(rabbitsalign PUBLIC
         OpenMP::OpenMP_CXX
         ZLIB::ZLIB
         zstr::zstr
-        #${MPI_C_LIBRARIES}
 )
 
-if(USE_RABBITFX)
-    target_link_libraries(rabbitsalign PUBLIC rabbitfx)
-endif()
+target_link_libraries(rabbitsalign PUBLIC rabbitfx)
+
 
 if(ENABLE_AVX)
     target_compile_options(rabbitsalign PUBLIC "-mavx2")

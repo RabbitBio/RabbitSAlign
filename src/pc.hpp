@@ -18,14 +18,10 @@
 #include "refs.hpp"
 #include "fastq.hpp"
 #include "revcomp.hpp"
-
-
-#ifdef RABBIT_FX
 #include "FastxStream.h"
 #include "FastxChunk.h"
 #include "DataQueue.h"
 #include "Formater.h"
-#endif
 
 
 class InputBuffer {
@@ -76,7 +72,6 @@ void perform_task_init(InputBuffer &input_buffer, OutputBuffer &output_buffer,
                   AlignmentStatistics& statistics, int& done, const AlignmentParameters &aln_params,
                   const MappingParameters &map_param, const IndexParameters& index_parameters, const References& references, const StrobemerIndex& index, const std::string& read_group_id);
 
-#ifdef RABBIT_FX
 void perform_task_async_se_fx(InputBuffer &input_buffer, OutputBuffer &output_buffer,
                   AlignmentStatistics& statistics, int& done, const AlignmentParameters &aln_params,
                   const MappingParameters &map_param, const IndexParameters& index_parameters, const References& references, const StrobemerIndex& index, const std::string& read_group_id,
@@ -88,8 +83,6 @@ void perform_task_async_pe_fx(InputBuffer &input_buffer, OutputBuffer &output_bu
                   const MappingParameters &map_param, const IndexParameters& index_parameters, const References& references, const StrobemerIndex& index, const std::string& read_group_id,
                   const int thread_id, rabbit::fq::FastqDataPool& fastqPool,
                   rabbit::core::TDataQueue<rabbit::fq::FastqDataPairChunk> &dq, bool use_good_numa, int gpu_id);
-#endif
-
 
 void perform_task_async_se(InputBuffer &input_buffer, OutputBuffer &output_buffer,
                   AlignmentStatistics& statistics, int& done, const AlignmentParameters &aln_params,

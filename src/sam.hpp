@@ -10,14 +10,14 @@
 
 
 struct Alignment {
-    int ref_id;
-    int ref_start;
+    int ref_id{0};
+    int ref_start{0};
     Cigar cigar;
-    int edit_distance;
-    int global_ed;
-    int score;
-    int length;
-    bool is_rc;
+    int edit_distance{0};
+    int global_ed{0};
+    int score{0};
+    int length{0};
+    bool is_rc{false};
     bool is_unaligned{false};
     // Whether a gapped alignment function was used to obtain this alignment
     // (even if true, the alignment can still be without gaps)
@@ -25,15 +25,15 @@ struct Alignment {
 };
 
 struct AlignTmpRes {
-    int type;
+    int type{0};
     // type 0 : size1 == 0 size2 == 0, unmapped_pair
     // type 1 : size1 == 0, rescue read1
     // type 2 : size2 == 0, rescue read2
     // type 3 : good pair
     // type 4 : for loop
-    int mapq1;
-    int mapq2;
-    int type4_loop_size;
+    int mapq1{0};
+    int mapq2{0};
+    int type4_loop_size{0};
     std::vector<int> is_extend_seed;
     std::vector<int> consistent_nam;
     std::vector<int> is_read1;
