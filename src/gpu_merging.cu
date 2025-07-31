@@ -17,20 +17,20 @@ __device__ size_t my_lower_bound(my_pair<int, Hit>* hits, size_t i_start, size_t
 __device__ void check_hits(my_vector<my_pair<int, Hit>> &hits_per_ref) {
     if (hits_per_ref.size() < 2) return;
     for(int i = 0; i < hits_per_ref.size() - 1; i++) {
-        if(hits_per_ref[i].first > hits_per_ref[i + 1].first) {
-            printf("sort error [%d,%d] [%d,%d]\n", hits_per_ref[i].first, hits_per_ref[i].second.query_start, hits_per_ref[i + 1].first, hits_per_ref[i + 1].second.query_start);
-            assert(false);
-        }
+        //if(hits_per_ref[i].first > hits_per_ref[i + 1].first) {
+        //    printf("sort error [%d,%d] [%d,%d]\n", hits_per_ref[i].first, hits_per_ref[i].second.query_start, hits_per_ref[i + 1].first, hits_per_ref[i + 1].second.query_start);
+        //    assert(false);
+        //}
         if(hits_per_ref[i].first == hits_per_ref[i + 1].first && hits_per_ref[i].second.query_start > hits_per_ref[i + 1].second.query_start) {
             printf("sort error [%d,%d] [%d,%d]\n", hits_per_ref[i].first, hits_per_ref[i].second.query_start, hits_per_ref[i + 1].first, hits_per_ref[i + 1].second.query_start);
             assert(false);
         }
-//        if(hits_per_ref[i].first == hits_per_ref[i + 1].first && hits_per_ref[i].second.query_start == hits_per_ref[i + 1].second.query_start &&
-//           hits_per_ref[i].second.ref_start > hits_per_ref[i + 1].second.ref_start) {
-//            printf("sort error [%d,%d,%d] [%d,%d,%d]\n", hits_per_ref[i].first, hits_per_ref[i].second.query_start, hits_per_ref[i].second.ref_start,
-//                   hits_per_ref[i + 1].first, hits_per_ref[i + 1].second.query_start, hits_per_ref[i + 1].second.ref_start);
-//            assert(false);
-//        }
+        if(hits_per_ref[i].first == hits_per_ref[i + 1].first && hits_per_ref[i].second.query_start == hits_per_ref[i + 1].second.query_start &&
+           hits_per_ref[i].second.ref_start > hits_per_ref[i + 1].second.ref_start) {
+            printf("sort error [%d,%d,%d] [%d,%d,%d]\n", hits_per_ref[i].first, hits_per_ref[i].second.query_start, hits_per_ref[i].second.ref_start,
+                   hits_per_ref[i + 1].first, hits_per_ref[i + 1].second.query_start, hits_per_ref[i + 1].second.ref_start);
+            assert(false);
+        }
     }
 }
 
@@ -38,6 +38,16 @@ __device__ void sort_hits_single(
         my_vector<my_pair<int, Hit>>& hits_per_ref
 ) {
     quick_sort(&(hits_per_ref[0]), hits_per_ref.size());
+}
+
+#define key_mod_val 29
+
+__device__ int find_ref_ids(int ref_id, int* head, ref_ids_edge* edges) {
+    int key = ref_id % key_mod_val;
+    for (int i = head[key]; i != -1; i = edges[i].pre) {
+        if (edges[i].ref_id == ref_id) return i;
+    }
+    return -1;
 }
 
 __device__ void salign_merge_hits(
@@ -65,13 +75,8 @@ __device__ void salign_merge_hits(
     }
     ref_num++;
     each_ref_size.push_back(now_ref_num);
-    //int mx_hits_per_ref = 0;
-    //for (int i = 0; i < each_ref_size.size(); i++) {
-    //    mx_hits_per_ref = my_max(mx_hits_per_ref, each_ref_size[i]);
-    //}
 
     my_vector<Nam> open_nams;
-    //(mx_hits_per_ref);
     my_vector<bool> is_added(32);
     int now_vec_pos = 0;
     for (int rid = 0; rid < ref_num; rid++) {
@@ -88,10 +93,10 @@ __device__ void salign_merge_hits(
             while(i_end < hits_size && hits[i_end].second.query_start == hits[i].second.query_start) i_end++;
             i = i_end;
             i_size = i_end - i_start;
-//            for(int j = 0; j < i_size - 1; j++) {
-//                assert(hits[i_start + j].second.ref_start <= hits[i_start + j + 1].second.ref_start);
-//            }
-            quick_sort(&(hits[i_start]), i_size);
+            //for(int j = 0; j < i_size - 1; j++) {
+            //    assert(hits[i_start + j].second.ref_start <= hits[i_start + j + 1].second.ref_start);
+            //}
+            //quick_sort(&(hits[i_start]), i_size);
             is_added.clear();
             for(size_t j = 0; j < i_size; j++) is_added.push_back(false);
             int query_start = hits[i_start].second.query_start;
@@ -518,15 +523,6 @@ __device__ void gpu_shuffle_top_nams(my_vector<Nam>& nams) {
     }
 }
 
-#define key_mod_val 29
-
-__device__ int find_ref_ids(int ref_id, int* head, ref_ids_edge* edges) {
-    int key = ref_id % key_mod_val;
-    for (int i = head[key]; i != -1; i = edges[i].pre) {
-        if (edges[i].ref_id == ref_id) return i;
-    }
-    return -1;
-}
 
 __device__ void sort_hits_by_refid(
         my_vector<my_pair<int, Hit>>& hits_per_ref
@@ -566,10 +562,10 @@ __device__ void sort_hits_by_refid(
         all_hits[find_ref_id_rank].second->push_back(hits_per_ref[i].second);
     }
     hits_per_ref.clear();
-    quick_sort_iterative(&(all_hits[0]), 0, all_hits.size() - 1,
-                         [](const my_pair<int, my_vector<Hit>*>& a, const my_pair<int, my_vector<Hit>*>& b) {
-                             return a.first < b.first;
-                         });
+    //quick_sort_iterative(&(all_hits[0]), 0, all_hits.size() - 1,
+    //                     [](const my_pair<int, my_vector<Hit>*>& a, const my_pair<int, my_vector<Hit>*>& b) {
+    //                         return a.first < b.first;
+    //                     });
     for(int i = 0; i < all_hits.size(); i++) {
         for(int j = 0; j < all_hits[i].second->size(); j++) {
             hits_per_ref.push_back({all_hits[i].first, (*all_hits[i].second)[j]});
@@ -931,8 +927,8 @@ __global__ void gpu_sort_hits(
         sort_hits_by_refid(hits_per_ref0s[real_id]);
         sort_hits_by_refid(hits_per_ref1s[real_id]);
 #endif
-//        check_hits(hits_per_ref0s[real_id]);
-//        check_hits(hits_per_ref1s[real_id]);
+        //check_hits(hits_per_ref0s[real_id]);
+        //check_hits(hits_per_ref1s[real_id]);
     }
 }
 
@@ -952,8 +948,8 @@ __global__ void gpu_rescue_sort_hits(
         sort_hits_by_refid(hits_per_ref0s[real_id]);
         sort_hits_by_refid(hits_per_ref1s[real_id]);
 #endif
-//        check_hits(hits_per_ref0s[real_id]);
-//        check_hits(hits_per_ref1s[real_id]);
+        //check_hits(hits_per_ref0s[real_id]);
+        //check_hits(hits_per_ref1s[real_id]);
     }
 }
 

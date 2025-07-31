@@ -59,7 +59,7 @@ enum SamFlags {
     SUPPLEMENTARY = 0x800,
 };
 
-#define MAX_CIGAR_ITEM 60
+#define MAX_CIGAR_ITEM 10
 
 struct GPUAlignment {
     int ref_id{0};

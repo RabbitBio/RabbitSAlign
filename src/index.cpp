@@ -1,9 +1,3 @@
-//
-//  index.cpp
-//  cpp_course
-//
-//  Created by Kristoffer Sahlin on 4/21/21.
-//
 #include "index.hpp"
 
 #include <math.h>   /* pow */

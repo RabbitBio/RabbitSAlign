@@ -21,7 +21,7 @@ CommandLineOptions parse_command_line_arguments(int argc, char **argv) {
     // Threading
     args::ValueFlag<int> threads(parser, "INT", "Number of threads [3]", {'t', "threads"});
     args::ValueFlag<int> gpus(parser, "INT", "Number of gpus [1]", {'g', "gpus"});
-    args::ValueFlag<int> threads_per_gpus(parser, "INT", "Number of CPU threads binding to each GPU [2]", {"threads_per_gpus"});
+    args::ValueFlag<int> threads_per_gpu(parser, "INT", "Number of CPU threads binding to each GPU [2]", {"threads_per_gpu"});
     args::ValueFlag<int> chunk_size(parser, "INT", "Number of reads processed by a worker thread at once [10000]", {"chunk-size"}, args::Options::Hidden);
 
     args::Group io(parser, "Input/output:");
@@ -90,7 +90,7 @@ CommandLineOptions parse_command_line_arguments(int argc, char **argv) {
     // Threading
     if (threads) { opt.n_threads = args::get(threads); }
     if (gpus) { opt.n_gpus = args::get(gpus); }
-    if (threads_per_gpus) { opt.threads_per_gpus = args::get(threads_per_gpus); }
+    if (threads_per_gpu) { opt.threads_per_gpu = args::get(threads_per_gpu); }
     if (chunk_size) { opt.chunk_size = args::get(chunk_size); }
 
     if (only_gpu) {opt.only_gpu = args::get(only_gpu);}

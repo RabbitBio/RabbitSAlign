@@ -142,10 +142,10 @@ __device__ bool gpu_extend_seed_part(
 
             // MODIFICATION: Check if the CIGAR is too long.
             // If so, revert to gapped alignment to trigger CPU-side handling.
-//            if (info.cigar.size() + 1 > MAX_CIGAR_ITEM) {
-//                //printf("Warning: CIGAR too long -- %d, reverting to gapped alignment.\n", info.cigar.size() + 1);
-//                gapped = true;
-//            }
+            if (info.cigar.size() + 1 > MAX_CIGAR_ITEM) {
+                //printf("Warning: CIGAR too long -- %d, reverting to gapped alignment.\n", info.cigar.size() + 1);
+                gapped = true;
+            }
         }
     }
 

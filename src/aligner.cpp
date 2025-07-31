@@ -1,9 +1,3 @@
-/*
- * Low-level alignment functions
- *
- * This is for anything that returns an aln_info object, currently
- * Aligner::align and hamming_align.
- */
 #include <sstream>
 #include <tuple>
 #include <algorithm>
@@ -16,7 +10,6 @@ AlignmentInfo Aligner::align_gpu(const std::string &query, const std::string &re
     int32_t maskLen = query.length() / 2;
     maskLen = std::max(maskLen, 15);
     if (ref.length() > 2000){
-        //        std::cerr << "ALIGNMENT TO REF LONGER THAN 2000bp - REPORT TO DEVELOPER. Happened for read: " <<  query << " ref len:" << ref.length() << std::endl;
         aln.edit_distance = 100000;
         aln.ref_start = 0;
         aln.sw_score = -1000000;
@@ -33,9 +26,6 @@ AlignmentInfo Aligner::align_gpu(const std::string &query, const std::string &re
         aln.sw_score = -100000;
         return aln;
     }
-//    fprintf(stderr, "[%d %d], [%d %d]  | [%d %d], [%d %d]\n",
-//            alignment_ssw.query_begin, alignment_ssw.query_end, alignment_ssw.ref_begin, alignment_ssw.ref_end,
-//            gasal_res.query_start, gasal_res.query_end, gasal_res.ref_start, gasal_res.ref_end);
 
     aln.edit_distance = alignment_ssw.mismatches;
     aln.cigar = Cigar(alignment_ssw.cigar);
@@ -117,7 +107,6 @@ AlignmentInfo Aligner::align_gpu(const std::string_view &query, const std::strin
     int32_t maskLen = query.length() / 2;
     maskLen = std::max(maskLen, 15);
     if (ref.length() > 2000){
-        //        std::cerr << "ALIGNMENT TO REF LONGER THAN 2000bp - REPORT TO DEVELOPER. Happened for read: " <<  query << " ref len:" << ref.length() << std::endl;
         aln.edit_distance = 100000;
         aln.ref_start = 0;
         aln.sw_score = -1000000;
@@ -134,9 +123,6 @@ AlignmentInfo Aligner::align_gpu(const std::string_view &query, const std::strin
         aln.sw_score = -100000;
         return aln;
     }
-    //    fprintf(stderr, "[%d %d], [%d %d]  | [%d %d], [%d %d]\n",
-    //            alignment_ssw.query_begin, alignment_ssw.query_end, alignment_ssw.ref_begin, alignment_ssw.ref_end,
-    //            gasal_res.query_start, gasal_res.query_end, gasal_res.ref_start, gasal_res.ref_end);
 
     aln.edit_distance = alignment_ssw.mismatches;
     aln.cigar = Cigar(alignment_ssw.cigar);
@@ -218,7 +204,6 @@ AlignmentInfo Aligner::align(const std::string &query, const std::string &ref) c
     int32_t maskLen = query.length() / 2;
     maskLen = std::max(maskLen, 15);
     if (ref.length() > 2000){
-        //        std::cerr << "ALIGNMENT TO REF LONGER THAN 2000bp - REPORT TO DEVELOPER. Happened for read: " <<  query << " ref len:" << ref.length() << std::endl;
         aln.edit_distance = 100000;
         aln.ref_start = 0;
         aln.sw_score = -1000000;
@@ -316,7 +301,6 @@ AlignmentInfo Aligner::align(const std::string_view &query, const std::string_vi
     int32_t maskLen = query.length() / 2;
     maskLen = std::max(maskLen, 15);
     if (ref.length() > 2000){
-        //        std::cerr << "ALIGNMENT TO REF LONGER THAN 2000bp - REPORT TO DEVELOPER. Happened for read: " <<  query << " ref len:" << ref.length() << std::endl;
         aln.edit_distance = 100000;
         aln.ref_start = 0;
         aln.sw_score = -1000000;

@@ -278,31 +278,6 @@ __global__ void gpu_pre_align_SE(
             global_todo_ids[id] = tries;
         }
     }
-//    if (id == 0) {
-//        for (int rid = 0; rid < num_tasks; rid++) {
-//            auto ss_size = global_nams[rid].size();
-//            printf("----nam %d size %d: \n", rid, ss_size);
-//            for (int i = 0; i < ss_size; i++) {
-//                Nam nam = global_nams[rid][i];
-//                printf("Nam { "
-//                       "query_start=%d, query_end=%d, query_prev_hit_startpos=%d, "
-//                       "ref_start=%d, ref_end=%d, ref_prev_hit_startpos=%d, "
-//                       "n_hits=%d, ref_id=%d, score=%.2f }\n",
-//                       nam.query_start,
-//                       nam.query_end,
-//                       nam.query_prev_hit_startpos,
-//                       nam.ref_start,
-//                       nam.ref_end,
-//                       nam.ref_prev_hit_startpos,
-//                       nam.n_hits,
-//                       nam.ref_id,
-//                       nam.score);
-//            }
-//            printf("\n\n");
-//        }
-//
-//    }
-
 }
 
 void GPU_align_SE(std::vector<neoRcRef> &datas,
@@ -522,13 +497,11 @@ void perform_task_async_se_fx_GPU(
         const int chunk_num,
         const bool unordered_output
 ) {
-
     if(use_good_numa) {
         cpu_set_t cpuset;
         CPU_ZERO(&cpuset);
         CPU_SET(thread_id, &cpuset);
         pthread_t current_thread = pthread_self();
-//        std::cout << "Setting thread affinity to CPU " << thread_id << std::endl;
         if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
             std::cerr << "Error setting thread affinity" << std::endl;
         }
@@ -784,10 +757,8 @@ void perform_task_async_se_fx_GPU(
         t_1 = GetTime();
         int rc_pos = 0;
         chunk0_chunk_num = rand() % small_chunk_num + small_chunk_num + 1;
-//        chunk0_chunk_num = 1;
         chunk0_real_chunk_num = 0;
         chunk0_datas.clear();
-//        printf("chunk0_chunk_num %d\n", chunk0_chunk_num);
         for (int chunk_id = 0; chunk_id < chunk0_chunk_num; chunk_id++) {
             res = dq.Pop(id, chunk0_fqdatachunks[chunk_id]);
             if (res) {
@@ -839,7 +810,6 @@ void perform_task_async_se_fx_GPU(
         t_1 = GetTime();
         int rc_pos = 0;
         chunk1_chunk_num = rand() % small_chunk_num + small_chunk_num + 1;
-//        chunk1_chunk_num = 1;
         chunk1_real_chunk_num = 0;
         chunk1_datas.clear();
         for (int chunk_id = 0; chunk_id < chunk1_chunk_num; chunk_id++) {
@@ -908,8 +878,6 @@ void perform_task_async_se_fx_GPU(
         assert(*h_ref_offset <= mx_device_ref_size);
         time1_2 += GetTime() - t_1;
 
-//        printf("todo cnt is %d, %d, %d\n", *h_todo_cnt, *h_query_offset, *h_ref_offset);
-
         // construct todo_info from align_res
         t_1 = GetTime();
 #ifdef use_device_mem
@@ -922,10 +890,8 @@ void perform_task_async_se_fx_GPU(
         chunk0_h_todo_refs.clear();
 #endif
         int cal_todo_cnt = 0;
-//        printf("chunk size %d %d\n", chunk0_datas.size(), *h_todo_cnt);
         for (int i = 0; i < chunk0_datas.size(); i++) {
             GPUAlignTmpRes &align_tmp_res = chunk0_global_align_res[i];
-//            printf("read %d, type %d, todo size %d %d\n", i, align_tmp_res.type, align_tmp_res.todo_nams.size(), align_tmp_res.todo_infos.size());
             for (int j = 0; j < align_tmp_res.todo_infos.size(); j++) {
                 TODOInfos& todo_info = align_tmp_res.todo_infos[j];
                 int global_id = todo_info.global_id;
@@ -946,13 +912,9 @@ void perform_task_async_se_fx_GPU(
                 chunk0_h_todo_querys.push_back(std::string_view(h_query_seq + q_begin, q_len));
                 chunk0_h_todo_refs.push_back(std::string_view(h_ref_seq.c_str() + todo_info.r_begin, todo_info.r_len));
 #endif
-//                printf("todo info %d - size %d, %d\n", cal_todo_cnt, q_len, todo_info.r_len);
-//                printf("seq info %s %s\n", std::string(h_query_seq + q_begin, q_len).c_str(),
-//                       std::string(h_ref_seq.c_str() + todo_info.r_begin, todo_info.r_len).c_str());
                 cal_todo_cnt++;
             }
         }
-//        printf("cal_todo_cnt %d, h_todo_cnt %d\n", cal_todo_cnt, *h_todo_cnt);
         time2_1 += GetTime() - t_1;
 #ifdef use_device_mem
         assert(cal_todo_cnt == *h_todo_cnt);
@@ -1063,9 +1025,6 @@ void perform_task_async_se_fx_GPU(
                 info_results.clear();
                 t_start = GetTime();
                 for (size_t i = 0; i < chunk0_h_todo_querys.size(); i++) {
-//                    printf("gasal res %d : %d [%d %d] [%d %d] %s\n",
-//                           i, chunk0_gasal_results[i].score, chunk0_gasal_results[i].query_start, chunk0_gasal_results[i].query_end,
-//                           chunk0_gasal_results[i].ref_start, chunk0_gasal_results[i].ref_end, chunk0_gasal_results[i].cigar_str.c_str());
                     AlignmentInfo info;
                     const auto &todo_q = chunk0_h_todo_querys[i];
                     const auto &todo_r = chunk0_h_todo_refs[i];
@@ -1164,7 +1123,6 @@ void perform_task_async_se_fx_GPU(
                 // format data
                 int rc_pos = 0;
                 chunk2_chunk_num = rand() % small_chunk_num + small_chunk_num + 1;
-//                chunk2_chunk_num = 1;
                 chunk2_real_chunk_num = 0;
                 chunk2_datas.clear();
                 for (int chunk_id = 0; chunk_id < chunk2_chunk_num; chunk_id++) {
@@ -1233,8 +1191,6 @@ void perform_task_async_se_fx_GPU(
             assert(*h_ref_offset <= mx_device_ref_size);
             time1_2 += GetTime() - t_1;
 
-//            printf("todo cnt is %d, %d, %d\n", *h_todo_cnt, *h_query_offset, *h_ref_offset);
-
             // construct todo_info from align_res
             t_1 = GetTime();
 #ifdef use_device_mem
@@ -1247,10 +1203,8 @@ void perform_task_async_se_fx_GPU(
             chunk1_h_todo_refs.clear();
 #endif
             int cal_todo_cnt = 0;
-//            printf("chunk size %d %d\n", chunk1_datas.size(), *h_todo_cnt);
             for (int i = 0; i < chunk1_datas.size(); i++) {
                 GPUAlignTmpRes &align_tmp_res = chunk1_global_align_res[i];
-//                printf("read %d, type %d, todo size %d %d\n", i, align_tmp_res.type, align_tmp_res.todo_nams.size(), align_tmp_res.todo_infos.size());
                 for (int j = 0; j < align_tmp_res.todo_infos.size(); j++) {
                     TODOInfos& todo_info = align_tmp_res.todo_infos[j];
                     int global_id = todo_info.global_id;
@@ -1271,13 +1225,9 @@ void perform_task_async_se_fx_GPU(
                     chunk1_h_todo_refs.push_back(std::string_view(h_ref_seq.c_str() + todo_info.r_begin, todo_info.r_len));
                     todo_info.global_id = cal_todo_cnt;
 #endif
-//                    printf("todo info %d - size %d, %d\n", cal_todo_cnt, q_len, todo_info.r_len);
-//                    printf("seq info %s %s\n", std::string(h_query_seq + q_begin, q_len).c_str(),
-//                           std::string(h_ref_seq.c_str() + todo_info.r_begin, todo_info.r_len).c_str());
                     cal_todo_cnt++;
                 }
             }
-//            printf("cal_todo_cnt %d, h_todo_cnt %d\n", cal_todo_cnt, *h_todo_cnt);
             time2_1 += GetTime() - t_1;
 #ifdef use_device_mem
             assert(cal_todo_cnt == *h_todo_cnt);
@@ -1460,19 +1410,12 @@ void perform_task_async_se_fx_GPU(
     std::cout << "rescue_sort_hits cost (gpu_cost6): " << gpu_cost6 << " s" << std::endl;
     std::cout << "rescue_merge_hits_get_nams cost (gpu_cost7): " << gpu_cost7 << " s" << std::endl;
     std::cout << "sort_nams cost (gpu_cost8): " << gpu_cost8 << " s" << std::endl;
-    std::cout << "pre_cal_type cost (gpu_cost9): " << gpu_cost9 << " s" << std::endl;
+    std::cout << "pre_align cost (gpu_cost9): " << gpu_cost9 << " s" << std::endl;
     std::cout << "alloc align_tmp_res cost (gpu_init3): " << gpu_init3 << " s" << std::endl;
-    std::cout << "align_PE cost (gpu_cost10): " << gpu_cost10 << " s" << std::endl;
+    std::cout << "align_SE cost (gpu_cost10): " << gpu_cost10 << " s" << std::endl;
     std::cout << "-----------------------------------------------" << std::endl;
     std::cout << "Total function cost (tot_cost): " << tot_cost << " s" << std::endl;
     std::cout << "-----------------------------------------------" << std::endl;
-//    std::cout << "gpu cost " << gpu_copy1 << " " << gpu_copy2 << " " << gpu_cost1 << " " << gpu_cost2 << " [" << gpu_cost2_1 << " " << gpu_cost2_2 << "] " << gpu_cost3 <<
-//              " [" << gpu_cost3_1 << " " << gpu_cost3_2 << " " << gpu_cost3_3 << " " << gpu_cost3_4 << "] " << gpu_cost4 << std::endl;
-//    std::cout << gpu_cost5 << " " << gpu_cost6 << " " << gpu_cost7 << " " << gpu_cost8 << " " << gpu_cost9 << " " << gpu_cost10 << std::endl;
-////    std::cout << "[" << gpu_cost10_0 << " " << gpu_cost10_1 << " " << gpu_cost10_2 << " " << gpu_cost10_3 << " " << gpu_cost10_4 << "]" << std::endl;
-////    std::cout << "copy data to host cost " << gpu_cost11 << " [" << gpu_cost11_copy1 << ", " << gpu_cost11_copy2 << "]" << std::endl;
-//    std::cout << "init data " << gpu_init1 << " " << gpu_init2 << " " << gpu_init3 << " " << gpu_init4 << std::endl;
-//    std::cout << "total cost " << tot_cost << std::endl;
 #endif
 
     t_1 = GetTime();

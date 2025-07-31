@@ -740,7 +740,7 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
     added_n1.clear();
     added_n2.clear();
 
-//#ifdef CPU_ACC_TAG
+#ifdef CPU_ACC_TAG
     std::sort(
         joint_nam_scores.begin(), joint_nam_scores.end(),
         [](const NamPair& a, const NamPair& b) -> bool {
@@ -776,13 +776,13 @@ static inline std::vector<NamPair> get_best_scoring_nam_pairs(
 			return false;
         }
     );  // Sort by highest score first
-//#else
-//    std::sort(joint_nam_scores.begin(), joint_nam_scores.end(),
-//            [](const NamPair& a, const NamPair& b) -> bool {
-//                return a.score > b.score;
-//            }
-//    );
-//#endif
+#else
+    std::sort(joint_nam_scores.begin(), joint_nam_scores.end(),
+            [](const NamPair& a, const NamPair& b) -> bool {
+                return a.score > b.score;
+            }
+    );
+#endif
     return joint_nam_scores;
 }
 
@@ -1315,7 +1315,6 @@ inline void align_PE_part(
         // ref_start == -1 is a marker for a dummy NAM
         if (n1.ref_start >= 0) {
             if (is_aligned1.find(n1.nam_id) != is_aligned1.end()) {
-//                fprintf(stderr, "dup nam : %d\n", n1.nam_id);
 
             } else {
                 bool consistent_nam = reverse_nam_if_needed(n1, read1, references, k);
@@ -1325,21 +1324,17 @@ inline void align_PE_part(
                 is_aligned1[n1.nam_id] = 1;
                 details[0].tried_alignment++;
                 details[0].gapped += gapped;
-//                fprintf(stderr, "add extend nam : %d\n", n1.nam_id);
             }
         } else {
             details[1].nam_inconsistent += !reverse_nam_if_needed(n2, read2, references, k);
             align_tmp_res.is_read1.push_back(true);
             bool is_unaligned = rescue_mate_part(align_tmp_res, aligner, n2, references, read1, mu, sigma, k);
-//            details[0].mate_rescue += !is_unaligned;
             details[0].tried_alignment++;
-
         }
 
         // ref_start == -1 is a marker for a dummy NAM
         if (n2.ref_start >= 0) {
             if (is_aligned2.find(n2.nam_id) != is_aligned2.end()) {
-//                fprintf(stderr, "dup nam : %d\n", n2.nam_id);
 
             } else {
                 bool consistent_nam = reverse_nam_if_needed(n2, read2, references, k);
@@ -1349,15 +1344,12 @@ inline void align_PE_part(
                 is_aligned2[n2.nam_id] = 1;
                 details[1].tried_alignment++;
                 details[1].gapped += gapped;
-
             }
         } else {
             details[0].nam_inconsistent += !reverse_nam_if_needed(n1, read1, references, k);
             align_tmp_res.is_read1.push_back(false);
             bool is_unaligned = rescue_mate_part(align_tmp_res, aligner, n1, references, read2, mu, sigma, k);
-//            details[1].mate_rescue += !is_unaligned;
             details[1].tried_alignment++;
-
         }
 
         ScoredAlignmentPair aln_pair;
@@ -1748,7 +1740,7 @@ void align_PE_read_part(
         }
         details[is_revcomp].nams = nams.size();
         Timer nam_sort_timer;
-//#ifdef CPU_ACC_TAG
+#ifdef CPU_ACC_TAG
         std::sort(nams.begin(), nams.end(), [](const Nam &n1, const Nam &n2) {
             if(n1.score != n2.score) return n1.score > n2.score;
             if(n1.n_hits != n2.n_hits) return n1.n_hits > n2.n_hits;
@@ -1759,9 +1751,9 @@ void align_PE_read_part(
             if(n1.ref_id != n2.ref_id) return n1.ref_id < n2.ref_id;
             return n1.is_rc < n2.is_rc;
         });
-//#else
-//        std::sort(nams.begin(), nams.end(), by_score<Nam>);
-//#endif
+#else
+        std::sort(nams.begin(), nams.end(), by_score<Nam>);
+#endif
         shuffle_top_nams(nams, random_engine);
         statistics.tot_sort_nams += nam_sort_timer.duration();
         nams_pair[is_revcomp] = nams;
@@ -1920,11 +1912,6 @@ void align_PE_read_last(
             alignment1, alignment2, record1, record2, read1.rc, read2.rc, mapq1, mapq2, is_proper, is_primary,
             details
         );
-        //TODO update
-        //if ((isize_est.sample_size < 400) && (alignment1.edit_distance + alignment2.edit_distance < 3) &&
-        //    is_proper) {
-        //    isize_est.update(std::abs(alignment1.ref_start - alignment2.ref_start));
-        //}
 
     } else if (align_tmp_res.type == 4) {
         int pos = 0;
@@ -2171,7 +2158,7 @@ void align_SE_read_part(
     details.nams = nams.size();
 
     Timer nam_sort_timer;
-//#ifdef CPU_ACC_TAG
+#ifdef CPU_ACC_TAG
     std::sort(nams.begin(), nams.end(), [](const Nam &n1, const Nam &n2) {
         if(n1.score != n2.score) return n1.score > n2.score;
         if(n1.n_hits != n2.n_hits) return n1.n_hits > n2.n_hits;
@@ -2182,9 +2169,9 @@ void align_SE_read_part(
         if(n1.ref_id != n2.ref_id) return n1.ref_id < n2.ref_id;
         return n1.is_rc < n2.is_rc;
     });
-//#else
-//    std::sort(nams.begin(), nams.end(), by_score<Nam>);
-//#endif
+#else
+    std::sort(nams.begin(), nams.end(), by_score<Nam>);
+#endif
     shuffle_top_nams(nams, random_engine);
     statistics.tot_sort_nams += nam_sort_timer.duration();
 

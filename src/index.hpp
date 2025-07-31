@@ -1,5 +1,3 @@
-//  Created by Kristoffer Sahlin on 4/21/21.
-
 #ifndef STROBEALIGN_INDEX_HPP
 #define STROBEALIGN_INDEX_HPP
 

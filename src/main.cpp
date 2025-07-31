@@ -540,7 +540,7 @@ int run_rabbitsalign(int argc, char **argv) {
 #endif
     logger.info() << "MAX_QUERY_LEN: " << MAX_QUERY_LEN << ", MAX_TARGET_LEN: " << MAX_TARGET_LEN << std::endl;
 
-    G_num = opt.threads_per_gpus;
+    G_num = opt.threads_per_gpu;
 
     int fx_batch_size = 1 << 22;
     int nxt_size = fx_batch_size / 4;

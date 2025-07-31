@@ -1,9 +1,3 @@
-//
-// Created by Kristoffer Sahlin on 3/22/22.
-//
-
-// Using initial base format of Buffer classed from: https://andrew128.github.io/ProducerConsumer/
-
 #include "pc.hpp"
 #include <pthread.h>
 #include <chrono>
