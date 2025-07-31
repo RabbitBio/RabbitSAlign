@@ -10,6 +10,7 @@ __device__ void cigar_push(my_vector<uint32_t>& m_ops, uint8_t op, int len) {
 }
 
 __device__ bool gpu_has_shared_substring(const my_string& read_seq, const my_string& ref_seq, int k) {
+    // TODO test hash version
     int sub_size = 2 * k / 3;
     int step_size = k / 3;
 

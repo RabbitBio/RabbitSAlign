@@ -1048,6 +1048,8 @@ __global__ void gpu_sort_nams(
 #ifdef GPU_ACC_TAG
             sort_nams_single_check(global_nams[id]);
 #else
+//            sort_nams_by_score(global_nams[id], max_tries * 2);
+//            global_nams[id].length = my_min(global_nams[id].length, max_tries * 2);
             sort_nams_by_score(global_nams[id], 1e9);
 #endif
         }

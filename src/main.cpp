@@ -535,7 +535,7 @@ int run_rabbitsalign(int argc, char **argv) {
 
     int eval_read_len = opt.r;
 #if !defined(CPU_ACC_TAG) && !defined(GPU_ACC_TAG)
-//    MAX_QUERY_LEN = eval_read_len + 100;
+    MAX_QUERY_LEN = eval_read_len + 100;
 //    MAX_TARGET_LEN = eval_read_len * 4;
 #endif
     logger.info() << "MAX_QUERY_LEN: " << MAX_QUERY_LEN << ", MAX_TARGET_LEN: " << MAX_TARGET_LEN << std::endl;
