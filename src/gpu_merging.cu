@@ -50,6 +50,210 @@ __device__ int find_ref_ids(int ref_id, int* head, ref_ids_edge* edges) {
     return -1;
 }
 
+__device__ size_t indirect_lower_bound(
+        const my_vector<my_pair<int, Hit>>& original_hits,
+        const int* sorted_indices,
+        size_t global_range_start_idx,
+        size_t count,
+        int value
+) {
+    size_t start = 0;
+    while (count > 0) {
+        size_t step = count / 2;
+        size_t it = start + step;
+        int original_idx = sorted_indices[global_range_start_idx + it];
+        if (original_hits.data[original_idx].second.ref_start < value) {
+            start = it + 1;
+            count -= step + 1;
+        } else {
+            count = step;
+        }
+    }
+    return start; // Returns a relative index [0, count)
+}
+
+
+__device__ void salign_merge_hits_seg(
+        const my_vector<my_pair<int, Hit>>& original_hits,
+        const int* sorted_indices,
+        int task_start_offset,
+        int task_end_offset,
+        int k,
+        bool is_revcomp,
+        my_vector<Nam>& nams
+) {
+    int num_hits_in_task = task_end_offset - task_start_offset;
+    assert(num_hits_in_task == original_hits.size());
+    if (num_hits_in_task == 0) return;
+
+    int ref_num = 0;
+    my_vector<int> each_ref_size(8);
+
+    int first_hit_original_idx = sorted_indices[task_start_offset];
+    int pre_ref_id = original_hits.data[first_hit_original_idx].first;
+    int now_ref_num = 1;
+
+    for (int i = 1; i < num_hits_in_task; i++) {
+        int global_idx = task_start_offset + i;
+        int original_idx = sorted_indices[global_idx];
+        int ref_id = original_hits.data[original_idx].first;
+
+        if (ref_id != pre_ref_id) {
+            ref_num++;
+            pre_ref_id = ref_id;
+            each_ref_size.push_back(now_ref_num);
+            now_ref_num = 1;
+        } else {
+            now_ref_num++;
+        }
+    }
+    ref_num++;
+    each_ref_size.push_back(now_ref_num);
+
+    // --- Step 2: Apply the original `salign_merge_hits` algorithm logic. ---
+    my_vector<Nam> open_nams;
+    my_vector<bool> is_added(32);
+    int now_vec_pos = 0; // Local offset within this task's hits [0, num_hits_in_task)
+
+    for (int rid = 0; rid < ref_num; rid++) {
+        if(rid != 0) now_vec_pos += each_ref_size[rid - 1];
+
+        int first_hit_global_idx = task_start_offset + now_vec_pos;
+        int first_hit_original_idx = sorted_indices[first_hit_global_idx];
+        int ref_id = original_hits.data[first_hit_original_idx].first;
+
+        open_nams.clear();
+        unsigned int prev_q_start = 0;
+        size_t hits_size = each_ref_size[rid];
+
+        for (size_t i = 0; i < hits_size; ) {
+            int i_start_original_idx = sorted_indices[task_start_offset + now_vec_pos + i];
+            int current_query_start = original_hits.data[i_start_original_idx].second.query_start;
+
+            size_t i_start = i;
+            size_t i_end = i + 1;
+            while(i_end < hits_size) {
+                int next_hit_original_idx = sorted_indices[task_start_offset + now_vec_pos + i_end];
+                if (original_hits.data[next_hit_original_idx].second.query_start == current_query_start) {
+                    i_end++;
+                } else {
+                    break;
+                }
+            }
+            i = i_end;
+            size_t i_size = i_end - i_start;
+
+            is_added.clear();
+            for(size_t j = 0; j < i_size; j++) is_added.push_back(false);
+
+            int query_start = current_query_start;
+            int cnt_done = 0;
+            for (int k = 0; k < open_nams.size(); k++) {
+                Nam& o = open_nams[k];
+                if ( query_start > o.query_end ) continue;
+
+                size_t global_range_start_idx = task_start_offset + now_vec_pos + i_start;
+                size_t range_count = i_end - i_start;
+
+                size_t lower_rel_idx = indirect_lower_bound(original_hits, sorted_indices, global_range_start_idx, range_count, o.ref_prev_hit_startpos + 1);
+                size_t upper_rel_idx = indirect_lower_bound(original_hits, sorted_indices, global_range_start_idx, range_count, o.ref_end + 1);
+
+                for (size_t j_rel = lower_rel_idx; j_rel < upper_rel_idx; j_rel++) {
+                    size_t j = i_start + j_rel; // Convert relative index to local index
+                    if(is_added[j - i_start]) continue;
+
+                    int hit_original_idx = sorted_indices[task_start_offset + now_vec_pos + j];
+                    const Hit& h = original_hits.data[hit_original_idx].second;
+
+                    if (o.ref_prev_hit_startpos < h.ref_start && h.ref_start <= o.ref_end) {
+                        if ((h.query_end > o.query_end) && (h.ref_end > o.ref_end)) {
+                            o.query_end = h.query_end;
+                            o.ref_end = h.ref_end;
+                            o.query_prev_hit_startpos = h.query_start;
+                            o.ref_prev_hit_startpos = h.ref_start;
+                            o.n_hits++;
+                            is_added[j - i_start] = true;
+                            cnt_done++;
+                            break;
+                        } else if ((h.query_end <= o.query_end) && (h.ref_end <= o.ref_end)) {
+                            o.query_prev_hit_startpos = h.query_start;
+                            o.ref_prev_hit_startpos = h.ref_start;
+                            o.n_hits++;
+                            is_added[j - i_start] = true;
+                            cnt_done++;
+                            break;
+                        }
+                    }
+                }
+                if(cnt_done == i_size) break;
+            }
+
+            // Add new NAMs for hits not added to existing ones.
+            for(size_t j = 0; j < i_size; j++) {
+                if (!is_added[j]){
+                    int hit_original_idx = sorted_indices[task_start_offset + now_vec_pos + i_start + j];
+                    const Hit& h = original_hits.data[hit_original_idx].second;
+                    Nam n;
+                    n.query_start = h.query_start;
+                    n.query_end = h.query_end;
+                    n.ref_start = h.ref_start;
+                    n.ref_end = h.ref_end;
+                    n.ref_id = ref_id;
+                    n.query_prev_hit_startpos = h.query_start;
+                    n.ref_prev_hit_startpos = h.ref_start;
+                    n.n_hits = 1;
+                    n.is_rc = is_revcomp;
+                    open_nams.push_back(n);
+                }
+            }
+
+
+            // Only filter if we have advanced at least k nucleotides
+            if (query_start > prev_q_start + k) {
+
+                // Output all NAMs from open_matches to final_nams that the current hit have passed
+                for (int k = 0; k < open_nams.size(); k++) {
+                    Nam& n = open_nams[k];
+                    if (n.query_end < query_start) {
+                        int n_max_span = my_max(n.query_span(), n.ref_span());
+                        int n_min_span = my_min(n.query_span(), n.ref_span());
+                        float n_score;
+                        n_score = ( 2*n_min_span -  n_max_span) > 0 ? (float) (n.n_hits * ( 2*n_min_span -  n_max_span) ) : 1;   // this is really just n_hits * ( min_span - (offset_in_span) ) );
+                        //                        n_score = n.n_hits * n.query_span();
+                        n.score = n_score;
+                        n.nam_id = nams.size();
+                        nams.push_back(n);
+                    }
+                }
+
+                // Remove all NAMs from open_matches that the current hit have passed
+                auto c = query_start;
+                int old_open_size = open_nams.size();
+                open_nams.clear();
+                for (int in = 0; in < old_open_size; ++in) {
+                    if (!(open_nams[in].query_end < c)) {
+                        open_nams.push_back(open_nams[in]);
+                    }
+                }
+                prev_q_start = query_start;
+            }
+        }
+        // Add all current open_matches to final NAMs
+        for (int k = 0; k < open_nams.size(); k++) {
+            Nam& n = open_nams[k];
+            int n_max_span = my_max(n.query_span(), n.ref_span());
+            int n_min_span = my_min(n.query_span(), n.ref_span());
+            float n_score;
+            n_score = ( 2*n_min_span -  n_max_span) > 0 ? (float) (n.n_hits * ( 2*n_min_span -  n_max_span) ) : 1;   // this is really just n_hits * ( min_span - (offset_in_span) ) );
+            //            n_score = n.n_hits * n.query_span();
+            n.score = n_score;
+            n.nam_id = nams.size();
+            nams.push_back(n);
+        }
+    }
+}
+
+
 __device__ void salign_merge_hits(
         my_vector<my_pair<int, Hit>>& hits_per_ref,
         int k,
@@ -826,90 +1030,389 @@ my_pair<int*, int*> sort_all_hits_with_cub(
         my_vector<my_pair<int, Hit>>* hits_per_refs,
         int* global_todo_ids,
         cudaStream_t stream,
-        double *gpu_cost3_1,
-        double *gpu_cost3_2,
-        double *gpu_cost3_3,
-        double *gpu_cost3_4)
+        SegSortGpuResources& buffers,
+        double *gpu_cost1,
+        double *gpu_cost2,
+        double *gpu_cost3,
+        double *gpu_cost4)
 {
     my_pair<int*, int*> res({nullptr, nullptr});
     if (todo_cnt == 0) return res;
 
-    // --- Part 1: Prepare Segment Information ---
+    int threads_per_block = 256;
+    int blocks_per_grid = (todo_cnt + threads_per_block - 1) / threads_per_block;
+
+    // --- Part 1: Prepare Segment Information with Re-allocation Logic ---
+    double t0 = GetTime();
+
+    size_t required_task_sizes_bytes = todo_cnt * sizeof(int);
+    if (buffers.task_sizes_bytes < required_task_sizes_bytes) {
+        printf("Allocating task sizes buffer: %zu (%zu) bytes\n", required_task_sizes_bytes, buffers.task_sizes_bytes);
+        if (buffers.task_sizes_ptr) CUDA_CHECK(cudaFreeAsync(buffers.task_sizes_ptr, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.task_sizes_ptr, required_task_sizes_bytes * 2, stream));
+        buffers.task_sizes_bytes = required_task_sizes_bytes * 2;
+    }
+    get_task_sizes_kernel<<<blocks_per_grid, threads_per_block, 0, stream>>>(todo_cnt, hits_per_refs, global_todo_ids, buffers.task_sizes_ptr);
+
+    size_t required_seg_offsets_bytes = (todo_cnt + 1) * sizeof(int);
+    if (buffers.seg_offsets_bytes < required_seg_offsets_bytes) {
+        printf("Allocating segment offsets buffer: %zu (%zu) bytes\n", required_seg_offsets_bytes, buffers.seg_offsets_bytes);
+        if (buffers.seg_offsets_ptr) CUDA_CHECK(cudaFreeAsync(buffers.seg_offsets_ptr, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.seg_offsets_ptr, required_seg_offsets_bytes * 2, stream));
+        buffers.seg_offsets_bytes = required_seg_offsets_bytes * 2;
+    }
+
+    void* d_scan_temp_storage = nullptr;
+    size_t scan_temp_storage_bytes = 0;
+    cub::DeviceScan::ExclusiveSum(d_scan_temp_storage, scan_temp_storage_bytes, buffers.task_sizes_ptr, buffers.seg_offsets_ptr, todo_cnt + 1, stream);
+
+    if (buffers.scan_temp_bytes < scan_temp_storage_bytes) {
+        printf("Allocating scan temp storage: %zu (%zu) bytes\n", scan_temp_storage_bytes, buffers.scan_temp_bytes);
+        if (buffers.scan_temp_ptr) CUDA_CHECK(cudaFreeAsync(buffers.scan_temp_ptr, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.scan_temp_ptr, scan_temp_storage_bytes * 2, stream));
+        buffers.scan_temp_bytes = scan_temp_storage_bytes * 2;
+    }
+    cub::DeviceScan::ExclusiveSum(buffers.scan_temp_ptr, scan_temp_storage_bytes, buffers.task_sizes_ptr, buffers.seg_offsets_ptr, todo_cnt + 1, stream);
+
+    int total_hits;
+    CUDA_CHECK(cudaMemcpyAsync(&total_hits, buffers.seg_offsets_ptr + todo_cnt, sizeof(int), cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    *gpu_cost1 += GetTime() - t0;
+
+    // --- Part 2: Marshal Data into Pre-allocated Buffers ---
+    t0 = GetTime();
+
+    if (buffers.key_value_capacity < total_hits) {
+        fprintf(stderr, "FATAL ERROR: Pre-allocated sort buffer is too small. Required: %d, Allocated: %zu\n", total_hits, buffers.key_value_capacity);
+        exit(EXIT_FAILURE);
+    }
+
+    marshal_data_for_sort_kernel<<<blocks_per_grid, threads_per_block, 0, stream>>>(todo_cnt, hits_per_refs, global_todo_ids, buffers.seg_offsets_ptr, buffers.key_ptr, buffers.value_ptr);
+    *gpu_cost2 += GetTime() - t0;
+
+    // --- Part 3: Sort with CUB ---
+    t0 = GetTime();
+    cub::DoubleBuffer<int> d_keys_buffer(buffers.key_ptr, buffers.key_alt_ptr);
+    cub::DoubleBuffer<int> d_values_buffer(buffers.value_ptr, buffers.value_alt_ptr);
+
+    void* d_sort_temp_storage = nullptr;
+    size_t sort_temp_storage_bytes = 0;
+    cub::DeviceSegmentedSort::SortPairs(d_sort_temp_storage, sort_temp_storage_bytes, d_keys_buffer, d_values_buffer, total_hits, todo_cnt, buffers.seg_offsets_ptr, buffers.seg_offsets_ptr + 1, stream);
+
+    if (buffers.sort_temp_bytes < sort_temp_storage_bytes) {
+        if (buffers.sort_temp_ptr) CUDA_CHECK(cudaFreeAsync(buffers.sort_temp_ptr, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.sort_temp_ptr, sort_temp_storage_bytes * 2, stream));
+        buffers.sort_temp_bytes = sort_temp_storage_bytes * 2;
+    }
+    cub::DeviceSegmentedSort::SortPairs(buffers.sort_temp_ptr, sort_temp_storage_bytes, d_keys_buffer, d_values_buffer, total_hits, todo_cnt, buffers.seg_offsets_ptr, buffers.seg_offsets_ptr + 1, stream);
+    *gpu_cost3 += GetTime() - t0;
+
+    res.first = buffers.seg_offsets_ptr;
+    res.second = d_values_buffer.Current();
+    return res;
+}
+
+__global__ void get_nam_sizes_kernel(int num_tasks, my_vector<Nam>* nams_per_task, int* global_todo_ids, int* task_sizes) {
+    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (global_id < num_tasks) {
+        int real_id = global_todo_ids[global_id];
+        task_sizes[global_id] = nams_per_task[real_id].size();
+    }
+}
+
+__global__ void marshal_data_for_nam_sort_kernel(
+        int num_tasks,
+        my_vector<Nam>* nams_per_task,
+        int* global_todo_ids,
+        const int* seg_offsets,
+        int* d_keys,    // Output: scores (as integers)
+        int* d_values   // Output: original indices 0, 1, 2...
+) {
+    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (global_id < num_tasks) {
+        int real_id = global_todo_ids[global_id];
+        const my_vector<Nam>& nams = nams_per_task[real_id];
+        int task_start_offset = seg_offsets[global_id];
+
+        for (int i = 0; i < nams.size(); i++) {
+            // Key is the score. Cast to int for sorting. For descending order, negate the score.
+            d_keys[task_start_offset + i] = static_cast<int>(-nams.data[i].score);
+            // Value is the original index within this specific my_vector<Nam>.
+            d_values[task_start_offset + i] = i;
+        }
+    }
+}
+
+__global__ void gather_sorted_nams_kernel(
+        int num_tasks,
+        const my_vector<Nam>* nams_per_task,
+        const int* global_todo_ids,
+        const int* seg_offsets,
+        const int* sorted_indices,
+        Nam* temp_nams_output
+) {
+    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (global_id >= num_tasks) return;
+
+    int real_id = global_todo_ids[global_id];
+    const my_vector<Nam>& nams = nams_per_task[real_id];
+    int task_start = seg_offsets[global_id];
+    int num_nams_in_task = seg_offsets[global_id + 1] - task_start;
+
+    for (int i = 0; i < num_nams_in_task; ++i) {
+        int original_idx = sorted_indices[task_start + i];
+        temp_nams_output[task_start + i] = nams.data[original_idx];
+    }
+}
+
+__global__ void scatter_sorted_nams_kernel(
+        int num_tasks,
+        const Nam* temp_nams_input,
+        const int* global_todo_ids,
+        const int* seg_offsets,
+        my_vector<Nam>* nams_per_task
+) {
+    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (global_id >= num_tasks) return;
+
+    int real_id = global_todo_ids[global_id];
+    my_vector<Nam>& nams = nams_per_task[real_id];
+    int task_start = seg_offsets[global_id];
+    int num_nams_in_task = seg_offsets[global_id + 1] - task_start;
+
+    for (int i = 0; i < num_nams_in_task; ++i) {
+        nams.data[i] = temp_nams_input[task_start + i];
+    }
+}
+
+void sort_nams_by_score_in_place_with_cub(
+        int todo_cnt,
+        my_vector<Nam>* nams_per_task,
+        int* global_todo_ids,
+        cudaStream_t stream,
+        SegSortGpuResources& buffers,
+        double *gpu_cost1,
+        double *gpu_cost2,
+        double *gpu_cost3,
+        double *gpu_cost4)
+{
+    if (todo_cnt == 0) return;
 
     int threads_per_block = 256;
     int blocks_per_grid = (todo_cnt + threads_per_block - 1) / threads_per_block;
 
+    // --- Part 1: Get sizes and offsets for each segment ---
     double t0 = GetTime();
-    int* d_task_sizes;
-    cudaMalloc(&d_task_sizes, todo_cnt * sizeof(int));
 
-    get_task_sizes_kernel<<<blocks_per_grid, threads_per_block, 0, stream>>>(todo_cnt, hits_per_refs, global_todo_ids, d_task_sizes);
+    size_t required_task_sizes_bytes = todo_cnt * sizeof(int);
+    if (buffers.task_sizes_bytes < required_task_sizes_bytes) {
+        printf("Allocating NAM task sizes buffer: %zu (%zu) bytes\n", required_task_sizes_bytes, buffers.task_sizes_bytes);
+        if (buffers.task_sizes_ptr) CUDA_CHECK(cudaFreeAsync(buffers.task_sizes_ptr, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.task_sizes_ptr, required_task_sizes_bytes * 2, stream));
+        buffers.task_sizes_bytes = required_task_sizes_bytes * 2;
+    }
+    get_nam_sizes_kernel<<<blocks_per_grid, threads_per_block, 0, stream>>>(todo_cnt, nams_per_task, global_todo_ids, buffers.task_sizes_ptr);
 
-    int* d_seg_offsets;
-    cudaMalloc(&d_seg_offsets, (todo_cnt + 1) * sizeof(int));
+    size_t required_seg_offsets_bytes = (todo_cnt + 1) * sizeof(int);
+    if (buffers.seg_offsets_bytes < required_seg_offsets_bytes) {
+        printf("Allocating NAM segment offsets buffer: %zu (%zu) bytes\n", required_seg_offsets_bytes, buffers.seg_offsets_bytes);
+        if (buffers.seg_offsets_ptr) CUDA_CHECK(cudaFreeAsync(buffers.seg_offsets_ptr, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.seg_offsets_ptr, required_seg_offsets_bytes * 2, stream));
+        buffers.seg_offsets_bytes = required_seg_offsets_bytes * 2;
+    }
 
     void* d_scan_temp_storage = nullptr;
     size_t scan_temp_storage_bytes = 0;
-    cub::DeviceScan::ExclusiveSum(d_scan_temp_storage, scan_temp_storage_bytes, d_task_sizes, d_seg_offsets, todo_cnt + 1, stream);
-    cudaMalloc(&d_scan_temp_storage, scan_temp_storage_bytes);
-    cub::DeviceScan::ExclusiveSum(d_scan_temp_storage, scan_temp_storage_bytes, d_task_sizes, d_seg_offsets, todo_cnt + 1, stream);
+    cub::DeviceScan::ExclusiveSum(d_scan_temp_storage, scan_temp_storage_bytes, buffers.task_sizes_ptr, buffers.seg_offsets_ptr, todo_cnt + 1, stream);
 
-    int total_hits;
-    cudaMemcpyAsync(&total_hits, d_seg_offsets + todo_cnt, sizeof(int), cudaMemcpyDeviceToHost, stream);
-    cudaStreamSynchronize(stream);
-    *gpu_cost3_1 += GetTime() - t0;
+    if (buffers.scan_temp_bytes < scan_temp_storage_bytes) {
+        printf("Allocating NAM scan temp storage: %zu (%zu) bytes\n", scan_temp_storage_bytes, buffers.scan_temp_bytes);
+        if (buffers.scan_temp_ptr) CUDA_CHECK(cudaFreeAsync(buffers.scan_temp_ptr, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.scan_temp_ptr, scan_temp_storage_bytes * 2, stream));
+        buffers.scan_temp_bytes = scan_temp_storage_bytes * 2;
+    }
+    cub::DeviceScan::ExclusiveSum(buffers.scan_temp_ptr, scan_temp_storage_bytes, buffers.task_sizes_ptr, buffers.seg_offsets_ptr, todo_cnt + 1, stream);
 
+    int total_nams;
+    CUDA_CHECK(cudaMemcpyAsync(&total_nams, buffers.seg_offsets_ptr + todo_cnt, sizeof(int), cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    *gpu_cost1 += GetTime() - t0;
 
-    if (total_hits == 0) {
-        cudaFree(d_task_sizes);
-        cudaFree(d_seg_offsets);
-        cudaFree(d_scan_temp_storage);
-        return res;
+    if (total_nams == 0) {
+        return;
     }
 
-    // --- Part 2: Marshal Data into Flat Arrays ---
-
+    // --- Part 2: Marshal scores (keys) and original indices (values) ---
     t0 = GetTime();
-    int* d_keys;
-    int* d_values; // Will hold original indices
-    cudaMalloc(&d_keys, total_hits * sizeof(int));
-    cudaMalloc(&d_values, total_hits * sizeof(int));
 
-    marshal_data_for_sort_kernel<<<blocks_per_grid, threads_per_block, 0, stream>>>(todo_cnt, hits_per_refs, global_todo_ids, d_seg_offsets, d_keys, d_values);
-    cudaStreamSynchronize(stream);
-    *gpu_cost3_2 += GetTime() - t0;
+    if (buffers.key_value_capacity < total_nams) {
+        printf("Allocating NAM key-value buffers: %d (%zu) bytes\n", total_nams, buffers.key_value_capacity);
+        if (buffers.key_ptr)       CUDA_CHECK(cudaFreeAsync(buffers.key_ptr, stream));
+        if (buffers.value_ptr)     CUDA_CHECK(cudaFreeAsync(buffers.value_ptr, stream));
+        if (buffers.key_alt_ptr)   CUDA_CHECK(cudaFreeAsync(buffers.key_alt_ptr, stream));
+        if (buffers.value_alt_ptr) CUDA_CHECK(cudaFreeAsync(buffers.value_alt_ptr, stream));
+        size_t new_capacity = total_nams * 2;
+        size_t new_bytes = new_capacity * sizeof(int);
+        CUDA_CHECK(cudaMallocAsync(&buffers.key_ptr,       new_bytes, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.value_ptr,     new_bytes, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.key_alt_ptr,   new_bytes, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.value_alt_ptr, new_bytes, stream));
+        buffers.key_value_capacity = new_capacity;
+    }
 
-    // --- Part 3: Sort with CUB ---
+    marshal_data_for_nam_sort_kernel<<<blocks_per_grid, threads_per_block, 0, stream>>>(todo_cnt, nams_per_task, global_todo_ids, buffers.seg_offsets_ptr, buffers.key_ptr, buffers.value_ptr);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    *gpu_cost2 += GetTime() - t0;
 
+    // --- Part 3: Sort key-value pairs to get the sorted order ---
     t0 = GetTime();
-    // CUB works best with its own DoubleBuffer type.
-    // We will sort keys and values in-place.
-    cub::DoubleBuffer<int> d_keys_buffer(d_keys, d_keys);
-    cub::DoubleBuffer<int> d_values_buffer(d_values, d_values);
+    cub::DoubleBuffer<int> d_keys_buffer(buffers.key_ptr, buffers.key_alt_ptr);
+    cub::DoubleBuffer<int> d_values_buffer(buffers.value_ptr, buffers.value_alt_ptr);
 
     void* d_sort_temp_storage = nullptr;
     size_t sort_temp_storage_bytes = 0;
-    cub::DeviceSegmentedSort::SortPairs(d_sort_temp_storage, sort_temp_storage_bytes,
-                                        d_keys_buffer, d_values_buffer, total_hits, todo_cnt, d_seg_offsets, d_seg_offsets + 1, stream);
+    cub::DeviceSegmentedSort::SortPairs(d_sort_temp_storage, sort_temp_storage_bytes, d_keys_buffer, d_values_buffer, total_nams, todo_cnt, buffers.seg_offsets_ptr, buffers.seg_offsets_ptr + 1, stream);
 
-    cudaMalloc(&d_sort_temp_storage, sort_temp_storage_bytes);
-    cub::DeviceSegmentedSort::SortPairs(d_sort_temp_storage, sort_temp_storage_bytes,
-                                        d_keys_buffer, d_values_buffer, total_hits, todo_cnt, d_seg_offsets, d_seg_offsets + 1, stream);
-    cudaStreamSynchronize(stream);
-    *gpu_cost3_3 += GetTime() - t0;
+    if (buffers.sort_temp_bytes < sort_temp_storage_bytes) {
+        printf("Allocating NAM sort temp storage: %zu (%zu) bytes\n", sort_temp_storage_bytes, buffers.sort_temp_bytes);
+        if (buffers.sort_temp_ptr) CUDA_CHECK(cudaFreeAsync(buffers.sort_temp_ptr, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.sort_temp_ptr, sort_temp_storage_bytes * 2, stream));
+        buffers.sort_temp_bytes = sort_temp_storage_bytes * 2;
+    }
+    cub::DeviceSegmentedSort::SortPairs(buffers.sort_temp_ptr, sort_temp_storage_bytes, d_keys_buffer, d_values_buffer, total_nams, todo_cnt, buffers.seg_offsets_ptr, buffers.seg_offsets_ptr + 1, stream);
+    const int* sorted_indices = d_values_buffer.Current();
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    *gpu_cost3 += GetTime() - t0;
 
+
+    // --- Part 4: Reorder the actual NAM objects in-place ---
     t0 = GetTime();
-    // --- Cleanup ---
-    cudaFree(d_task_sizes);
-    cudaFree(d_scan_temp_storage);
-    cudaFree(d_sort_temp_storage);
-    cudaFree(d_keys);
-    *gpu_cost3_4 += GetTime() - t0;
 
-    res.first = d_seg_offsets;
-    res.second = d_values;
+    if (buffers.nam_temp_capacity < total_nams) {
+        printf("Allocating NAM temporary buffer: %d (%zu) bytes\n", total_nams * 2, buffers.nam_temp_capacity);
+        if (buffers.nam_temp_ptr) CUDA_CHECK(cudaFreeAsync(buffers.nam_temp_ptr, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.nam_temp_ptr, total_nams * 2 * sizeof(Nam), stream));
+        buffers.nam_temp_capacity = total_nams * 2;
+    }
+
+    // Step A: Gather NAMs into the temporary buffer in sorted order.
+    gather_sorted_nams_kernel<<<blocks_per_grid, threads_per_block, 0, stream>>>(
+            todo_cnt, nams_per_task, global_todo_ids, buffers.seg_offsets_ptr, sorted_indices, buffers.nam_temp_ptr
+    );
+
+    // Step B: Scatter the sorted NAMs from the temp buffer back to the original vectors.
+    scatter_sorted_nams_kernel<<<blocks_per_grid, threads_per_block, 0, stream>>>(
+            todo_cnt, buffers.nam_temp_ptr, global_todo_ids, buffers.seg_offsets_ptr, nams_per_task
+    );
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    *gpu_cost4 += GetTime() - t0;
+}
+
+
+my_pair<int*, int*> sort_nams_by_score_with_cub(
+        int todo_cnt,
+        my_vector<Nam>* nams_per_task,
+        int* global_todo_ids,
+        cudaStream_t stream,
+        SegSortGpuResources& buffers,
+        double *gpu_cost1,
+        double *gpu_cost2,
+        double *gpu_cost3,
+        double *gpu_cost4)
+{
+    my_pair<int*, int*> res({nullptr, nullptr});
+    if (todo_cnt == 0) return res;
+
+    int threads_per_block = 256;
+    int blocks_per_grid = (todo_cnt + threads_per_block - 1) / threads_per_block;
+
+    // --- Part 1: Prepare Segment Information with Re-allocation Logic ---
+    double t0 = GetTime();
+
+    size_t required_task_sizes_bytes = todo_cnt * sizeof(int);
+    if (buffers.task_sizes_bytes < required_task_sizes_bytes) {
+        printf("Allocating NAM task sizes buffer: %zu (%zu) bytes\n", required_task_sizes_bytes, buffers.task_sizes_bytes);
+        if (buffers.task_sizes_ptr) CUDA_CHECK(cudaFreeAsync(buffers.task_sizes_ptr, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.task_sizes_ptr, required_task_sizes_bytes * 2, stream));
+        buffers.task_sizes_bytes = required_task_sizes_bytes * 2;
+    }
+    get_nam_sizes_kernel<<<blocks_per_grid, threads_per_block, 0, stream>>>(todo_cnt, nams_per_task, global_todo_ids, buffers.task_sizes_ptr);
+
+    size_t required_seg_offsets_bytes = (todo_cnt + 1) * sizeof(int);
+    if (buffers.seg_offsets_bytes < required_seg_offsets_bytes) {
+        printf("Allocating NAM segment offsets buffer: %zu (%zu) bytes\n", required_seg_offsets_bytes, buffers.seg_offsets_bytes);
+        if (buffers.seg_offsets_ptr) CUDA_CHECK(cudaFreeAsync(buffers.seg_offsets_ptr, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.seg_offsets_ptr, required_seg_offsets_bytes * 2, stream));
+        buffers.seg_offsets_bytes = required_seg_offsets_bytes * 2;
+    }
+
+    void* d_scan_temp_storage = nullptr;
+    size_t scan_temp_storage_bytes = 0;
+    cub::DeviceScan::ExclusiveSum(d_scan_temp_storage, scan_temp_storage_bytes, buffers.task_sizes_ptr, buffers.seg_offsets_ptr, todo_cnt + 1, stream);
+
+    if (buffers.scan_temp_bytes < scan_temp_storage_bytes) {
+        printf("Allocating NAM scan temp storage: %zu (%zu) bytes\n", scan_temp_storage_bytes, buffers.scan_temp_bytes);
+        if (buffers.scan_temp_ptr) CUDA_CHECK(cudaFreeAsync(buffers.scan_temp_ptr, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.scan_temp_ptr, scan_temp_storage_bytes * 2, stream));
+        buffers.scan_temp_bytes = scan_temp_storage_bytes * 2;
+    }
+    cub::DeviceScan::ExclusiveSum(buffers.scan_temp_ptr, scan_temp_storage_bytes, buffers.task_sizes_ptr, buffers.seg_offsets_ptr, todo_cnt + 1, stream);
+
+    int total_nams;
+    CUDA_CHECK(cudaMemcpyAsync(&total_nams, buffers.seg_offsets_ptr + todo_cnt, sizeof(int), cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    *gpu_cost1 += GetTime() - t0;
+
+    if (total_nams == 0) {
+        res.first = buffers.seg_offsets_ptr;
+        return res;
+    }
+
+    // --- Part 2: Marshal Data into Pre-allocated Buffers ---
+    t0 = GetTime();
+
+    if (buffers.key_value_capacity < total_nams) {
+        printf("Allocating NAM key-value buffers: %d (%zu) bytes\n", total_nams, buffers.key_value_capacity);
+        if (buffers.key_ptr)       CUDA_CHECK(cudaFreeAsync(buffers.key_ptr, stream));
+        if (buffers.value_ptr)     CUDA_CHECK(cudaFreeAsync(buffers.value_ptr, stream));
+        if (buffers.key_alt_ptr)   CUDA_CHECK(cudaFreeAsync(buffers.key_alt_ptr, stream));
+        if (buffers.value_alt_ptr) CUDA_CHECK(cudaFreeAsync(buffers.value_alt_ptr, stream));
+        size_t new_capacity = total_nams * 2;
+        size_t new_bytes = new_capacity * sizeof(int);
+        CUDA_CHECK(cudaMallocAsync(&buffers.key_ptr,       new_bytes, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.value_ptr,     new_bytes, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.key_alt_ptr,   new_bytes, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.value_alt_ptr, new_bytes, stream));
+        buffers.key_value_capacity = new_capacity;
+    }
+
+    marshal_data_for_nam_sort_kernel<<<blocks_per_grid, threads_per_block, 0, stream>>>(todo_cnt, nams_per_task, global_todo_ids, buffers.seg_offsets_ptr, buffers.key_ptr, buffers.value_ptr);
+    *gpu_cost2 += GetTime() - t0;
+
+    // --- Part 3: Sort with CUB ---
+    t0 = GetTime();
+    cub::DoubleBuffer<int> d_keys_buffer(buffers.key_ptr, buffers.key_alt_ptr);
+    cub::DoubleBuffer<int> d_values_buffer(buffers.value_ptr, buffers.value_alt_ptr);
+
+    void* d_sort_temp_storage = nullptr;
+    size_t sort_temp_storage_bytes = 0;
+    cub::DeviceSegmentedSort::SortPairs(d_sort_temp_storage, sort_temp_storage_bytes, d_keys_buffer, d_values_buffer, total_nams, todo_cnt, buffers.seg_offsets_ptr, buffers.seg_offsets_ptr + 1, stream);
+
+    if (buffers.sort_temp_bytes < sort_temp_storage_bytes) {
+        printf("Allocating NAM sort temp storage: %zu (%zu) bytes\n", sort_temp_storage_bytes, buffers.sort_temp_bytes);
+        if (buffers.sort_temp_ptr) CUDA_CHECK(cudaFreeAsync(buffers.sort_temp_ptr, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.sort_temp_ptr, sort_temp_storage_bytes * 2, stream));
+        buffers.sort_temp_bytes = sort_temp_storage_bytes * 2;
+    }
+    cub::DeviceSegmentedSort::SortPairs(buffers.sort_temp_ptr, sort_temp_storage_bytes, d_keys_buffer, d_values_buffer, total_nams, todo_cnt, buffers.seg_offsets_ptr, buffers.seg_offsets_ptr + 1, stream);
+    *gpu_cost3 += GetTime() - t0;
+
+    // The function does not free any pre-allocated memory.
+    res.first = buffers.seg_offsets_ptr;
+    res.second = d_values_buffer.Current(); // This is the pointer to the sorted indices.
     return res;
 }
+
 
 __global__ void gpu_sort_hits(
         int num_tasks,
@@ -1001,6 +1504,39 @@ __global__ void gpu_merge_hits_get_nams(
         global_nams[real_id].init(8);
         merge_hits(hits_per_ref0s[real_id], index_para->syncmer.k, 0, global_nams[real_id]);
         merge_hits(hits_per_ref1s[real_id], index_para->syncmer.k, 1, global_nams[real_id]);
+        hits_per_ref0s[real_id].release();
+        hits_per_ref1s[real_id].release();
+    }
+}
+
+__global__ void gpu_rescue_merge_hits_get_nams_seg(
+        int num_tasks,
+        IndexParameters *index_para,
+        uint64_t *global_nams_info,
+        my_vector<my_pair<int, Hit>>* hits_per_ref0s,
+        my_vector<my_pair<int, Hit>>* hits_per_ref1s,
+        const int* seg_offsets0, const int* sorted_indices0,
+        const int* seg_offsets1, const int* sorted_indices1,
+        my_vector<Nam> *global_nams,
+        int* global_todo_ids
+) {
+    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (global_id < num_tasks) {
+        int real_id = global_todo_ids[global_id];
+        global_nams[real_id].init(8);
+
+        // Process hits for read 1 (forward strand)
+        const my_vector<my_pair<int, Hit>>& original_hits0 = hits_per_ref0s[real_id];
+        int task_start0 = seg_offsets0[global_id];
+        int task_end0   = seg_offsets0[global_id + 1];
+        salign_merge_hits_seg(original_hits0, sorted_indices0, task_start0, task_end0, index_para->syncmer.k, 0, global_nams[real_id]);
+
+        // Process hits for read 2 (reverse strand)
+        const my_vector<my_pair<int, Hit>>& original_hits1 = hits_per_ref1s[real_id];
+        int task_start1 = seg_offsets1[global_id];
+        int task_end1   = seg_offsets1[global_id + 1];
+        salign_merge_hits_seg(original_hits1, sorted_indices1, task_start1, task_end1, index_para->syncmer.k, 1, global_nams[real_id]);
+
         hits_per_ref0s[real_id].release();
         hits_per_ref1s[real_id].release();
     }

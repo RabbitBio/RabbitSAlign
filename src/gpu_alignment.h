@@ -9,6 +9,7 @@ __device__ inline int gpu_hamming_distance(const my_string s, const my_string t)
 __device__ bool gpu_extend_seed_part(GPUAlignTmpRes& align_tmp_res, const AlignmentParameters& aligner_parameters, const Nam& nam, const GPUReferences& references, const GPURead& read, bool consistent_nam);
 __device__ bool gpu_rescue_mate_part(GPUAlignTmpRes& align_tmp_res, const AlignmentParameters& aligner_parameters, const Nam& nam, const GPUReferences& references, const GPURead& read, float mu, float sigma, int k);
 __device__ bool gpu_reverse_nam_if_needed(Nam& nam, const GPURead& read, const GPUReferences& references, int k);
+__device__ uint8_t gpu_get_mapq_seg(const my_vector<Nam>& nams, const Nam& n_max, const int* sorted_indices);
 __device__ uint8_t gpu_get_mapq(const my_vector<Nam>& nams, const Nam& n_max);
 __device__ float gpu_top_dropoff(my_vector<Nam>& nams);
 

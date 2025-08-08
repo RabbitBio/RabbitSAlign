@@ -8,7 +8,7 @@
 #include <random>
 #include "gpu_common.h" // Asumiendo que esta cabecera contiene structs como neoRcRef, Nam, etc.
 
-//#define use_seg_sort
+#define use_seg_sort
 
 
 #define RESCUE_THRESHOLD 1000
@@ -50,8 +50,16 @@ extern thread_local double gpu_cost3_4;
 extern thread_local double gpu_cost4;
 extern thread_local double gpu_cost5;
 extern thread_local double gpu_cost6;
+extern thread_local double gpu_cost6_1;
+extern thread_local double gpu_cost6_2;
+extern thread_local double gpu_cost6_3;
+extern thread_local double gpu_cost6_4;
 extern thread_local double gpu_cost7;
 extern thread_local double gpu_cost8;
+extern thread_local double gpu_cost8_1;
+extern thread_local double gpu_cost8_2;
+extern thread_local double gpu_cost8_3;
+extern thread_local double gpu_cost8_4;
 extern thread_local double gpu_cost9;
 extern thread_local double gpu_cost10;
 extern thread_local double gpu_cost10_1;

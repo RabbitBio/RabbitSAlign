@@ -12,14 +12,21 @@ __device__ void sort_nams_by_score(my_vector<Nam>& nams, int mx_num);
 __device__ void sort_nam_pairs_by_score(my_vector<gpu_NamPair>& joint_nam_scores, int mx_num);
 
 // CUB-based sorting utilities
-my_pair<int*, int*> sort_all_hits_with_cub(int todo_cnt, my_vector<my_pair<int, Hit>>* hits_per_refs, int* global_todo_ids, cudaStream_t stream,
-                                           double *gpu_cost3_1 = nullptr, double *gpu_cost3_2 = nullptr, double *gpu_cost3_3 = nullptr, double *gpu_cost3_4 = nullptr);
+my_pair<int*, int*> sort_all_hits_with_cub(int todo_cnt, my_vector<my_pair<int, Hit>>* hits_per_refs, int* global_todo_ids, cudaStream_t stream, SegSortGpuResources& buffers,
+                                                double *gpu_cost1 = nullptr, double *gpu_cost2 = nullptr, double *gpu_cost3 = nullptr, double *gpu_cost4 = nullptr);
+
+my_pair<int*, int*> sort_nams_by_score_with_cub(int todo_cnt, my_vector<Nam>* nams_per_task, int* global_todo_ids, cudaStream_t stream, SegSortGpuResources& buffers,
+                                                double *gpu_cost1 = nullptr, double *gpu_cost2 = nullptr, double *gpu_cost3 = nullptr, double *gpu_cost4 = nullptr);
+
+void sort_nams_by_score_in_place_with_cub(int todo_cnt, my_vector<Nam>* nams_per_task, int* global_todo_ids, cudaStream_t stream, SegSortGpuResources& buffers,
+                                                double *gpu_cost1 = nullptr, double *gpu_cost2 = nullptr, double *gpu_cost3 = nullptr, double *gpu_cost4 = nullptr);
 
 // Merging and sorting CUDA Kernels
 __global__ void gpu_sort_hits(int num_tasks, my_vector<my_pair<int, Hit>>* hits_per_ref0s, my_vector<my_pair<int, Hit>>* hits_per_ref1s, int* global_todo_ids);
 __global__ void gpu_rescue_sort_hits(int num_tasks, my_vector<my_pair<int, Hit>>* hits_per_ref0s, my_vector<my_pair<int, Hit>>* hits_per_ref1s, int* global_todo_ids);
 __global__ void gpu_merge_hits_get_nams_seg(int num_tasks, IndexParameters *index_para, uint64_t *global_nams_info, my_vector<my_pair<int, Hit>>* hits_per_ref0s, my_vector<my_pair<int, Hit>>* hits_per_ref1s, const int* seg_offsets0, const int* sorted_indices0, const int* seg_offsets1, const int* sorted_indices1, my_vector<Nam> *global_nams, int* global_todo_ids);
 __global__ void gpu_merge_hits_get_nams(int num_tasks, IndexParameters *index_para, uint64_t *global_nams_info, my_vector<my_pair<int, Hit>>* hits_per_ref0s, my_vector<my_pair<int, Hit>>* hits_per_ref1s, my_vector<Nam> *global_nams, int* global_todo_ids);
+__global__ void gpu_rescue_merge_hits_get_nams_seg(int num_tasks, IndexParameters *index_para, uint64_t *global_nams_info, my_vector<my_pair<int, Hit>>* hits_per_ref0s, my_vector<my_pair<int, Hit>>* hits_per_ref1s, const int* seg_offsets0, const int* sorted_indices0, const int* seg_offsets1, const int* sorted_indices1, my_vector<Nam> *global_nams, int* global_todo_ids);
 __global__ void gpu_rescue_merge_hits_get_nams(int num_tasks, IndexParameters *index_para, uint64_t *global_nams_info, my_vector<my_pair<int, Hit>>* hits_per_ref0s, my_vector<my_pair<int, Hit>>* hits_per_ref1s, my_vector<Nam> *global_nams, int* global_todo_ids);
 __global__ void gpu_sort_nams(int num_tasks, my_vector<Nam> *global_nams, MappingParameters *mapping_parameters, int is_se);
 

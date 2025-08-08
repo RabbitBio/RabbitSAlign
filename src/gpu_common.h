@@ -39,6 +39,12 @@
 
 #define MAX_TRIES_LIMIT (d_map_param->max_tries * 2 + 2)
 
+#define CUDA_CHECK(err) { \
+    if (err != cudaSuccess) { \
+        fprintf(stderr, "CUDA Error: %s at %s:%d\n", cudaGetErrorString(err), __FILE__, __LINE__); \
+        exit(EXIT_FAILURE); \
+    } \
+}
 
 // Forward Declarations
 struct Nam;
@@ -112,6 +118,29 @@ struct GPUInsertSizeDistribution {
     float SSE = 10000;
 
     __device__ __host__ void update(int dist);
+};
+
+struct SegSortGpuResources {
+    // --- Primary Data Buffers ---
+    int* key_ptr = nullptr;
+    int* value_ptr = nullptr;
+    int* key_alt_ptr = nullptr;
+    int* value_alt_ptr = nullptr;
+    size_t key_value_capacity = 0; // Capacity in number of elements
+
+    Nam* nam_temp_ptr = nullptr; // Buffer to hold NAMs during reordering
+    size_t nam_temp_capacity = 0; // Capacity in number of NAMs
+
+    // --- Temporary Workspace Buffers ---
+    int* task_sizes_ptr = nullptr;
+    int* seg_offsets_ptr = nullptr;
+    void* scan_temp_ptr = nullptr;
+    void* sort_temp_ptr = nullptr;
+
+    size_t task_sizes_bytes = 0;
+    size_t seg_offsets_bytes = 0;
+    size_t scan_temp_bytes = 0;
+    size_t sort_temp_bytes = 0;
 };
 
 // Common Device Functions & Utilities

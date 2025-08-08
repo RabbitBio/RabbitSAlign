@@ -299,6 +299,19 @@ __device__ bool gpu_reverse_nam_if_needed(Nam& nam, const GPURead& read, const G
     return false;
 }
 
+__device__ uint8_t gpu_get_mapq_seg(const my_vector<Nam>& nams, const Nam& n_max, const int* sorted_indices) {
+    if (nams.size() <= 1) {
+        return 60;
+    }
+    const float s1 = n_max.score;
+    const float s2 = nams[sorted_indices[1]].score;
+    // from minimap2: MAPQ = 40(1−s2/s1) ·min{1,|M|/10} · log s1
+    const float min_matches = my_min(n_max.n_hits / 10.0, 1.0);
+    const int uncapped_mapq = 40 * (1 - s2 / s1) * min_matches * log(s1);
+    return my_min(uncapped_mapq, 60);
+}
+
+
 __device__ uint8_t gpu_get_mapq(const my_vector<Nam>& nams, const Nam& n_max) {
     if (nams.size() <= 1) {
         return 60;
