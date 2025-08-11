@@ -1025,6 +1025,109 @@ __global__ void update_vector_pointers_kernel(
     }
 }
 
+my_pair<int*, int*> sort_all_hits_with_cub_radix(
+        int todo_cnt,
+        my_vector<my_pair<int, Hit>>* hits_per_refs,
+        int* global_todo_ids,
+        cudaStream_t stream,
+        SegSortGpuResources& buffers,
+        double *gpu_cost1,
+        double *gpu_cost2,
+        double *gpu_cost3,
+        double *gpu_cost4)
+{
+    my_pair<int*, int*> res({nullptr, nullptr});
+    if (todo_cnt == 0) return res;
+
+    int threads_per_block = 256;
+    int blocks_per_grid = (todo_cnt + threads_per_block - 1) / threads_per_block;
+
+    // --- Part 1: Prepare Segment Information with Re-allocation Logic ---
+    double t0 = GetTime();
+
+    size_t required_task_sizes_bytes = todo_cnt * sizeof(int);
+    if (buffers.task_sizes_bytes < required_task_sizes_bytes) {
+        printf("Allocating task sizes buffer: %zu (%zu) bytes\n", required_task_sizes_bytes, buffers.task_sizes_bytes);
+        if (buffers.task_sizes_ptr) CUDA_CHECK(cudaFreeAsync(buffers.task_sizes_ptr, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.task_sizes_ptr, required_task_sizes_bytes * 2, stream));
+        buffers.task_sizes_bytes = required_task_sizes_bytes * 2;
+    }
+    get_task_sizes_kernel<<<blocks_per_grid, threads_per_block, 0, stream>>>(todo_cnt, hits_per_refs, global_todo_ids, buffers.task_sizes_ptr);
+
+    size_t required_seg_offsets_bytes = (todo_cnt + 1) * sizeof(int);
+    if (buffers.seg_offsets_bytes < required_seg_offsets_bytes) {
+        printf("Allocating segment offsets buffer: %zu (%zu) bytes\n", required_seg_offsets_bytes, buffers.seg_offsets_bytes);
+        if (buffers.seg_offsets_ptr) CUDA_CHECK(cudaFreeAsync(buffers.seg_offsets_ptr, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.seg_offsets_ptr, required_seg_offsets_bytes * 2, stream));
+        buffers.seg_offsets_bytes = required_seg_offsets_bytes * 2;
+    }
+
+    void* d_scan_temp_storage = nullptr;
+    size_t scan_temp_storage_bytes = 0;
+    cub::DeviceScan::ExclusiveSum(d_scan_temp_storage, scan_temp_storage_bytes, buffers.task_sizes_ptr, buffers.seg_offsets_ptr, todo_cnt + 1, stream);
+
+    if (buffers.scan_temp_bytes < scan_temp_storage_bytes) {
+        printf("Allocating scan temp storage: %zu (%zu) bytes\n", scan_temp_storage_bytes, buffers.scan_temp_bytes);
+        if (buffers.scan_temp_ptr) CUDA_CHECK(cudaFreeAsync(buffers.scan_temp_ptr, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.scan_temp_ptr, scan_temp_storage_bytes * 2, stream));
+        buffers.scan_temp_bytes = scan_temp_storage_bytes * 2;
+    }
+    cub::DeviceScan::ExclusiveSum(buffers.scan_temp_ptr, scan_temp_storage_bytes, buffers.task_sizes_ptr, buffers.seg_offsets_ptr, todo_cnt + 1, stream);
+
+    int total_hits;
+    CUDA_CHECK(cudaMemcpyAsync(&total_hits, buffers.seg_offsets_ptr + todo_cnt, sizeof(int), cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    *gpu_cost1 += GetTime() - t0;
+
+    // --- Part 2: Marshal Data into Pre-allocated Buffers ---
+    t0 = GetTime();
+
+    if (buffers.key_value_capacity < total_hits) {
+        fprintf(stderr, "FATAL ERROR: Pre-allocated sort buffer is too small. Required: %d, Allocated: %zu\n", total_hits, buffers.key_value_capacity);
+        exit(EXIT_FAILURE);
+    }
+
+    marshal_data_for_sort_kernel<<<blocks_per_grid, threads_per_block, 0, stream>>>(todo_cnt, hits_per_refs, global_todo_ids, buffers.seg_offsets_ptr, buffers.key_ptr, buffers.value_ptr);
+    *gpu_cost2 += GetTime() - t0;
+
+    // --- Part 3: Sort with CUB (Replaced with DeviceSegmentedRadixSort) ---
+    t0 = GetTime();
+
+
+    void* d_sort_temp_storage = nullptr;
+    size_t sort_temp_storage_bytes = 0;
+
+    cub::DeviceSegmentedRadixSort::SortPairs(
+            d_sort_temp_storage, sort_temp_storage_bytes,
+            buffers.key_ptr, buffers.key_alt_ptr,         // Keys_in, Keys_out
+            buffers.value_ptr, buffers.value_alt_ptr,     // Values_in, Values_out
+            total_hits, todo_cnt,
+            buffers.seg_offsets_ptr, buffers.seg_offsets_ptr + 1,
+            0, sizeof(int) * 8,                           // begin_bit, end_bit for 32-bit int
+            stream);
+
+    if (buffers.sort_temp_bytes < sort_temp_storage_bytes) {
+        if (buffers.sort_temp_ptr) CUDA_CHECK(cudaFreeAsync(buffers.sort_temp_ptr, stream));
+        CUDA_CHECK(cudaMallocAsync(&buffers.sort_temp_ptr, sort_temp_storage_bytes * 2, stream));
+        buffers.sort_temp_bytes = sort_temp_storage_bytes * 2;
+    }
+
+    cub::DeviceSegmentedRadixSort::SortPairs(
+            buffers.sort_temp_ptr, sort_temp_storage_bytes,
+            buffers.key_ptr, buffers.key_alt_ptr,         // Keys_in, Keys_out
+            buffers.value_ptr, buffers.value_alt_ptr,     // Values_in, Values_out
+            total_hits, todo_cnt,
+            buffers.seg_offsets_ptr, buffers.seg_offsets_ptr + 1,
+            0, sizeof(int) * 8,                           // begin_bit, end_bit
+            stream);
+
+    *gpu_cost3 += GetTime() - t0;
+
+    res.first = buffers.seg_offsets_ptr;
+    res.second = buffers.value_alt_ptr;
+    return res;
+}
+
 my_pair<int*, int*> sort_all_hits_with_cub(
         int todo_cnt,
         my_vector<my_pair<int, Hit>>* hits_per_refs,

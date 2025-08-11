@@ -1333,8 +1333,8 @@ __device__ void align_PE_part4(
     dummy_nam.ref_start = -1;
 
     my_vector<gpu_NamPair> joint_nam_scores(my_max(max_tries, nams1.size() + nams2.size()));
-//    gpu_get_best_scoring_nam_pairs_optimized(joint_nam_scores, nams1, nams2, mu, sigma, max_tries);
-    gpu_get_best_scoring_nam_pairs(joint_nam_scores, nams1, nams2, mu, sigma, max_tries);
+    gpu_get_best_scoring_nam_pairs_optimized(joint_nam_scores, nams1, nams2, mu, sigma, max_tries);
+//    gpu_get_best_scoring_nam_pairs(joint_nam_scores, nams1, nams2, mu, sigma, max_tries);
     //if (joint_nam_scores.size() > max_tries) joint_nam_scores.length = max_tries;
 
     int nams1_len = nams1.size();
@@ -1980,9 +1980,9 @@ void GPU_align_PE(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &data2s,
 
         // sort hits by ref_id
         t1 = GetTime();
-        auto sort_res0 = sort_all_hits_with_cub(todo_cnt, global_hits_per_ref0s, global_todo_ids, ctx.stream, buffers0,
+        auto sort_res0 = sort_all_hits_with_cub_radix(todo_cnt, global_hits_per_ref0s, global_todo_ids, ctx.stream, buffers0,
                                                 &gpu_cost3_1, &gpu_cost3_2, &gpu_cost3_3, &gpu_cost3_4);
-        auto sort_res1 = sort_all_hits_with_cub(todo_cnt, global_hits_per_ref1s, global_todo_ids, ctx.stream, buffers1,
+        auto sort_res1 = sort_all_hits_with_cub_radix(todo_cnt, global_hits_per_ref1s, global_todo_ids, ctx.stream, buffers1,
                                                 &gpu_cost3_1, &gpu_cost3_2, &gpu_cost3_3, &gpu_cost3_4);
         cudaStreamSynchronize(ctx.stream);
         gpu_cost3 += GetTime() - t1;
@@ -2028,9 +2028,9 @@ void GPU_align_PE(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &data2s,
 
         // rescue mode sort hits by ref_id
         t1 = GetTime();
-        auto rescue_sort_res0 = sort_all_hits_with_cub(todo_cnt, global_hits_per_ref0s, global_todo_ids, ctx.stream, buffers0,
+        auto rescue_sort_res0 = sort_all_hits_with_cub_radix(todo_cnt, global_hits_per_ref0s, global_todo_ids, ctx.stream, buffers0,
                                                        &gpu_cost6_1, &gpu_cost6_2, &gpu_cost6_3, &gpu_cost6_4);
-        auto rescue_sort_res1 = sort_all_hits_with_cub(todo_cnt, global_hits_per_ref1s, global_todo_ids, ctx.stream, buffers1,
+        auto rescue_sort_res1 = sort_all_hits_with_cub_radix(todo_cnt, global_hits_per_ref1s, global_todo_ids, ctx.stream, buffers1,
                                                        &gpu_cost6_1, &gpu_cost6_2, &gpu_cost6_3, &gpu_cost6_4);
         cudaStreamSynchronize(ctx.stream);
         gpu_cost6 += GetTime() - t1;
