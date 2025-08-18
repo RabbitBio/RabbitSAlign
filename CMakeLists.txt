@@ -29,10 +29,10 @@ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 add_compile_options(-w)
 
 set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -fopenmp")
-set(CMAKE_CUDA_FLAGS_DEBUG "-G -g -O0")
+set(CMAKE_CUDA_FLAGS_DEBUG "-G -g -O0 --expt-relaxed-constexpr")
 
 set(CMAKE_CXX_FLAGS_RELEASE "-g -O3 -fopenmp")
-set(CMAKE_CUDA_FLAGS_RELEASE "-g -O3 -fopenmp")
+set(CMAKE_CUDA_FLAGS_RELEASE "-g -O3 -fopenmp --expt-relaxed-constexpr")
 
 if(CLOSE_NUMA_OPT)
     add_compile_definitions(OPT_NUMA_CLOSE)

@@ -645,6 +645,9 @@ int run_rabbitsalign(int argc, char **argv) {
     size_t free_memory, total_memory;
     cudaSetDevice(0); // Check memory on first GPU
     err = cudaMemGetInfo(&free_memory, &total_memory);
+#ifdef use_seg_sort
+    free_memory -= 6 * GB_BYTE;
+#endif
     if (err != cudaSuccess) {
         std::cerr << "CUDA error: " << cudaGetErrorString(err) << std::endl;
         return -1;

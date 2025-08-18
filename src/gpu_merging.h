@@ -13,7 +13,10 @@ __device__ void sort_nam_pairs_by_score(my_vector<gpu_NamPair>& joint_nam_scores
 
 // CUB-based sorting utilities
 my_pair<int*, int*> sort_all_hits_with_cub(int todo_cnt, my_vector<my_pair<int, Hit>>* hits_per_refs, int* global_todo_ids, cudaStream_t stream, SegSortGpuResources& buffers,
-                                                double *gpu_cost1 = nullptr, double *gpu_cost2 = nullptr, double *gpu_cost3 = nullptr, double *gpu_cost4 = nullptr);
+                                           double *gpu_cost1 = nullptr, double *gpu_cost2 = nullptr, double *gpu_cost3 = nullptr, double *gpu_cost4 = nullptr);
+
+my_pair<int*, int*> sort_all_hits_with_bb_segsort(int todo_cnt, my_vector<my_pair<int, Hit>>* hits_per_refs, int* global_todo_ids, cudaStream_t stream, SegSortGpuResources& buffers,
+                                           double *gpu_cost1 = nullptr, double *gpu_cost2 = nullptr, double *gpu_cost3 = nullptr, double *gpu_cost4 = nullptr);
 
 my_pair<int*, int*> sort_all_hits_with_cub_radix(int todo_cnt, my_vector<my_pair<int, Hit>>* hits_per_refs, int* global_todo_ids, cudaStream_t stream, SegSortGpuResources& buffers,
                                            double *gpu_cost1 = nullptr, double *gpu_cost2 = nullptr, double *gpu_cost3 = nullptr, double *gpu_cost4 = nullptr);
@@ -22,7 +25,10 @@ my_pair<int*, int*> sort_nams_by_score_with_cub(int todo_cnt, my_vector<Nam>* na
                                                 double *gpu_cost1 = nullptr, double *gpu_cost2 = nullptr, double *gpu_cost3 = nullptr, double *gpu_cost4 = nullptr);
 
 void sort_nams_by_score_in_place_with_cub(int todo_cnt, my_vector<Nam>* nams_per_task, int* global_todo_ids, cudaStream_t stream, SegSortGpuResources& buffers,
-                                                double *gpu_cost1 = nullptr, double *gpu_cost2 = nullptr, double *gpu_cost3 = nullptr, double *gpu_cost4 = nullptr);
+                                          double *gpu_cost1 = nullptr, double *gpu_cost2 = nullptr, double *gpu_cost3 = nullptr, double *gpu_cost4 = nullptr);
+
+void sort_nams_by_score_in_place_with_cub_optimized(int todo_cnt, my_vector<Nam>* nams_per_task, int* global_todo_ids, cudaStream_t stream, SegSortGpuResources& buffers,
+                                          double *gpu_cost1 = nullptr, double *gpu_cost2 = nullptr, double *gpu_cost3 = nullptr, double *gpu_cost4 = nullptr);
 
 // Merging and sorting CUDA Kernels
 __global__ void gpu_sort_hits(int num_tasks, my_vector<my_pair<int, Hit>>* hits_per_ref0s, my_vector<my_pair<int, Hit>>* hits_per_ref1s, int* global_todo_ids);

@@ -39,12 +39,6 @@
 
 #define MAX_TRIES_LIMIT (d_map_param->max_tries * 2 + 2)
 
-#define CUDA_CHECK(err) { \
-    if (err != cudaSuccess) { \
-        fprintf(stderr, "CUDA Error: %s at %s:%d\n", cudaGetErrorString(err), __FILE__, __LINE__); \
-        exit(EXIT_FAILURE); \
-    } \
-}
 
 // Forward Declarations
 struct Nam;
@@ -129,6 +123,7 @@ struct SegSortGpuResources {
     size_t key_value_capacity = 0; // Capacity in number of elements
 
     Nam* nam_temp_ptr = nullptr; // Buffer to hold NAMs during reordering
+    Nam* nam_temp_alt_ptr = nullptr; // Buffer to hold NAMs during reordering
     size_t nam_temp_capacity = 0; // Capacity in number of NAMs
 
     // --- Temporary Workspace Buffers ---
@@ -141,6 +136,9 @@ struct SegSortGpuResources {
     size_t seg_offsets_bytes = 0;
     size_t scan_temp_bytes = 0;
     size_t sort_temp_bytes = 0;
+
+    int* bb_bin_segs_id_ptr = nullptr;
+    int* bb_bin_counter_ptr = nullptr;
 };
 
 // Common Device Functions & Utilities
