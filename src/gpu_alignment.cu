@@ -335,6 +335,31 @@ __device__ float gpu_top_dropoff(my_vector<Nam>& nams) {
     return 0.0;
 }
 
+__device__ float gpu_top_dropoff_seg(
+        int num_nams,
+        const my_vector<Nam>& nams,
+        const int* sorted_nam_indices,
+        int task_start_offset)
+{
+    int top_nam_idx = sorted_nam_indices[task_start_offset];
+    const Nam& n_max = nams.data[top_nam_idx];
+
+    if (n_max.n_hits <= 2) {
+        return 1.0f;
+    }
+    if (num_nams < 2) {
+        return 0.0f;
+    }
+
+    int second_nam_idx = sorted_nam_indices[task_start_offset + 1];
+    const Nam& n_second = nams.data[second_nam_idx];
+
+    if (n_max.n_hits > 0) {
+        return (float)n_second.n_hits / n_max.n_hits;
+    }
+    return 1.0f;
+}
+
 __device__ void gpu_part2_extend_seed_get_str(
         GPUAlignTmpRes& align_tmp_res,
         int j,

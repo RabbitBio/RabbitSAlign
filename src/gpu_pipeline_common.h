@@ -108,4 +108,9 @@ void init_global_big_data(int thread_id, int gpu_id, int max_tries, int batch_re
 // --- Prototipos de Funciones de Dispositivo ---
 __device__ bool gpu_is_proper_pair(const GPUAlignment& alignment1, const GPUAlignment& alignment2, float mu, float sigma);
 
+void init_seg_sort_resources(SegSortGpuResources& resources, size_t initial_capacity, size_t max_todo_cnt, size_t initial_scan_temp_bytes, size_t initial_sort_temp_bytes, cudaStream_t stream);
+
+void free_seg_sort_resources(SegSortGpuResources& resources, cudaStream_t stream);
+
+
 #endif //RABBITSALIGN_GPU_PIPELINE_COMMON_H

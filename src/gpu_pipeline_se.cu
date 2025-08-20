@@ -148,6 +148,55 @@ void GPU_align_SE_read_last(
 
 }
 
+__device__ void align_SE_part_seg(
+        GPUAlignTmpRes& align_tmp_res,
+        const AlignmentParameters& aligner_parameters,
+        my_vector<Nam>& nams,
+        char* seq, char* rc, int seq_len,
+        int k,
+        const GPUReferences& references,
+        float dropoff_threshold,
+        int max_tries,
+        size_t max_secondary,
+        int* d_todo_cnt,
+        char* d_query_ptr, char* d_ref_ptr,
+        int* d_query_offset, int* d_ref_offset,
+        const int* sorted_indices
+) {
+    assert(!nams.empty());
+
+    GPURead read{seq, rc, seq_len};
+    int tries = 0;
+    Nam n_max = nams[sorted_indices[0]];
+
+    for (int i = 0; i < nams.size(); i++) {
+        Nam nam = nams[sorted_indices[i]];
+        float score_dropoff = (float) nam.n_hits / n_max.n_hits;
+        if (tries >= max_tries || score_dropoff < dropoff_threshold) {
+            break;
+        }
+        bool consistent_nam = gpu_reverse_nam_if_needed(nam, read, references, k);
+        align_tmp_res.consistent_nam.push_back(consistent_nam);
+        align_tmp_res.is_read1.push_back(true);
+        bool gapped = gpu_extend_seed_part(align_tmp_res, aligner_parameters, nam, references, read, consistent_nam);
+        tries++;
+    }
+    size_t todo_size = align_tmp_res.todo_nams.size();
+    for (size_t j = 0; j < todo_size; j++) {
+        if (!align_tmp_res.done_align[j]) {
+            if (align_tmp_res.is_extend_seed[j]) {
+                gpu_part2_extend_seed_get_str(
+                        align_tmp_res, j, read, read, references,
+                        d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset
+                );
+            } else {
+                assert(0);
+            }
+        }
+    }
+
+    return;
+}
 
 __device__ void align_SE_part(
         GPUAlignTmpRes& align_tmp_res,
@@ -168,7 +217,7 @@ __device__ void align_SE_part(
     GPURead read{seq, rc, seq_len};
     int tries = 0;
     Nam n_max = nams[0];
-    assert(nams.size() <= max_tries);
+//    assert(nams.size() <= max_tries);
 
     for (int i = 0; i < nams.size(); i++) {
         Nam nam = nams[i];
@@ -197,6 +246,55 @@ __device__ void align_SE_part(
     }
 
     return;
+}
+
+__global__ void gpu_align_SE_seg(
+        int num_tasks,
+        int read_num,
+        int base_read_num,
+        IndexParameters *index_para,
+        uint64_t *global_align_info,
+        AlignmentParameters* aligner_parameters,
+        int *pre_sum,
+        int *lens,
+        char *all_seqs,
+        GPUReferences *global_references,
+        MappingParameters *mapping_parameters,
+        my_vector<Nam> *global_nams,
+        GPUAlignTmpRes *global_align_res,
+        int* d_todo_cnt,
+        char* d_query_ptr, char* d_ref_ptr,
+        int* d_query_offset, int* d_ref_offset,
+        const int* nam_seg_offsets,
+        const int* sorted_nam_indices
+) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id < num_tasks) {
+        int read_id = (id + base_read_num);
+        int type = global_align_res[id].type;
+        assert(type <= 4);
+        if (type == 0) {
+            global_nams[id].release();
+        } else if (type == 4) {
+            size_t seq_len;
+            seq_len = lens[read_id];
+            char *seq, *rc;
+            seq = all_seqs + pre_sum[read_id];
+            rc = all_seqs + pre_sum[read_id + read_num];
+
+            const int* task_sorted_indices = sorted_nam_indices + nam_seg_offsets[id];
+
+            GPUAlignTmpRes* align_tmp_res = &global_align_res[id];
+            align_SE_part_seg(*align_tmp_res, *aligner_parameters, global_nams[id],
+                              seq, rc, seq_len, index_para->syncmer.k, *global_references,
+                              mapping_parameters->dropoff_threshold, mapping_parameters->max_tries, mapping_parameters->max_secondary,
+                              d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset,
+                              task_sorted_indices);
+            global_nams[id].release();
+        } else {
+            assert(false);
+        }
+    }
 }
 
 
@@ -246,6 +344,39 @@ __global__ void gpu_align_SE(
 
 }
 
+__global__ void gpu_pre_align_SE_seg(
+        int num_tasks,
+        MappingParameters *mapping_parameters,
+        my_vector<Nam> *global_nams,
+        int *global_todo_ids,
+        GPUAlignTmpRes *global_align_res,
+        const int* nam_seg_offsets,
+        const int* sorted_nam_indices
+) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id < num_tasks) {
+        int num_nams = nam_seg_offsets[id + 1] - nam_seg_offsets[id];
+        if (num_nams == 0) {
+            global_todo_ids[id] = 0;
+        } else {
+            int tries = 0;
+            int best_nam_idx = sorted_nam_indices[nam_seg_offsets[id]];
+            const Nam& n_max = global_nams[id][best_nam_idx];
+
+            for (int i = 0; i < num_nams; i++) {
+                int current_nam_idx = sorted_nam_indices[nam_seg_offsets[id] + i];
+                const Nam& nam = global_nams[id][current_nam_idx];
+                float score_dropoff = (float) nam.n_hits / n_max.n_hits;
+                if (tries >= mapping_parameters->max_tries || score_dropoff < mapping_parameters->dropoff_threshold) {
+                    break;
+                }
+                tries++;
+            }
+            global_todo_ids[id] = tries;
+        }
+    }
+}
+
 __global__ void gpu_pre_align_SE(
         int num_tasks,
         IndexParameters *index_para,
@@ -266,7 +397,7 @@ __global__ void gpu_pre_align_SE(
         else {
             int tries = 0;
             Nam n_max = global_nams[id][0];
-            assert(global_nams[id].size() <= mapping_parameters->max_tries);
+//            assert(global_nams[id].size() <= mapping_parameters->max_tries);
             for (int i = 0; i < global_nams[id].size(); i++) {
                 Nam nam = global_nams[id][i];
                 float score_dropoff = (float) nam.n_hits / n_max.n_hits;
@@ -280,7 +411,13 @@ __global__ void gpu_pre_align_SE(
     }
 }
 
-void GPU_align_SE(std::vector<neoRcRef> &datas,
+#ifdef use_seg_sort
+#define REAL_GPU_ALIGN_SE GPU_align_SE_seg
+#else
+#define REAL_GPU_ALIGN_SE GPU_align_SE_init
+#endif
+
+void GPU_align_SE_seg(std::vector<neoRcRef> &datas,
                   ThreadContext& ctx, std::vector<AlignTmpRes> &align_tmp_results,
                   uint64_t* global_hits_num, uint64_t* global_nams_info, uint64_t* global_align_info,
                   const StrobemerIndex& index, AlignmentParameters *d_aligner, MappingParameters* d_map_param, IndexParameters *d_index_para,
@@ -289,6 +426,7 @@ void GPU_align_SE(std::vector<neoRcRef> &datas,
                   my_vector<my_pair<int, Hit>> *global_hits_per_ref0s, my_vector<my_pair<int, Hit>> *global_hits_per_ref1s, my_vector<Nam> *global_nams,
                   GPUAlignTmpRes *global_align_res, char *global_align_res_data, uint64_t pre_vec_size,
                   char *d_seq, int *d_len, int *d_pre_sum, char *h_seq, int *h_len, int *h_pre_sum,
+                  SegSortGpuResources& buffers0, SegSortGpuResources& buffers1,
                   int* d_todo_cnt, char* d_query_ptr, char* d_ref_ptr, int* d_query_offset, int* d_ref_offset, const int batch_read_num, const int batch_total_read_len, int rescue_threshold) {
 
     assert(datas.size() <= batch_read_num);
@@ -339,7 +477,7 @@ void GPU_align_SE(std::vector<neoRcRef> &datas,
         int blocks_per_grid = (s_len + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
         gpu_get_randstrobes<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(s_len, total_data_size, l_id, d_pre_sum, d_len, d_seq, d_index_para,
                                                                                    global_randstrobe_sizes, global_hashes_value, global_randstrobes);
-        cudaDeviceSynchronize();
+        cudaStreamSynchronize(ctx.stream);
         gpu_cost1 += GetTime() - t1;
 
         // query database and get hits
@@ -348,13 +486,13 @@ void GPU_align_SE(std::vector<neoRcRef> &datas,
         gpu_get_hits_pre<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(index.bits, index.filter_cutoff, d_map_param->rescue_cutoff, d_randstrobes, index.randstrobes.size(), d_randstrobe_start_indices,
                                                                                 s_len, d_index_para, global_hits_num, global_randstrobes,
                                                                                 global_hits_per_ref0s, global_hits_per_ref1s);
-        cudaDeviceSynchronize();
+        cudaStreamSynchronize(ctx.stream);
 
         blocks_per_grid = (s_len + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
         gpu_get_hits_after<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(index.bits, index.filter_cutoff, d_map_param->rescue_cutoff, d_randstrobes, index.randstrobes.size(), d_randstrobe_start_indices,
                                                                                   s_len, d_index_para, global_hits_num, global_randstrobes,
                                                                                   global_hits_per_ref0s, global_hits_per_ref1s);
-        cudaDeviceSynchronize();
+        cudaStreamSynchronize(ctx.stream);
         gpu_cost2 += GetTime() - t1;
 
         // reads which pass the filter, normal mode
@@ -369,17 +507,21 @@ void GPU_align_SE(std::vector<neoRcRef> &datas,
         gpu_init1 += GetTime() - t1;
 
         t1 = GetTime();
-        blocks_per_grid = (todo_cnt + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-        gpu_sort_hits<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(todo_cnt, global_hits_per_ref0s, global_hits_per_ref1s, global_todo_ids);
-        cudaDeviceSynchronize();
+        auto sort_res0 = sort_all_hits_with_cub(todo_cnt, global_hits_per_ref0s, global_todo_ids, ctx.stream, buffers0,
+                                                &gpu_cost3_1, &gpu_cost3_2, &gpu_cost3_3, &gpu_cost3_4);
+        auto sort_res1 = sort_all_hits_with_cub(todo_cnt, global_hits_per_ref1s, global_todo_ids, ctx.stream, buffers1,
+                                                &gpu_cost3_1, &gpu_cost3_2, &gpu_cost3_3, &gpu_cost3_4);
+        cudaStreamSynchronize(ctx.stream);
         gpu_cost3 += GetTime() - t1;
 
         t1 = GetTime();
         blocks_per_grid = (todo_cnt + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-        gpu_merge_hits_get_nams<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(todo_cnt, d_index_para, global_nams_info,
-                                                                                       global_hits_per_ref0s, global_hits_per_ref1s,
-                                                                                       global_nams, global_todo_ids);
-        cudaDeviceSynchronize();
+        gpu_merge_hits_get_nams_seg<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(todo_cnt, d_index_para, global_nams_info,
+                                                                                           global_hits_per_ref0s, global_hits_per_ref1s,
+                                                                                           sort_res0.first, sort_res0.second,
+                                                                                           sort_res1.first, sort_res1.second,
+                                                                                           global_nams, global_todo_ids);
+        cudaStreamSynchronize(ctx.stream);
         gpu_cost4 += GetTime() - t1;
 
         t1 = GetTime();
@@ -397,26 +539,226 @@ void GPU_align_SE(std::vector<neoRcRef> &datas,
         gpu_rescue_get_hits<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(index.bits, index.filter_cutoff, d_map_param->rescue_cutoff, d_randstrobes, index.randstrobes.size(), d_randstrobe_start_indices,
                                                                                    todo_cnt, d_index_para, global_hits_num, global_randstrobes,
                                                                                    global_hits_per_ref0s, global_hits_per_ref1s, global_todo_ids, rescue_threshold);
-        cudaDeviceSynchronize();
+        cudaStreamSynchronize(ctx.stream);
+        gpu_cost5 += GetTime() - t1;
+
+        t1 = GetTime();
+        auto rescue_sort_res0 = sort_all_hits_with_cub(todo_cnt, global_hits_per_ref0s, global_todo_ids, ctx.stream, buffers0,
+                                                       &gpu_cost6_1, &gpu_cost6_2, &gpu_cost6_3, &gpu_cost6_4);
+        auto rescue_sort_res1 = sort_all_hits_with_cub(todo_cnt, global_hits_per_ref1s, global_todo_ids, ctx.stream, buffers1,
+                                                       &gpu_cost6_1, &gpu_cost6_2, &gpu_cost6_3, &gpu_cost6_4);
+        cudaStreamSynchronize(ctx.stream);
+        gpu_cost6 += GetTime() - t1;
+
+        t1 = GetTime();
+        blocks_per_grid = (todo_cnt + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        gpu_rescue_merge_hits_get_nams_seg<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(todo_cnt, d_index_para, global_nams_info,
+                                                                                                  global_hits_per_ref0s, global_hits_per_ref1s,
+                                                                                                  rescue_sort_res0.first, rescue_sort_res0.second,
+                                                                                                  rescue_sort_res1.first, rescue_sort_res1.second,
+                                                                                                  global_nams, global_todo_ids);
+        cudaStreamSynchronize(ctx.stream);
+        gpu_cost7 += GetTime() - t1;
+
+        t1 = GetTime();
+        auto nam_sort_res = sort_nams_by_score_with_cub(s_len, global_nams, global_todo_ids, ctx.stream, buffers0, &gpu_cost8_1, &gpu_cost8_2, &gpu_cost8_3, &gpu_cost8_4);
+        cudaStreamSynchronize(ctx.stream);
+        gpu_cost8 += GetTime() - t1;
+
+//        printf("s_len %d, todo_cnt %d, -- %.2f\n", s_len, todo_cnt, 1.0 * todo_cnt / s_len);
+
+        for (int i = 0; i < s_len; i++) global_todo_ids[i] = -1;
+
+        GPUAlignTmpRes* local_align_res_offset = global_align_res + l_id;
+
+        blocks_per_grid = (s_len + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        gpu_pre_align_SE_seg<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(s_len, d_map_param, global_nams, global_todo_ids, local_align_res_offset, nam_sort_res.first, nam_sort_res.second);
+        cudaStreamSynchronize(ctx.stream);
+        gpu_cost9 += GetTime() - t1;
+
+        t1 = GetTime();
+        char* base_ptr = global_align_res_data + global_data_offset;
+        for (int i = 0; i < s_len; i++) {
+            int type = 4;
+            if (global_nams[i].length == 0) type = 0;
+            if (global_todo_ids[i] == -1 || global_todo_ids[i] > d_map_param->max_tries) {
+                printf("global_todo_ids[%d] %d, type %d\n", i, global_todo_ids[i], type);
+                assert(false);
+            }
+            int tries_num = global_todo_ids[i] * 2;
+            if (tries_num > MAX_TRIES_LIMIT) tries_num = MAX_TRIES_LIMIT;
+            if (type == 0) tries_num = 0;
+
+            // Use the offset pointer to configure the result structure for the current read.
+            GPUAlignTmpRes *tmp = local_align_res_offset + i;
+            tmp->type = type;
+            tmp->mapq1 = 0, tmp->mapq2 = 0, tmp->type4_loop_size = 0;
+
+            // Sub-allocate from the scratchpad buffer.
+            tmp->is_extend_seed.data = (int*)base_ptr; tmp->is_extend_seed.length = 0; tmp->is_extend_seed.capacity = tries_num; base_ptr += tries_num * sizeof(int);
+            tmp->consistent_nam.data = (int*)base_ptr; tmp->consistent_nam.length = 0; tmp->consistent_nam.capacity = tries_num; base_ptr += tries_num * sizeof(int);
+            tmp->is_read1.data = (int*)base_ptr; tmp->is_read1.length = 0; tmp->is_read1.capacity = tries_num; base_ptr += tries_num * sizeof(int);
+            tmp->type4_nams.data = (Nam*)base_ptr; tmp->type4_nams.length = 0; tmp->type4_nams.capacity = tries_num; base_ptr += tries_num * sizeof(Nam);
+            tmp->todo_nams.data = (Nam*)base_ptr; tmp->todo_nams.length = 0; tmp->todo_nams.capacity = tries_num; base_ptr += tries_num * sizeof(Nam);
+            tmp->done_align.data = (int*)base_ptr; tmp->done_align.length = 0; tmp->done_align.capacity = tries_num; base_ptr += tries_num * sizeof(int);
+            tmp->align_res.data = (GPUAlignment*)base_ptr; tmp->align_res.length = 0; tmp->align_res.capacity = tries_num; base_ptr += tries_num * sizeof(GPUAlignment);
+            tmp->cigar_info.data = (CigarData*)base_ptr; tmp->cigar_info.length = 0; tmp->cigar_info.capacity = tries_num; base_ptr += tries_num * sizeof(CigarData);
+            tmp->todo_infos.data = (TODOInfos*)base_ptr; tmp->todo_infos.length = 0; tmp->todo_infos.capacity = tries_num; base_ptr += tries_num * sizeof(TODOInfos);
+        }
+        global_data_offset = base_ptr - global_align_res_data;
+        gpu_init3 += GetTime() - t1;
+
+        blocks_per_grid = (s_len + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        gpu_align_SE_seg<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(s_len, total_data_size, l_id, d_index_para, global_align_info, d_aligner, d_pre_sum, d_len, d_seq,
+                                                                                global_references, d_map_param, global_nams, local_align_res_offset,
+                                                                                d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset,
+                                                                                nam_sort_res.first, nam_sort_res.second);
+        cudaStreamSynchronize(ctx.stream);
+        gpu_cost10 += GetTime() - t1;
+    }
+    tot_cost += GetTime() - t0;
+}
+
+
+
+void GPU_align_SE_init(std::vector<neoRcRef> &datas,
+                  ThreadContext& ctx, std::vector<AlignTmpRes> &align_tmp_results,
+                  uint64_t* global_hits_num, uint64_t* global_nams_info, uint64_t* global_align_info,
+                  const StrobemerIndex& index, AlignmentParameters *d_aligner, MappingParameters* d_map_param, IndexParameters *d_index_para,
+                  GPUReferences *global_references, RefRandstrobe *d_randstrobes, my_bucket_index_t *d_randstrobe_start_indices,
+                  my_vector<QueryRandstrobe> *global_randstrobes, int *global_todo_ids, int *global_randstrobe_sizes, uint64_t * global_hashes_value,
+                  my_vector<my_pair<int, Hit>> *global_hits_per_ref0s, my_vector<my_pair<int, Hit>> *global_hits_per_ref1s, my_vector<Nam> *global_nams,
+                  GPUAlignTmpRes *global_align_res, char *global_align_res_data, uint64_t pre_vec_size,
+                  char *d_seq, int *d_len, int *d_pre_sum, char *h_seq, int *h_len, int *h_pre_sum,
+                  SegSortGpuResources& buffers0, SegSortGpuResources& buffers1,
+                  int* d_todo_cnt, char* d_query_ptr, char* d_ref_ptr, int* d_query_offset, int* d_ref_offset, const int batch_read_num, const int batch_total_read_len, int rescue_threshold) {
+
+    assert(datas.size() <= batch_read_num);
+
+    double t0, t1;
+    t0 = GetTime();
+
+    // pack read on host
+    t1 = GetTime();
+    uint64_t tot_len = 0;
+    h_pre_sum[0] = 0;
+    int total_data_size = datas.size();
+    for (int i = 0; i < total_data_size * 2; i++) {
+        int read_id = i % total_data_size;
+        if (i < total_data_size) { // read seq
+            h_len[i] = datas[read_id].read.lseq;
+            h_pre_sum[i + 1] = h_pre_sum[i] + h_len[i];
+            char* seq_ptr = (char*)datas[read_id].read.base + datas[read_id].read.pseq;
+            memcpy(h_seq + h_pre_sum[i], seq_ptr, h_len[i]);
+        } else { // read rc
+            h_len[i] = datas[read_id].read.lseq;
+            h_pre_sum[i + 1] = h_pre_sum[i] + h_len[i];
+            char* seq_ptr = datas[read_id].rc;
+            memcpy(h_seq + h_pre_sum[i], seq_ptr, h_len[i]);
+        }
+    }
+    tot_len = h_pre_sum[total_data_size * 2];
+    assert(tot_len <= batch_total_read_len * 2);
+    gpu_copy1 += GetTime() - t1;
+
+    t1 = GetTime();
+    cudaMemcpy(d_seq, h_seq, tot_len, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_len, h_len, total_data_size * sizeof(int) * 2 + 1, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_pre_sum, h_pre_sum, total_data_size * sizeof(int) * 2 + 1, cudaMemcpyHostToDevice);
+    gpu_copy2 += GetTime() - t1;
+
+    const int small_batch_size = (batch_read_num / SMALL_CHUNK_FAC > 0) ? (batch_read_num / SMALL_CHUNK_FAC) : 1;
+    uint64_t global_data_offset = 0;
+
+    for (int l_id = 0; l_id < total_data_size; l_id += small_batch_size) {
+        int r_id = l_id + small_batch_size;
+        if (r_id > total_data_size) r_id = total_data_size;
+        int s_len = r_id - l_id; // Current small batch size
+        if (s_len <= 0) continue;
+
+        // get randstrobes
+        t1 = GetTime();
+        int blocks_per_grid = (s_len + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        gpu_get_randstrobes<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(s_len, total_data_size, l_id, d_pre_sum, d_len, d_seq, d_index_para,
+                                                                                   global_randstrobe_sizes, global_hashes_value, global_randstrobes);
+        cudaStreamSynchronize(ctx.stream);
+        gpu_cost1 += GetTime() - t1;
+
+        // query database and get hits
+        t1 = GetTime();
+        blocks_per_grid = (s_len + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        gpu_get_hits_pre<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(index.bits, index.filter_cutoff, d_map_param->rescue_cutoff, d_randstrobes, index.randstrobes.size(), d_randstrobe_start_indices,
+                                                                                s_len, d_index_para, global_hits_num, global_randstrobes,
+                                                                                global_hits_per_ref0s, global_hits_per_ref1s);
+        cudaStreamSynchronize(ctx.stream);
+
+        blocks_per_grid = (s_len + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        gpu_get_hits_after<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(index.bits, index.filter_cutoff, d_map_param->rescue_cutoff, d_randstrobes, index.randstrobes.size(), d_randstrobe_start_indices,
+                                                                                  s_len, d_index_para, global_hits_num, global_randstrobes,
+                                                                                  global_hits_per_ref0s, global_hits_per_ref1s);
+        cudaStreamSynchronize(ctx.stream);
+        gpu_cost2 += GetTime() - t1;
+
+        // reads which pass the filter, normal mode
+        t1 = GetTime();
+        int todo_cnt = 0;
+        for (int i = 0; i < s_len; i++) {
+            if (global_randstrobes[i].data == nullptr) {
+                global_todo_ids[todo_cnt] = i;
+                todo_cnt++;
+            }
+        }
+        gpu_init1 += GetTime() - t1;
+
+        t1 = GetTime();
+        blocks_per_grid = (todo_cnt + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        gpu_sort_hits<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(todo_cnt, global_hits_per_ref0s, global_hits_per_ref1s, global_todo_ids);
+        cudaStreamSynchronize(ctx.stream);
+        gpu_cost3 += GetTime() - t1;
+
+        t1 = GetTime();
+        blocks_per_grid = (todo_cnt + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        gpu_merge_hits_get_nams<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(todo_cnt, d_index_para, global_nams_info,
+                                                                                       global_hits_per_ref0s, global_hits_per_ref1s,
+                                                                                       global_nams, global_todo_ids);
+        cudaStreamSynchronize(ctx.stream);
+        gpu_cost4 += GetTime() - t1;
+
+        t1 = GetTime();
+        todo_cnt = 0;
+        for (int i = 0; i < s_len; i++) {
+            if (global_randstrobes[i].data != nullptr) {
+                global_todo_ids[todo_cnt] = i;
+                todo_cnt++;
+            }
+        }
+        gpu_init2 += GetTime() - t1;
+
+        t1 = GetTime();
+        blocks_per_grid = (todo_cnt + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        gpu_rescue_get_hits<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(index.bits, index.filter_cutoff, d_map_param->rescue_cutoff, d_randstrobes, index.randstrobes.size(), d_randstrobe_start_indices,
+                                                                                   todo_cnt, d_index_para, global_hits_num, global_randstrobes,
+                                                                                   global_hits_per_ref0s, global_hits_per_ref1s, global_todo_ids, rescue_threshold);
+        cudaStreamSynchronize(ctx.stream);
         gpu_cost5 += GetTime() - t1;
 
         t1 = GetTime();
         blocks_per_grid = (todo_cnt + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
         gpu_rescue_sort_hits<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(todo_cnt, global_hits_per_ref0s, global_hits_per_ref1s, global_todo_ids);
-        cudaDeviceSynchronize();
+        cudaStreamSynchronize(ctx.stream);
         gpu_cost6 += GetTime() - t1;
 
         t1 = GetTime();
         blocks_per_grid = (todo_cnt + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
         gpu_rescue_merge_hits_get_nams<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(todo_cnt, d_index_para, global_nams_info,
                                                                                               global_hits_per_ref0s, global_hits_per_ref1s, global_nams, global_todo_ids);
-        cudaDeviceSynchronize();
+        cudaStreamSynchronize(ctx.stream);
         gpu_cost7 += GetTime() - t1;
 
         t1 = GetTime();
         blocks_per_grid = (s_len + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
         gpu_sort_nams<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(s_len, global_nams, d_map_param, 1);
-        cudaDeviceSynchronize();
+        cudaStreamSynchronize(ctx.stream);
         gpu_cost8 += GetTime() - t1;
 
 //        printf("s_len %d, todo_cnt %d, -- %.2f\n", s_len, todo_cnt, 1.0 * todo_cnt / s_len);
@@ -429,7 +771,7 @@ void GPU_align_SE(std::vector<neoRcRef> &datas,
         gpu_pre_align_SE<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(s_len, d_index_para, global_align_info, d_aligner,
                                                                                 global_references, d_map_param, global_nams, global_todo_ids, local_align_res_offset,
                                                                                 d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset);
-        cudaDeviceSynchronize();
+        cudaStreamSynchronize(ctx.stream);
         gpu_cost9 += GetTime() - t1;
 
         t1 = GetTime();
@@ -468,7 +810,7 @@ void GPU_align_SE(std::vector<neoRcRef> &datas,
         gpu_align_SE<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(s_len, total_data_size, l_id, d_index_para, global_align_info, d_aligner, d_pre_sum, d_len, d_seq,
                                                                             global_references, d_map_param, global_nams, global_todo_ids, local_align_res_offset,
                                                                             d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset);
-        cudaDeviceSynchronize();
+        cudaStreamSynchronize(ctx.stream);
         gpu_cost10 += GetTime() - t1;
     }
     tot_cost += GetTime() - t0;
@@ -667,6 +1009,17 @@ void perform_task_async_se_fx_GPU(
     cudaMalloc(&device_ref_ptr, mx_device_ref_size);
 #endif
 
+    SegSortGpuResources buffers0;
+    SegSortGpuResources buffers1;
+#ifdef use_seg_sort
+    size_t pre_alloc_elements = 1024 * 1024 * chunk_num * 2;
+    size_t max_tasks = batch_read_num * 2;
+    size_t scan_buffer_size = 1024 * 1024;
+    size_t sort_buffer_size = 1024 * 1024 * 8;
+    init_seg_sort_resources(buffers0, pre_alloc_elements, max_tasks, scan_buffer_size, sort_buffer_size, ctx.stream);
+    init_seg_sort_resources(buffers1, pre_alloc_elements, max_tasks, scan_buffer_size, sort_buffer_size, ctx.stream);
+#endif
+
     if (gpu_id == 0) printf("--- todo GPU mem alloc %llu\n", mx_device_query_size + mx_device_ref_size);
 
     int* d_todo_cnt;
@@ -860,7 +1213,7 @@ void perform_task_async_se_fx_GPU(
         cudaMemset(d_todo_cnt, 0, sizeof(int));
         cudaMemset(d_query_offset, 0, sizeof(int));
         cudaMemset(d_ref_offset, 0, sizeof(int));
-        if (!chunk0_datas.empty()) GPU_align_SE(chunk0_datas,
+        if (!chunk0_datas.empty()) REAL_GPU_ALIGN_SE(chunk0_datas,
                                                 ctx,
                                                 align_tmp_results,
                                                 global_hits_num, global_nams_info, global_align_info,
@@ -870,6 +1223,7 @@ void perform_task_async_se_fx_GPU(
                                                 global_hits_per_ref0s, global_hits_per_ref1s, global_nams,
                                                 chunk0_global_align_res, chunk0_global_align_res_data, pre_vec_size,
                                                 d_seq, d_len, d_pre_sum, h_seq, h_len, h_pre_sum,
+                                                buffers0, buffers1,
                                                 d_todo_cnt, device_query_ptr, device_ref_ptr, d_query_offset, d_ref_offset, batch_read_num, batch_total_read_len, rescue_threshold);
         cudaMemcpy(h_todo_cnt, d_todo_cnt, sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemcpy(h_query_offset, d_query_offset, sizeof(int), cudaMemcpyDeviceToHost);
@@ -1173,7 +1527,7 @@ void perform_task_async_se_fx_GPU(
             cudaMemset(d_todo_cnt, 0, sizeof(int));
             cudaMemset(d_query_offset, 0, sizeof(int));
             cudaMemset(d_ref_offset, 0, sizeof(int));
-            if (!chunk1_datas.empty()) GPU_align_SE(chunk1_datas,
+            if (!chunk1_datas.empty()) REAL_GPU_ALIGN_SE(chunk1_datas,
                                                     ctx,
                                                     align_tmp_results,
                                                     global_hits_num, global_nams_info, global_align_info,
@@ -1183,6 +1537,7 @@ void perform_task_async_se_fx_GPU(
                                                     global_hits_per_ref0s, global_hits_per_ref1s, global_nams,
                                                     chunk1_global_align_res, chunk1_global_align_res_data, pre_vec_size,
                                                     d_seq, d_len, d_pre_sum, h_seq, h_len, h_pre_sum,
+                                                    buffers0, buffers1,
                                                     d_todo_cnt, device_query_ptr, device_ref_ptr, d_query_offset, d_ref_offset, batch_read_num, batch_total_read_len, rescue_threshold);
             cudaMemcpy(h_todo_cnt, d_todo_cnt, sizeof(int), cudaMemcpyDeviceToHost);
             cudaMemcpy(h_query_offset, d_query_offset, sizeof(int), cudaMemcpyDeviceToHost);
@@ -1439,8 +1794,15 @@ void perform_task_async_se_fx_GPU(
     cudaFree(global_nams_info);
     cudaFree(global_align_info);
 
+#ifdef use_device_mem
     cudaFree(device_query_ptr);
     cudaFree(device_ref_ptr);
+#endif
+
+#ifdef use_seg_sort
+    free_seg_sort_resources(buffers0, ctx.stream);
+    free_seg_sort_resources(buffers1, ctx.stream);
+#endif
 
     cudaFree(d_todo_cnt);
     cudaFree(d_query_offset);

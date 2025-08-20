@@ -1458,7 +1458,8 @@ my_pair<int*, int*> sort_all_hits_with_bb_segsort(
 __global__ void get_nam_sizes_kernel(int num_tasks, my_vector<Nam>* nams_per_task, int* global_todo_ids, int* task_sizes) {
     int global_id = blockIdx.x * blockDim.x + threadIdx.x;
     if (global_id < num_tasks) {
-        int real_id = global_todo_ids[global_id];
+//        int real_id = global_todo_ids[global_id];
+        int real_id = global_id;
         task_sizes[global_id] = nams_per_task[real_id].size();
     }
 }
@@ -1473,7 +1474,8 @@ __global__ void marshal_data_for_nam_sort_kernel(
 ) {
     int global_id = blockIdx.x * blockDim.x + threadIdx.x;
     if (global_id < num_tasks) {
-        int real_id = global_todo_ids[global_id];
+//        int real_id = global_todo_ids[global_id];
+        int real_id = global_id;
         const my_vector<Nam>& nams = nams_per_task[real_id];
         int task_start_offset = seg_offsets[global_id];
 
@@ -1523,7 +1525,8 @@ __global__ void gather_sorted_nams_kernel(
     int global_id = blockIdx.x * blockDim.x + threadIdx.x;
     if (global_id >= num_tasks) return;
 
-    int real_id = global_todo_ids[global_id];
+//    int real_id = global_todo_ids[global_id];
+    int real_id = global_id;
     const my_vector<Nam>& nams = nams_per_task[real_id];
     int task_start = seg_offsets[global_id];
     int num_nams_in_task = seg_offsets[global_id + 1] - task_start;
@@ -1544,7 +1547,8 @@ __global__ void scatter_sorted_nams_kernel(
     int global_id = blockIdx.x * blockDim.x + threadIdx.x;
     if (global_id >= num_tasks) return;
 
-    int real_id = global_todo_ids[global_id];
+//    int real_id = global_todo_ids[global_id];
+    int real_id = global_id;
     my_vector<Nam>& nams = nams_per_task[real_id];
     int task_start = seg_offsets[global_id];
     int num_nams_in_task = seg_offsets[global_id + 1] - task_start;
@@ -1744,7 +1748,7 @@ void sort_nams_by_score_in_place_with_cub_optimized(
             todo_cnt, nams_per_task, global_todo_ids, buffers.seg_offsets_ptr, buffers.key_ptr, buffers.nam_temp_ptr
     );
     (cudaStreamSynchronize(stream));
-    *gpu_cost3 += GetTime() - t0;
+    *gpu_cost2 += GetTime() - t0;
 
     t0 = GetTime();
     cub::DoubleBuffer<int> d_keys_buffer(buffers.key_ptr, buffers.key_alt_ptr);
