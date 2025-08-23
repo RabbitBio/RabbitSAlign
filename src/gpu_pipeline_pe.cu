@@ -3,6 +3,9 @@
 #include "gpu_merging.h"
 #include "gpu_alignment.h"
 #include <cuda_runtime.h>
+#include <thrust/reduce.h>
+#include <thrust/scan.h>
+#include <thrust/device_vector.h>
 
 __device__ void gpu_rescue_read_part_seg(
         int flag,
@@ -480,8 +483,7 @@ void GPU_align_PE_read_last(
             if (r1_r2 || r2_r1) {
                 // Treat a1/a2 as a pair
                 float x = std::abs(a1.first.ref_start - a2.first.ref_start);
-                combined_score = (double) a1.first.score + (double) a2.first.score +
-                                 std::max(-20.0f + 0.001f, log(GPU_normal_pdf(x, mu, sigma)));
+                combined_score = (double) a1.first.score + (double) a2.first.score + std::max(-20.0f + 0.001f, log(GPU_normal_pdf(x, mu, sigma)));
                 //* (1 - s2 / s1) * min_matches * log(s1);
             } else {
                 // Treat a1/a2 as two single-end reads
@@ -496,9 +498,8 @@ void GPU_align_PE_read_last(
         assert(pos == align_tmp_res.todo_nams.size());
 
         // Finally, add highest scores of both mates as individually mapped
-        double combined_score =
-                (double) a1_indv_max.first.score + (double) a2_indv_max.first.score -
-                20;  // 20 corresponds to  a value of log( GPU_normal_pdf(x, mu, sigma ) ) of more than 5 stddevs away (for most reasonable values of stddev)
+        double combined_score = (double) a1_indv_max.first.score + (double) a2_indv_max.first.score - 20;
+        // 20 corresponds to  a value of log( GPU_normal_pdf(x, mu, sigma ) ) of more than 5 stddevs away (for most reasonable values of stddev)
         GPUScoredAlignmentPair aln_tuple{combined_score, a1_indv_max, a2_indv_max};
         high_scores.push_back(aln_tuple);
 
@@ -1420,7 +1421,7 @@ __device__ void align_PE_part4(
     my_vector<gpu_NamPair> joint_nam_scores(my_max(max_tries, nams1.size() + nams2.size()));
     gpu_get_best_scoring_nam_pairs_optimized(joint_nam_scores, nams1, nams2, mu, sigma, max_tries);
 //    gpu_get_best_scoring_nam_pairs(joint_nam_scores, nams1, nams2, mu, sigma, max_tries);
-    //if (joint_nam_scores.size() > max_tries) joint_nam_scores.length = max_tries;
+//    if (joint_nam_scores.size() > max_tries) joint_nam_scores.length = max_tries;
 
     int nams1_len = nams1.size();
     int nams2_len = nams2.size();
@@ -1510,6 +1511,36 @@ __device__ void align_PE_part4(
         }
     }
     return;
+}
+
+__global__ void gpu_print_nams(
+        int num_tasks,
+        my_vector<Nam>* global_nams,
+        int* global_todo_ids
+        ) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id) return;
+    for (int i = 0; i < num_tasks; i++) {
+//        int real_id = global_todo_ids[i];
+        int real_id = i;
+        printf("Task %d: Type %d, num %d\n", i, real_id, global_nams[real_id].size());
+        for (int j = 0; j < global_nams[real_id].size(); j++) {
+            Nam nam = global_nams[real_id][j];
+            printf("Nam { "
+                   "query_start=%d, query_end=%d, query_prev_hit_startpos=%d, "
+                   "ref_start=%d, ref_end=%d, ref_prev_hit_startpos=%d, "
+                   "n_hits=%d, ref_id=%d, score=%.2f }\n",
+                   nam.query_start,
+                   nam.query_end,
+                   nam.query_prev_hit_startpos,
+                   nam.ref_start,
+                   nam.ref_end,
+                   nam.ref_prev_hit_startpos,
+                   nam.n_hits,
+                   nam.ref_id,
+                   nam.score);
+        }
+    }
 }
 
 __global__ void gpu_pre_cal_type_seg(
@@ -1960,6 +1991,114 @@ __global__ void gpu_align_PE4(
 #define REAL_GPU_ALIGN_PE GPU_align_PE_init
 #endif
 
+static const int max_sum_size = 1500000;
+thread_local int* d_each_ref_info0 = nullptr;
+thread_local int* d_each_ref_info1 = nullptr;
+thread_local int* d_real_nams_range0 = nullptr;
+thread_local int* d_real_nams_range1 = nullptr;
+thread_local my_vector<Nam>* d_nams_temp0 = nullptr;
+thread_local my_vector<Nam>* d_nams_temp1 = nullptr;
+thread_local my_vector<int>* d_each_ref_size0 = nullptr;
+thread_local my_vector<int>* d_each_ref_size1 = nullptr;
+
+void init_static_gpu_buffers(int max_todo_cnt) {
+    cudaError_t err;
+    if (d_each_ref_info0 == nullptr) {
+        err = cudaMalloc(&d_each_ref_info0, sizeof(int) * max_sum_size * 2);
+        if (err != cudaSuccess) {
+            printf("CUDA error: d_each_ref_info0 malloc failed: %s\n", cudaGetErrorString(err));
+            exit(1);
+        }
+    }
+    if (d_each_ref_info1 == nullptr) {
+        err = cudaMalloc(&d_each_ref_info1, sizeof(int) * max_sum_size * 2);
+        if (err != cudaSuccess) {
+            printf("CUDA error: d_each_ref_info1 malloc failed: %s\n", cudaGetErrorString(err));
+            exit(1);
+        }
+    }
+    if (d_real_nams_range0 == nullptr) {
+        err = cudaMalloc(&d_real_nams_range0, sizeof(int) * max_todo_cnt * 2);
+        if (err != cudaSuccess) {
+            printf("CUDA error: d_real_nams_range0 malloc failed: %s\n", cudaGetErrorString(err));
+            exit(1);
+        }
+    }
+    if (d_real_nams_range1 == nullptr) {
+        err = cudaMalloc(&d_real_nams_range1, sizeof(int) * max_todo_cnt * 2);
+        if (err != cudaSuccess) {
+            printf("CUDA error: d_real_nams_range1 malloc failed: %s\n", cudaGetErrorString(err));
+            exit(1);
+        }
+    }
+    if (d_nams_temp0 == nullptr) {
+        err = cudaMalloc(&d_nams_temp0, max_sum_size * sizeof(my_vector<Nam>));
+        if (err != cudaSuccess) {
+            printf("CUDA error: d_nams_temp0 malloc failed: %s\n", cudaGetErrorString(err));
+            exit(1);
+        }
+    }
+    if (d_nams_temp1 == nullptr) {
+        err = cudaMalloc(&d_nams_temp1, max_sum_size * sizeof(my_vector<Nam>));
+        if (err != cudaSuccess) {
+            printf("CUDA error: d_nams_temp1 malloc failed: %s\n", cudaGetErrorString(err));
+            exit(1);
+        }
+    }
+    if (d_each_ref_size0 == nullptr) {
+        err = cudaMalloc(&d_each_ref_size0, max_todo_cnt * 2 * sizeof(my_vector<int>));
+        if (err != cudaSuccess) {
+            printf("CUDA error: d_each_ref_size0 malloc failed: %s\n", cudaGetErrorString(err));
+            exit(1);
+        }
+    }
+    if (d_each_ref_size1 == nullptr) {
+        err = cudaMalloc(&d_each_ref_size1, max_todo_cnt * 2 * sizeof(my_vector<int>));
+        if (err != cudaSuccess) {
+            printf("CUDA error: d_each_ref_size1 malloc failed: %s\n", cudaGetErrorString(err));
+            exit(1);
+        }
+    }
+}
+
+__global__ void gpu_compute_sum_size(int todo_cnt, int* global_todo_ids, my_vector<int>* d_each_ref_size0, my_vector<int>* d_each_ref_size1, int* d_sum_size0_per_read, int* d_sum_size1_per_read) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id < todo_cnt) {
+        int real_id = global_todo_ids[id];
+        d_sum_size0_per_read[id] = d_each_ref_size0[real_id].length;
+        d_sum_size1_per_read[id] = d_each_ref_size1[real_id].length;
+    }
+}
+
+__global__ void gpu_build_each_ref_info(int todo_cnt, int* global_todo_ids, my_vector<int>* global_each_ref_size, int* d_each_ref_info, int* d_ref_prefix) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id < todo_cnt) {
+        int real_id = global_todo_ids[id];
+        int offset = d_ref_prefix[id];
+        for (int j = 0; j < global_each_ref_size[real_id].length; j++) {
+            d_each_ref_info[(offset + j) * 2] = real_id;
+            d_each_ref_info[(offset + j) * 2 + 1] = j;
+        }
+    }
+}
+
+__global__ void gpu_extract_nams_lengths(int sum_size, my_vector<Nam>* nams_temp, int* d_lengths) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id < sum_size) {
+        d_lengths[id] = nams_temp[id].length;
+    }
+}
+
+__global__ void gpu_build_nams_ranges(int todo_cnt, int* d_ref_prefix0, int* d_ref_prefix1, int* d_sum_size0_per_read, int* d_sum_size1_per_read, int* d_real_nams_range0, int* d_real_nams_range1) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id < todo_cnt) {
+        d_real_nams_range0[id * 2] = d_ref_prefix0[id]; // start0
+        d_real_nams_range0[id * 2 + 1] = d_ref_prefix0[id] + d_sum_size0_per_read[id]; // end0
+        d_real_nams_range1[id * 2] = d_ref_prefix1[id]; // start1
+        d_real_nams_range1[id * 2 + 1] = d_ref_prefix1[id] + d_sum_size1_per_read[id]; // end1
+    }
+}
+
 void GPU_align_PE_seg(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &data2s,
                   ThreadContext& ctx, std::vector<AlignTmpRes> &align_tmp_results,
                   uint64_t* global_hits_num, uint64_t* global_nams_info, uint64_t* global_align_info,
@@ -2388,11 +2527,145 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
 
         // merge hits to NAMs
         t1 = GetTime();
+
+//        blocks_per_grid = (todo_cnt + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+//        gpu_merge_hits_get_nams<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(todo_cnt, d_index_para, global_nams_info,
+//                                                                                        global_hits_per_ref0s, global_hits_per_ref1s,
+//                                                                                        global_nams, global_todo_ids);
+//        cudaStreamSynchronize(ctx.stream);
+
+
+        double t2 = GetTime();
+        init_static_gpu_buffers(batch_read_num * 2);
         blocks_per_grid = (todo_cnt + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-        gpu_merge_hits_get_nams<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(todo_cnt, d_index_para, global_nams_info,
-                                                                                        global_hits_per_ref0s, global_hits_per_ref1s,
-                                                                                        global_nams, global_todo_ids);
+        gpu_merge_hits_get_nams_1<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(todo_cnt, d_index_para, global_nams_info,
+                                                                                         global_hits_per_ref0s, global_hits_per_ref1s,
+                                                                                         d_each_ref_size0, d_each_ref_size1, global_todo_ids);
         cudaStreamSynchronize(ctx.stream);
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            printf("CUDA error: gpu_merge_hits_get_nams_1 failed: %s\n", cudaGetErrorString(err));
+            exit(1);
+        }
+        gpu_cost4_1 += GetTime() - t2;
+
+        t2 = GetTime();
+        thrust::device_vector<int> d_sum_size0_per_read(todo_cnt);
+        thrust::device_vector<int> d_sum_size1_per_read(todo_cnt);
+        blocks_per_grid = (todo_cnt + THREADS_PER_BLOCK2 - 1) / THREADS_PER_BLOCK2;
+        gpu_compute_sum_size<<<blocks_per_grid, THREADS_PER_BLOCK2, 0, ctx.stream>>>(todo_cnt, global_todo_ids, d_each_ref_size0, d_each_ref_size1,
+                                                                                    thrust::raw_pointer_cast(d_sum_size0_per_read.data()),
+                                                                                    thrust::raw_pointer_cast(d_sum_size1_per_read.data()));
+        cudaStreamSynchronize(ctx.stream);
+        err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            printf("CUDA error: gpu_compute_sum_size failed: %s\n", cudaGetErrorString(err));
+            exit(1);
+        }
+        int sum_size0 = thrust::reduce(d_sum_size0_per_read.begin(), d_sum_size0_per_read.end(), 0, thrust::plus<int>());
+        int sum_size1 = thrust::reduce(d_sum_size1_per_read.begin(), d_sum_size1_per_read.end(), 0, thrust::plus<int>());
+
+        if (sum_size0 > max_sum_size || sum_size1 > max_sum_size) {
+            printf("Error: sum_size0 (%d) or sum_size1 (%d) exceeds max_sum_size (%d)\n", sum_size0, sum_size1, max_sum_size);
+            exit(1);
+        }
+        gpu_cost4_2 += GetTime() - t2;
+
+        t2 = GetTime();
+        thrust::device_vector<int> d_ref_prefix0(todo_cnt);
+        thrust::device_vector<int> d_ref_prefix1(todo_cnt);
+        thrust::exclusive_scan(d_sum_size0_per_read.begin(), d_sum_size0_per_read.end(), d_ref_prefix0.begin(), 0, thrust::plus<int>());
+        thrust::exclusive_scan(d_sum_size1_per_read.begin(), d_sum_size1_per_read.end(), d_ref_prefix1.begin(), 0, thrust::plus<int>());
+
+        blocks_per_grid = (todo_cnt + THREADS_PER_BLOCK2 - 1) / THREADS_PER_BLOCK2;
+        gpu_build_each_ref_info<<<blocks_per_grid, THREADS_PER_BLOCK2, 0, ctx.stream>>>(todo_cnt, global_todo_ids, d_each_ref_size0,
+                                                                                       d_each_ref_info0, thrust::raw_pointer_cast(d_ref_prefix0.data()));
+        cudaStreamSynchronize(ctx.stream);
+        err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            printf("CUDA error: gpu_build_each_ref_info (ref0) failed: %s\n", cudaGetErrorString(err));
+            exit(1);
+        }
+        gpu_build_each_ref_info<<<blocks_per_grid, THREADS_PER_BLOCK2, 0, ctx.stream>>>(todo_cnt, global_todo_ids, d_each_ref_size1,
+                                                                                       d_each_ref_info1, thrust::raw_pointer_cast(d_ref_prefix1.data()));
+        cudaStreamSynchronize(ctx.stream);
+        err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            printf("CUDA error: gpu_build_each_ref_info (ref1) failed: %s\n", cudaGetErrorString(err));
+            exit(1);
+        }
+        gpu_cost4_3 += GetTime() - t2;
+
+        t2 = GetTime();
+        blocks_per_grid = (todo_cnt + THREADS_PER_BLOCK2 - 1) / THREADS_PER_BLOCK2;
+        gpu_build_nams_ranges<<<blocks_per_grid, THREADS_PER_BLOCK2, 0, ctx.stream>>>(todo_cnt, thrust::raw_pointer_cast(d_ref_prefix0.data()),
+                                                                                     thrust::raw_pointer_cast(d_ref_prefix1.data()),
+                                                                                     thrust::raw_pointer_cast(d_sum_size0_per_read.data()),
+                                                                                     thrust::raw_pointer_cast(d_sum_size1_per_read.data()),
+                                                                                     d_real_nams_range0, d_real_nams_range1);
+        cudaStreamSynchronize(ctx.stream);
+        err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            printf("CUDA error: gpu_build_nams_ranges failed: %s\n", cudaGetErrorString(err));
+            exit(1);
+        }
+        gpu_cost4_4 += GetTime() - t2;
+
+        t2 = GetTime();
+        cudaMemset(d_nams_temp0, 0, sum_size0 * sizeof(my_vector<Nam>));
+        cudaMemset(d_nams_temp1, 0, sum_size1 * sizeof(my_vector<Nam>));
+        err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            printf("CUDA error: cudaMemset for nams_temp failed: %s\n", cudaGetErrorString(err));
+            exit(1);
+        }
+        gpu_cost4_5 += GetTime() - t2;
+
+        t2 = GetTime();
+        blocks_per_grid = (sum_size0 + THREADS_PER_BLOCK2 - 1) / THREADS_PER_BLOCK2;
+        gpu_merge_hits_get_nams_2<<<blocks_per_grid, THREADS_PER_BLOCK2, 0, ctx.stream>>>(sum_size0, d_index_para, 0,
+                                                                                          global_hits_per_ref0s,
+                                                                                          d_each_ref_size0,
+                                                                                          d_each_ref_info0,
+                                                                                          d_nams_temp0);
+        cudaStreamSynchronize(ctx.stream);
+        err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            printf("CUDA error: gpu_merge_hits_get_nams_2 (ref0) failed: %s\n", cudaGetErrorString(err));
+            exit(1);
+        }
+        blocks_per_grid = (sum_size1 + THREADS_PER_BLOCK2 - 1) / THREADS_PER_BLOCK2;
+        gpu_merge_hits_get_nams_2<<<blocks_per_grid, THREADS_PER_BLOCK2, 0, ctx.stream>>>(sum_size1, d_index_para, 1,
+                                                                                          global_hits_per_ref1s,
+                                                                                          d_each_ref_size1,
+                                                                                          d_each_ref_info1,
+                                                                                          d_nams_temp1);
+        cudaStreamSynchronize(ctx.stream);
+        err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            printf("CUDA error: gpu_merge_hits_get_nams_2 (ref1) failed: %s\n", cudaGetErrorString(err));
+            exit(1);
+        }
+        gpu_cost4_6 += GetTime() - t2;
+
+        t2 = GetTime();
+        blocks_per_grid = (todo_cnt + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        gpu_merge_hits_get_nams_3<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(todo_cnt, d_index_para, global_hits_per_ref0s, global_hits_per_ref1s,
+                                                                                         d_each_ref_size0, d_each_ref_size1,
+                                                                                         d_real_nams_range0, d_real_nams_range1,
+                                                                                         d_nams_temp0, d_nams_temp1, global_nams, global_todo_ids);
+        cudaStreamSynchronize(ctx.stream);
+        err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            printf("CUDA error: gpu_merge_hits_get_nams_3 failed: %s\n", cudaGetErrorString(err));
+            exit(1);
+        }
+        gpu_cost4_7 += GetTime() - t2;
+
+//        for (int i = 0; i < todo_cnt; i++) printf("nams %d size %d\n", global_todo_ids[i], global_nams[global_todo_ids[i]].size());
+
+//        gpu_print_nams<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(todo_cnt, global_nams, global_todo_ids);
+
         gpu_cost4 += GetTime() - t1;
 
 //        for (int i = 0; i < todo_cnt; i++) {
@@ -2449,6 +2722,9 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         gpu_sort_nams<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(total_tasks, global_nams, d_map_param, 0);
         cudaStreamSynchronize(ctx.stream);
         gpu_cost8 += GetTime() - t1;
+
+//        gpu_print_nams<<<blocks_per_grid, THREADS_PER_BLOCK, 0, ctx.stream>>>(total_tasks, global_nams, global_todo_ids);
+
 
 //        printf("s_len %d, todo_cnt %d, -- %.2f\n", s_len, todo_cnt, 1.0 * todo_cnt / total_tasks);
 
@@ -2664,9 +2940,9 @@ void perform_task_async_pe_fx_GPU(
     t_2 = GetTime();
     uint64_t meta_data_size = 0;
     my_vector<QueryRandstrobe> *global_randstrobes;
-    cudaMallocManaged(&global_randstrobes, batch_read_num * 2  / SMALL_CHUNK_FAC * sizeof(my_vector<QueryRandstrobe>));
+    cudaMallocManaged(&global_randstrobes, batch_read_num * 2 / SMALL_CHUNK_FAC * sizeof(my_vector<QueryRandstrobe>));
     meta_data_size + batch_read_num * 2 * sizeof(my_vector<QueryRandstrobe>);
-    cudaMemset(global_randstrobes, 0, batch_read_num * 2 * sizeof(my_vector<QueryRandstrobe>));
+    cudaMemset(global_randstrobes, 0, batch_read_num * 2 / SMALL_CHUNK_FAC * sizeof(my_vector<QueryRandstrobe>));
     int *global_todo_ids;
     cudaMallocManaged(&global_todo_ids, batch_read_num * 2 * sizeof(int));
     meta_data_size += batch_read_num * 2 * sizeof(int);
@@ -2682,15 +2958,15 @@ void perform_task_async_pe_fx_GPU(
     my_vector<my_pair<int, Hit>> *global_hits_per_ref0s;
     cudaMallocManaged(&global_hits_per_ref0s, batch_read_num * 2 / SMALL_CHUNK_FAC * sizeof(my_vector<my_pair<int, Hit>>));
     meta_data_size += batch_read_num * 2 * sizeof(my_vector<my_pair<int, Hit>>);
-    cudaMemset(global_hits_per_ref0s, 0, batch_read_num * 2 * sizeof(my_vector<my_pair<int, Hit>>));
+    cudaMemset(global_hits_per_ref0s, 0, batch_read_num * 2 / SMALL_CHUNK_FAC * sizeof(my_vector<my_pair<int, Hit>>));
     my_vector<my_pair<int, Hit>> *global_hits_per_ref1s;
     cudaMallocManaged(&global_hits_per_ref1s, batch_read_num * 2 / SMALL_CHUNK_FAC * sizeof(my_vector<my_pair<int, Hit>>));
     meta_data_size += batch_read_num * 2 * sizeof(my_vector<my_pair<int, Hit>>);
-    cudaMemset(global_hits_per_ref1s, 0, batch_read_num * 2 * sizeof(my_vector<my_pair<int, Hit>>));
+    cudaMemset(global_hits_per_ref1s, 0, batch_read_num * 2 / SMALL_CHUNK_FAC * sizeof(my_vector<my_pair<int, Hit>>));
     my_vector<Nam> *global_nams;
     cudaMallocManaged(&global_nams, batch_read_num * 2 / SMALL_CHUNK_FAC * sizeof(my_vector<Nam>));
     meta_data_size += batch_read_num * 2 * sizeof(my_vector<Nam>);
-    cudaMemset(global_nams, 0, batch_read_num * 2 * sizeof(my_vector<Nam>));
+    cudaMemset(global_nams, 0, batch_read_num * 2 / SMALL_CHUNK_FAC * sizeof(my_vector<Nam>));
 
     uint64_t * global_hits_num;
     cudaMallocManaged(&global_hits_num, batch_read_num * 2 * sizeof(uint64_t));
@@ -3630,7 +3906,7 @@ void perform_task_async_pe_fx_GPU(
     std::cout << "get_hits cost (gpu_cost2): " << gpu_cost2 << " s" << std::endl;
     std::cout << "filter normal read cost (gpu_init1): " << gpu_init1 << " s" << std::endl;
     std::cout << "sort_hits cost (gpu_cost3): " << gpu_cost3 << " [" << gpu_cost3_1 << " " << gpu_cost3_2 << " " << gpu_cost3_3 << " " << gpu_cost3_4 << "] " << " s" << std::endl;
-    std::cout << "merge_hits_get_nams cost (gpu_cost4): " << gpu_cost4 << " s" << std::endl;
+    std::cout << "merge_hits_get_nams cost (gpu_cost4): " << gpu_cost4 << " [" << gpu_cost4_1 << " " << gpu_cost4_2 << " " << gpu_cost4_3 << " " << gpu_cost4_4 << " " << gpu_cost4_5 << " " << gpu_cost4_6 << " " << gpu_cost4_7 << "] " << " s" << std::endl;
     std::cout << "filter rescue read cost (gpu_init2): " << gpu_init2 << " s" << std::endl;
     std::cout << "rescue_get_hits cost (gpu_cost5): " << gpu_cost5 << " s" << std::endl;
     std::cout << "rescue_sort_hits cost (gpu_cost6): " << gpu_cost6 << " [" << gpu_cost6_1 << " " << gpu_cost6_2 << " " << gpu_cost6_3 << " " << gpu_cost6_4 << "] " << " s" << std::endl;

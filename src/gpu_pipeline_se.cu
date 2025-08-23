@@ -915,7 +915,7 @@ void perform_task_async_se_fx_GPU(
     my_vector<QueryRandstrobe> *global_randstrobes;
     cudaMallocManaged(&global_randstrobes, batch_read_num / SMALL_CHUNK_FAC * sizeof(my_vector<QueryRandstrobe>));
     meta_data_size + batch_read_num * sizeof(my_vector<QueryRandstrobe>);
-    cudaMemset(global_randstrobes, 0, batch_read_num * sizeof(my_vector<QueryRandstrobe>));
+    cudaMemset(global_randstrobes, 0, batch_read_num / SMALL_CHUNK_FAC * sizeof(my_vector<QueryRandstrobe>));
     int *global_todo_ids;
     cudaMallocManaged(&global_todo_ids, batch_read_num * sizeof(int));
     meta_data_size += batch_read_num * sizeof(int);
@@ -931,15 +931,15 @@ void perform_task_async_se_fx_GPU(
     my_vector<my_pair<int, Hit>> *global_hits_per_ref0s;
     cudaMallocManaged(&global_hits_per_ref0s, batch_read_num / SMALL_CHUNK_FAC * sizeof(my_vector<my_pair<int, Hit>>));
     meta_data_size += batch_read_num * sizeof(my_vector<my_pair<int, Hit>>);
-    cudaMemset(global_hits_per_ref0s, 0, batch_read_num * sizeof(my_vector<my_pair<int, Hit>>));
+    cudaMemset(global_hits_per_ref0s, 0, batch_read_num / SMALL_CHUNK_FAC * sizeof(my_vector<my_pair<int, Hit>>));
     my_vector<my_pair<int, Hit>> *global_hits_per_ref1s;
     cudaMallocManaged(&global_hits_per_ref1s, batch_read_num / SMALL_CHUNK_FAC * sizeof(my_vector<my_pair<int, Hit>>));
     meta_data_size += batch_read_num * sizeof(my_vector<my_pair<int, Hit>>);
-    cudaMemset(global_hits_per_ref1s, 0, batch_read_num * sizeof(my_vector<my_pair<int, Hit>>));
+    cudaMemset(global_hits_per_ref1s, 0, batch_read_num / SMALL_CHUNK_FAC * sizeof(my_vector<my_pair<int, Hit>>));
     my_vector<Nam> *global_nams;
     cudaMallocManaged(&global_nams, batch_read_num / SMALL_CHUNK_FAC * sizeof(my_vector<Nam>));
     meta_data_size += batch_read_num * sizeof(my_vector<Nam>);
-    cudaMemset(global_nams, 0, batch_read_num * sizeof(my_vector<Nam>));
+    cudaMemset(global_nams, 0, batch_read_num / SMALL_CHUNK_FAC * sizeof(my_vector<Nam>));
 
     uint64_t * global_hits_num;
     cudaMallocManaged(&global_hits_num, batch_read_num * sizeof(uint64_t));

@@ -8,7 +8,7 @@
 #include <random>
 #include "gpu_common.h" // Asumiendo que esta cabecera contiene structs como neoRcRef, Nam, etc.
 
-#define use_seg_sort
+//#define use_seg_sort
 
 
 #define RESCUE_THRESHOLD 1000
@@ -16,6 +16,7 @@
 #define SMALL_CHUNK_FAC 1
 
 #define THREADS_PER_BLOCK 1
+#define THREADS_PER_BLOCK2 128
 
 // --- Declaraciones de Variables Globales Externas ---
 extern std::once_flag init_flag_ref[GPU_NUM_MAX];
@@ -48,6 +49,13 @@ extern thread_local double gpu_cost3_2;
 extern thread_local double gpu_cost3_3;
 extern thread_local double gpu_cost3_4;
 extern thread_local double gpu_cost4;
+extern thread_local double gpu_cost4_1;
+extern thread_local double gpu_cost4_2;
+extern thread_local double gpu_cost4_3;
+extern thread_local double gpu_cost4_4;
+extern thread_local double gpu_cost4_5;
+extern thread_local double gpu_cost4_6;
+extern thread_local double gpu_cost4_7;
 extern thread_local double gpu_cost5;
 extern thread_local double gpu_cost6;
 extern thread_local double gpu_cost6_1;

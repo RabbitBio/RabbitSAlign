@@ -568,6 +568,148 @@ __device__ void merge_hits_seg(
     }
 }
 
+__device__ void merge_hits_1(
+        const my_vector<my_pair<int, Hit>>& hits_per_ref,
+        int k,
+        bool is_revcomp,
+        my_vector<int>& each_ref_size
+) {
+    if(hits_per_ref.size() == 0) return;
+
+    int pre_ref_id = hits_per_ref[0].first;
+    int now_ref_num = 1;
+    int offset = 0;
+    for(int i = 1; i < hits_per_ref.size(); i++) {
+        int ref_id = hits_per_ref[i].first;
+        if(ref_id != pre_ref_id) {
+//            assert(ref_id > pre_ref_id);
+            pre_ref_id = ref_id;
+            offset += now_ref_num;
+            each_ref_size.push_back(offset);
+            now_ref_num = 1;
+        } else {
+            now_ref_num++;
+        }
+    }
+    offset += now_ref_num;
+    each_ref_size.push_back(offset);
+}
+
+__device__ void merge_hits_2(
+        const my_pair<int, Hit>* hits,
+        int hits_size,
+        int k,
+        bool is_revcomp,
+        my_vector<Nam>& nams
+) {
+    if(hits_size == 0) return;
+
+    my_vector<Nam> open_nams;
+
+    int ref_id = hits[0].first;
+    for (int j = 0; j < hits_size; j++) {
+        assert(hits[j].first == ref_id);
+    }
+    unsigned int prev_q_start = 0;
+
+    for (int j = 0; j < hits_size; j++) {
+        Hit h = hits[j].second;
+        bool is_added = false;
+        for (int k = 0; k < open_nams.size(); k++) {
+            Nam& o = open_nams[k];
+
+            // Extend NAM
+            if ((o.query_prev_hit_startpos < h.query_start) && (h.query_start <= o.query_end ) && (o.ref_prev_hit_startpos < h.ref_start) && (h.ref_start <= o.ref_end) ){
+                if ( (h.query_end > o.query_end) && (h.ref_end > o.ref_end) ) {
+                    o.query_end = h.query_end;
+                    o.ref_end = h.ref_end;
+                    //                        o.previous_query_start = h.query_s;
+                    //                        o.previous_ref_start = h.ref_s; // keeping track so that we don't . Can be caused by interleaved repeats.
+                    o.query_prev_hit_startpos = h.query_start;
+                    o.ref_prev_hit_startpos = h.ref_start;
+                    o.n_hits ++;
+                    //                        o.score += (float)1/ (float)h.count;
+                    is_added = true;
+                    break;
+                }
+                else if ((h.query_end <= o.query_end) && (h.ref_end <= o.ref_end)) {
+                    //                        o.previous_query_start = h.query_s;
+                    //                        o.previous_ref_start = h.ref_s; // keeping track so that we don't . Can be caused by interleaved repeats.
+                    o.query_prev_hit_startpos = h.query_start;
+                    o.ref_prev_hit_startpos = h.ref_start;
+                    o.n_hits ++;
+                    //                        o.score += (float)1/ (float)h.count;
+                    is_added = true;
+                    break;
+                }
+            }
+
+        }
+
+        // Add the hit to open matches
+        if (!is_added){
+            Nam n;
+            n.query_start = h.query_start;
+            n.query_end = h.query_end;
+            n.ref_start = h.ref_start;
+            n.ref_end = h.ref_end;
+            n.ref_id = ref_id;
+            //                n.previous_query_start = h.query_s;
+            //                n.previous_ref_start = h.ref_s;
+            n.query_prev_hit_startpos = h.query_start;
+            n.ref_prev_hit_startpos = h.ref_start;
+            n.n_hits = 1;
+            n.is_rc = is_revcomp;
+            //                n.score += (float)1 / (float)h.count;
+            open_nams.push_back(n);
+        }
+
+        // Only filter if we have advanced at least k nucleotides
+        if (h.query_start > prev_q_start + k) {
+            // Output all NAMs from open_matches to final_nams that the current hit have passed
+            for (int k = 0; k < open_nams.size(); k++) {
+                Nam& n = open_nams[k];
+                if (n.query_end < h.query_start) {
+                    int n_max_span = my_max(n.query_span(), n.ref_span());
+                    int n_min_span = my_min(n.query_span(), n.ref_span());
+                    float n_score;
+                    n_score = ( 2*n_min_span -  n_max_span) > 0 ? (float) (n.n_hits * ( 2*n_min_span -  n_max_span) ) : 1;   // this is really just n_hits * ( min_span - (offset_in_span) ) );
+                    //                        n_score = n.n_hits * n.query_span();
+                    n.score = n_score;
+                    n.nam_id = nams.size();
+                    nams.push_back(n);
+                }
+            }
+
+            // Remove all NAMs from open_matches that the current hit have passed
+            auto c = h.query_start;
+            int old_open_size = open_nams.size();
+            open_nams.clear();
+            // my_vector.clear() not real release mem, so it's ok
+            for (int in = 0; in < old_open_size; ++in) {
+                if (!(open_nams[in].query_end < c)) {
+                    open_nams.push_back(open_nams[in]);
+                }
+            }
+            prev_q_start = h.query_start;
+        }
+    }
+
+    // Add all current open_matches to final NAMs
+    for (int k = 0; k < open_nams.size(); k++) {
+        Nam& n = open_nams[k];
+        int n_max_span = my_max(n.query_span(), n.ref_span());
+        int n_min_span = my_min(n.query_span(), n.ref_span());
+        float n_score;
+        n_score = ( 2*n_min_span -  n_max_span) > 0 ? (float) (n.n_hits * ( 2*n_min_span -  n_max_span) ) : 1;   // this is really just n_hits * ( min_span - (offset_in_span) ) );
+        //            n_score = n.n_hits * n.query_span();
+        n.score = n_score;
+        n.nam_id = nams.size();
+        nams.push_back(n);
+    }
+}
+
+
 __device__ void merge_hits(
         my_vector<my_pair<int, Hit>>& hits_per_ref,
         int k,
@@ -1954,6 +2096,100 @@ __global__ void gpu_merge_hits_get_nams_seg(
 
         hits_per_ref0s[real_id].release();
         hits_per_ref1s[real_id].release();
+    }
+}
+
+__global__ void gpu_merge_hits_get_nams_1(
+        int num_tasks,
+        IndexParameters *index_para,
+        uint64_t *global_nams_info,
+        my_vector<my_pair<int, Hit>>* hits_per_ref0s,
+        my_vector<my_pair<int, Hit>>* hits_per_ref1s,
+        my_vector<int> *global_each_ref_size0,
+        my_vector<int> *global_each_ref_size1,
+        int* global_todo_ids
+) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id < num_tasks) {
+        int real_id = global_todo_ids[id];
+        global_each_ref_size0[real_id].init(2);
+        global_each_ref_size1[real_id].init(2);
+        merge_hits_1(hits_per_ref0s[real_id], index_para->syncmer.k, 0, global_each_ref_size0[real_id]);
+        merge_hits_1(hits_per_ref1s[real_id], index_para->syncmer.k, 1, global_each_ref_size1[real_id]);
+    }
+}
+
+__global__ void gpu_merge_hits_get_nams_2(
+        int num_tasks,
+        IndexParameters *index_para,
+        bool is_revcomp,
+        my_vector<my_pair<int, Hit>>* hits_per_refs,
+        my_vector<int> *global_each_ref_size,
+        int* each_ref_info,
+        my_vector<Nam> *global_nams_temp) {
+    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (global_id < num_tasks) {
+        int real_id = each_ref_info[global_id * 2];
+        int ref_task_id = each_ref_info[global_id * 2 + 1];
+        int ref_task_size;
+        int hits_offset;
+        if (ref_task_id == 0) {
+            ref_task_size = global_each_ref_size[real_id][ref_task_id];
+            hits_offset = 0;
+        } else {
+            ref_task_size = global_each_ref_size[real_id][ref_task_id] - global_each_ref_size[real_id][ref_task_id - 1];
+            hits_offset = global_each_ref_size[real_id][ref_task_id - 1];
+        }
+        global_nams_temp[global_id].init(8);
+        const my_pair<int, Hit>* original_hits = &(hits_per_refs[real_id][hits_offset]);
+        merge_hits_2(original_hits, ref_task_size, index_para->syncmer.k, is_revcomp, global_nams_temp[global_id]);
+    }
+}
+
+__global__ void gpu_merge_hits_get_nams_3(
+        int num_tasks,
+        IndexParameters *index_para,
+        my_vector<my_pair<int, Hit>>* hits_per_ref0s,
+        my_vector<my_pair<int, Hit>>* hits_per_ref1s,
+        my_vector<int> *global_each_ref_size0,
+        my_vector<int> *global_each_ref_size1,
+        int* real_nams_range0, int* real_nams_range1,
+        my_vector<Nam>* global_nams_temp0, my_vector<Nam>* global_nams_temp1,
+        my_vector<Nam>* global_nams, int* global_todo_ids) {
+    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (global_id < num_tasks) {
+        int real_id = global_todo_ids[global_id];
+        int start0 = real_nams_range0[global_id * 2];
+        int end0   = real_nams_range0[global_id * 2 + 1];
+        int start1 = real_nams_range1[global_id * 2];
+        int end1   = real_nams_range1[global_id * 2 + 1];
+        int total = 0;
+        for (int g = start0; g < end0; ++g) total += global_nams_temp0[g].length;
+        for (int g = start1; g < end1; ++g) total += global_nams_temp1[g].length;
+        global_nams[real_id].init(total);
+        int w = 0;
+        for (int g = start0; g < end0; ++g) {
+            for (int t = 0; t < global_nams_temp0[g].length; ++t) {
+                global_nams[real_id].data[w] = global_nams_temp0[g].data[t];
+                global_nams[real_id].data[w].nam_id = w;
+                w++;
+            }
+            global_nams_temp0[g].release();
+        }
+        for (int g = start1; g < end1; ++g) {
+            for (int t = 0; t < global_nams_temp1[g].length; ++t) {
+                global_nams[real_id].data[w] = global_nams_temp1[g].data[t];
+                global_nams[real_id].data[w].nam_id = w;
+                w++;
+            }
+            global_nams_temp1[g].release();
+        }
+        assert(w == total);
+        global_nams[real_id].length = w;
+        hits_per_ref0s[real_id].release();
+        hits_per_ref1s[real_id].release();
+        global_each_ref_size0[real_id].release();
+        global_each_ref_size1[real_id].release();
     }
 }
 
