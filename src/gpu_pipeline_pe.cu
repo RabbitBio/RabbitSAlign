@@ -1281,7 +1281,8 @@ __device__ void align_PE_part4_seg(
         char* d_query_ptr, char* d_ref_ptr,
         int* d_query_offset, int* d_ref_offset,
         const int* sorted_indices1,
-        const int* sorted_indices2
+        const int* sorted_indices2,
+        bool get_acc_pair
 ) {
     assert(!nams1.empty() && !nams2.empty());
 
@@ -1295,9 +1296,8 @@ __device__ void align_PE_part4_seg(
     dummy_nam.ref_start = -1;
 
     my_vector<gpu_NamPair> joint_nam_scores(my_max(max_tries, nams1.size() + nams2.size()));
-    gpu_get_best_scoring_nam_pairs_seg_optimized(joint_nam_scores, nams1, nams2, mu, sigma, max_tries, sorted_indices1, sorted_indices2);
-//    gpu_get_best_scoring_nam_pairs_seg(joint_nam_scores, nams1, nams2, mu, sigma, max_tries, sorted_indices1, sorted_indices2);
-    //if (joint_nam_scores.size() > max_tries) joint_nam_scores.length = max_tries;
+    if (get_acc_pair) gpu_get_best_scoring_nam_pairs_seg(joint_nam_scores, nams1, nams2, mu, sigma, max_tries, sorted_indices1, sorted_indices2);
+    else gpu_get_best_scoring_nam_pairs_seg_optimized(joint_nam_scores, nams1, nams2, mu, sigma, max_tries, sorted_indices1, sorted_indices2);
 
     int nams1_len = nams1.size();
     int nams2_len = nams2.size();
@@ -1405,7 +1405,8 @@ __device__ void align_PE_part4(
         int read_id,
         int* d_todo_cnt,
         char* d_query_ptr, char* d_ref_ptr,
-        int* d_query_offset, int* d_ref_offset
+        int* d_query_offset, int* d_ref_offset,
+        bool get_acc_pair
 ) {
     assert(!nams1.empty() && !nams2.empty());
 
@@ -1419,9 +1420,8 @@ __device__ void align_PE_part4(
     dummy_nam.ref_start = -1;
 
     my_vector<gpu_NamPair> joint_nam_scores(my_max(max_tries, nams1.size() + nams2.size()));
-    gpu_get_best_scoring_nam_pairs_optimized(joint_nam_scores, nams1, nams2, mu, sigma, max_tries);
-//    gpu_get_best_scoring_nam_pairs(joint_nam_scores, nams1, nams2, mu, sigma, max_tries);
-//    if (joint_nam_scores.size() > max_tries) joint_nam_scores.length = max_tries;
+    if (get_acc_pair) gpu_get_best_scoring_nam_pairs(joint_nam_scores, nams1, nams2, mu, sigma, max_tries);
+    else gpu_get_best_scoring_nam_pairs_optimized(joint_nam_scores, nams1, nams2, mu, sigma, max_tries);
 
     int nams1_len = nams1.size();
     int nams2_len = nams2.size();
@@ -1661,7 +1661,8 @@ __global__ void gpu_align_PE01234_seg(
         char* d_query_ptr, char* d_ref_ptr,
         int* d_query_offset, int* d_ref_offset,
         const int* nam_seg_offsets,
-        const int* sorted_nam_indices
+        const int* sorted_nam_indices,
+        bool get_acc_pair
 ) {
     int id = blockIdx.x * blockDim.x + threadIdx.x;
     if (id < num_tasks) {
@@ -1715,7 +1716,7 @@ __global__ void gpu_align_PE01234_seg(
             align_PE_part4_seg(*align_tmp_res, *aligner_parameters, global_nams[real_id], global_nams[real_id + num_tasks],
                            seq1, rc1, seq_len1, seq2, rc2, seq_len2, index_para->syncmer.k, *global_references,
                            mapping_parameters->dropoff_threshold, isize_est, mapping_parameters->max_tries, mapping_parameters->max_secondary, real_id,
-                           d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset, sorted_indices1, sorted_indices2);
+                           d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset, sorted_indices1, sorted_indices2, get_acc_pair);
             global_nams[real_id].release();
             global_nams[real_id + num_tasks].release();
         } else {
@@ -1743,7 +1744,8 @@ __global__ void gpu_align_PE01234(
         GPUAlignTmpRes *global_align_res,
         int* d_todo_cnt,
         char* d_query_ptr, char* d_ref_ptr,
-        int* d_query_offset, int* d_ref_offset
+        int* d_query_offset, int* d_ref_offset,
+        bool get_acc_pair
 ) {
     int id = blockIdx.x * blockDim.x + threadIdx.x;
     if (id < num_tasks) {
@@ -1791,7 +1793,7 @@ __global__ void gpu_align_PE01234(
             align_PE_part4(*align_tmp_res, *aligner_parameters, global_nams[real_id], global_nams[real_id + num_tasks],
                            seq1, rc1, seq_len1, seq2, rc2, seq_len2, index_para->syncmer.k, *global_references,
                            mapping_parameters->dropoff_threshold, isize_est, mapping_parameters->max_tries, mapping_parameters->max_secondary, real_id,
-                           d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset);
+                           d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset, get_acc_pair);
             global_nams[real_id].release();
             global_nams[real_id + num_tasks].release();
         } else {
@@ -1955,7 +1957,8 @@ __global__ void gpu_align_PE4(
         GPUAlignTmpRes *global_align_res,
         int* d_todo_cnt,
         char* d_query_ptr, char* d_ref_ptr,
-        int* d_query_offset, int* d_ref_offset
+        int* d_query_offset, int* d_ref_offset,
+        bool get_acc_pair
 ) {
     int id = blockIdx.x * blockDim.x + threadIdx.x;
     if (id < num_tasks) {
@@ -1976,7 +1979,7 @@ __global__ void gpu_align_PE4(
         align_PE_part4(*align_tmp_res, *aligner_parameters, global_nams[real_id], global_nams[real_id + s_len],
                        seq1, rc1, seq_len1, seq2, rc2, seq_len2, index_para->syncmer.k, *global_references,
                        mapping_parameters->dropoff_threshold, isize_est, mapping_parameters->max_tries, mapping_parameters->max_secondary, real_id,
-                       d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset);
+                       d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset, get_acc_pair);
         global_nams[real_id].release();
         global_nams[real_id + s_len].release();
 
@@ -2108,7 +2111,7 @@ void GPU_align_PE_seg(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &data
                   my_vector<my_pair<int, Hit>> *global_hits_per_ref0s, my_vector<my_pair<int, Hit>> *global_hits_per_ref1s, my_vector<Nam> *global_nams, GPUInsertSizeDistribution& isize_est,
                   GPUAlignTmpRes *global_align_res, char *global_align_res_data, uint64_t pre_vec_size,
                   char *d_seq, int *d_len, int *d_pre_sum, char *h_seq, int *h_len, int *h_pre_sum,
-                  SegSortGpuResources& buffers0, SegSortGpuResources& buffers1,
+                  SegSortGpuResources& buffers0, SegSortGpuResources& buffers1, const bool get_acc_pair,
                   int* d_todo_cnt, char* d_query_ptr, char* d_ref_ptr, int* d_query_offset, int* d_ref_offset, const int batch_read_num, const int batch_total_read_len, int rescue_threshold) {
 
     assert(data1s.size() == data2s.size());
@@ -2339,10 +2342,10 @@ void GPU_align_PE_seg(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &data
         blocks_per_grid = (s_len + align1234_threads - 1) / align1234_threads;
 //        gpu_align_PE01234<<<blocks_per_grid, align1234_threads, 0, ctx.stream>>>(s_len, total_data_size, l_id, d_index_para, global_align_info, d_aligner, d_pre_sum, d_len, d_seq,
 //                                                                                 global_references, d_map_param, global_nams, isize_est, global_todo_ids, global_align_res,
-//                                                                                 d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset);
+//                                                                                 d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset, get_acc_pair);
         gpu_align_PE01234_seg<<<blocks_per_grid, align1234_threads, 0, ctx.stream>>>(s_len, total_data_size, l_id, d_index_para, global_align_info, d_aligner, d_pre_sum, d_len, d_seq,
                                                                                  global_references, d_map_param, global_nams, isize_est, global_todo_ids, global_align_res,
-                                                                                 d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset, nam_sort_res.first, nam_sort_res.second);
+                                                                                 d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset, nam_sort_res.first, nam_sort_res.second, get_acc_pair);
         cudaStreamSynchronize(ctx.stream);
 //        printf("types %d %d %d %d\n", types[0].size(), types[1].size() + types[2].size(), types[3].size(), types[4].size());
 //        double t2 = GetTime();
@@ -2393,7 +2396,7 @@ void GPU_align_PE_seg(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &data
 //        blocks_per_grid = (s_len + align1234_threads - 1) / align1234_threads;
 //        gpu_align_PE4<<<blocks_per_grid, align1234_threads, 0, ctx.stream>>>(r_pos, s_len, total_data_size, l_id, d_index_para, global_align_info, d_aligner, d_pre_sum, d_len, d_seq,
 //                                                                             global_references, d_map_param, global_nams, isize_est, global_todo_ids, global_align_res,
-//                                                                             d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset);
+//                                                                             d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset, get_acc_pair);
 //        cudaStreamSynchronize(ctx.stream);
 //        gpu_cost10_4 += GetTime() - t2;
 
@@ -2417,7 +2420,7 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
                   my_vector<my_pair<int, Hit>> *global_hits_per_ref0s, my_vector<my_pair<int, Hit>> *global_hits_per_ref1s, my_vector<Nam> *global_nams, GPUInsertSizeDistribution& isize_est,
                   GPUAlignTmpRes *global_align_res, char *global_align_res_data, uint64_t pre_vec_size,
                   char *d_seq, int *d_len, int *d_pre_sum, char *h_seq, int *h_len, int *h_pre_sum,
-                  SegSortGpuResources& buffers0, SegSortGpuResources& buffers1,
+                  SegSortGpuResources& buffers0, SegSortGpuResources& buffers1, const bool get_acc_pair,
                   int* d_todo_cnt, char* d_query_ptr, char* d_ref_ptr, int* d_query_offset, int* d_ref_offset, const int batch_read_num, const int batch_total_read_len, int rescue_threshold) {
 
     assert(data1s.size() == data2s.size());
@@ -2779,7 +2782,7 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         blocks_per_grid = (s_len + align1234_threads - 1) / align1234_threads;
         gpu_align_PE01234<<<blocks_per_grid, align1234_threads, 0, ctx.stream>>>(s_len, total_data_size, l_id, d_index_para, global_align_info, d_aligner, d_pre_sum, d_len, d_seq,
                                                                                  global_references, d_map_param, global_nams, isize_est, global_todo_ids, global_align_res,
-                                                                                 d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset);
+                                                                                 d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset, get_acc_pair);
         cudaStreamSynchronize(ctx.stream);
 //        printf("types %d %d %d %d\n", types[0].size(), types[1].size() + types[2].size(), types[3].size(), types[4].size());
         //double t2 = GetTime();
@@ -2830,7 +2833,7 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         //blocks_per_grid = (s_len + align1234_threads - 1) / align1234_threads;
         //gpu_align_PE4<<<blocks_per_grid, align1234_threads, 0, ctx.stream>>>(r_pos, s_len, total_data_size, l_id, d_index_para, global_align_info, d_aligner, d_pre_sum, d_len, d_seq,
         //                                                                     global_references, d_map_param, global_nams, isize_est, global_todo_ids, global_align_res,
-        //                                                                     d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset);
+        //                                                                     d_todo_cnt, d_query_ptr, d_ref_ptr, d_query_offset, d_ref_offset, get_acc_pair);
         //cudaStreamSynchronize(ctx.stream);
         //gpu_cost10_4 += GetTime() - t2;
 
@@ -2864,7 +2867,8 @@ void perform_task_async_pe_fx_GPU(
         const int batch_read_num,
         const int batch_total_read_len,
         const int chunk_num,
-        const bool unordered_output
+        const bool unordered_output,
+        const bool get_acc_pair
 ) {
 
     if(use_good_numa) {
@@ -3298,7 +3302,7 @@ void perform_task_async_pe_fx_GPU(
                                                  global_hits_per_ref0s, global_hits_per_ref1s, global_nams, *isize_est,
                                                  chunk0_global_align_res, chunk0_global_align_res_data, pre_vec_size,
                                                  d_seq, d_len, d_pre_sum, h_seq, h_len, h_pre_sum,
-                                                 buffers0, buffers1,
+                                                 buffers0, buffers1, get_acc_pair,
                                                  d_todo_cnt, device_query_ptr, device_ref_ptr, d_query_offset, d_ref_offset, batch_read_num, batch_total_read_len, rescue_threshold);
         cudaMemcpy(h_todo_cnt, d_todo_cnt, sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemcpy(h_query_offset, d_query_offset, sizeof(int), cudaMemcpyDeviceToHost);
@@ -3673,7 +3677,7 @@ void perform_task_async_pe_fx_GPU(
                                                      global_hits_per_ref0s, global_hits_per_ref1s, global_nams, *isize_est,
                                                      chunk1_global_align_res, chunk1_global_align_res_data, pre_vec_size,
                                                      d_seq, d_len, d_pre_sum, h_seq, h_len, h_pre_sum,
-                                                     buffers0, buffers1,
+                                                     buffers0, buffers1, get_acc_pair,
                                                      d_todo_cnt, device_query_ptr, device_ref_ptr, d_query_offset, d_ref_offset, batch_read_num, batch_total_read_len, rescue_threshold);
             cudaMemcpy(h_todo_cnt, d_todo_cnt, sizeof(int), cudaMemcpyDeviceToHost);
             cudaMemcpy(h_query_offset, d_query_offset, sizeof(int), cudaMemcpyDeviceToHost);

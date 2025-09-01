@@ -24,7 +24,8 @@ void perform_task_async_pe_fx_GPU(
         const int batch_read_num,
         const int batch_total_read_len,
         const int chunk_num,
-        const bool unordered_output
+        const bool unordered_output,
+        const bool get_acc_pair
 );
 
 #endif //RABBITSALIGN_GPU_PIPELINE_PE_H

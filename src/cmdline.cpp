@@ -36,6 +36,7 @@ CommandLineOptions parse_command_line_arguments(int argc, char **argv) {
     args::ValueFlagList<std::string> rg(parser, "TAG:VALUE", "Add read group metadata to SAM header (can be specified multiple times). Example: SM:samplename", {"rg"});
     args::Flag details(parser, "details", "Add debugging details to SAM records", {"details"});
     args::Flag only_gpu(parser, "only_gpu", "Only use gpu [false]", { "only_gpu" });
+    args::Flag get_acc_pair(parser, "get_acc_pair", "Get more accurate paired-end alignment [false]", { "get_acc_pair" });
     args::Flag unordered_output(parser, "unordered_output", "Does not guarantee SAM output in the input order [false]", { "unordered_output" });
 
 
@@ -94,6 +95,8 @@ CommandLineOptions parse_command_line_arguments(int argc, char **argv) {
     if (chunk_size) { opt.chunk_size = args::get(chunk_size); }
 
     if (only_gpu) {opt.only_gpu = args::get(only_gpu);}
+
+    if (get_acc_pair) {opt.get_acc_pair = args::get(get_acc_pair);}
 
     if (unordered_output) {opt.unordered_output = args::get(unordered_output);}
 

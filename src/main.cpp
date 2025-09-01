@@ -914,7 +914,7 @@ int run_rabbitsalign(int argc, char **argv) {
                                          std::ref(map_param), std::ref(index_parameters), std::ref(references),
                                          std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
                                          std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
-                                         batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
+                                         batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output, opt.get_acc_pair);
                     workers.push_back(std::move(consumer));
                 } else if (!opt.only_gpu) {
                     std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
@@ -936,7 +936,7 @@ int run_rabbitsalign(int argc, char **argv) {
                                          std::ref(map_param), std::ref(index_parameters), std::ref(references),
                                          std::ref(index2), std::ref(opt.read_group_id), assignments[i].thread_id,
                                          std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
-                                         batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
+                                         batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output, opt.get_acc_pair);
                     workers.push_back(std::move(consumer));
                 } else if (!opt.only_gpu) {
                     std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),
@@ -959,7 +959,7 @@ int run_rabbitsalign(int argc, char **argv) {
                                          std::ref(map_param), std::ref(index_parameters), std::ref(references),
                                          std::ref(index), std::ref(opt.read_group_id), assignments[i].thread_id,
                                          std::ref(fastqPool), std::ref(queue_pe), use_good_numa, assignments[i].gpu_id, assignments[i].async_thread_id,
-                                         batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output);
+                                         batch_read_num, batch_total_read_len, chunk_num, opt.unordered_output, opt.get_acc_pair);
                     workers.push_back(std::move(consumer));
                 } else if (!opt.only_gpu) {
                     std::thread consumer(perform_task_async_pe_fx, std::ref(input_buffer), std::ref(output_buffer),

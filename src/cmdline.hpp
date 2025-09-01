@@ -13,6 +13,8 @@ struct CommandLineOptions {
 
     bool only_gpu {false};
 
+    bool get_acc_pair {false};
+
     bool unordered_output {false};
 
     // Input/output
