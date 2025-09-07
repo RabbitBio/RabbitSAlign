@@ -7,7 +7,8 @@ __device__ void* my_malloc(size_t size) {
     void* ptr = gallatin::allocators::global_malloc(size);
     if (ptr == nullptr) {
         printf("gallatin malloc failed - %lu\n", (unsigned long)size);
-        asm("trap;");
+        assert(false && "gallatin malloc failed");
+        return nullptr;
     }
     return ptr;
 }

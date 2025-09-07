@@ -10,6 +10,8 @@
 
 //#define use_seg_sort
 
+#define use_fast_merge1
+#define use_fast_merge2
 
 #define RESCUE_THRESHOLD 1000
 
@@ -63,6 +65,13 @@ extern thread_local double gpu_cost6_2;
 extern thread_local double gpu_cost6_3;
 extern thread_local double gpu_cost6_4;
 extern thread_local double gpu_cost7;
+extern thread_local double gpu_cost7_1;
+extern thread_local double gpu_cost7_2;
+extern thread_local double gpu_cost7_3;
+extern thread_local double gpu_cost7_4;
+extern thread_local double gpu_cost7_5;
+extern thread_local double gpu_cost7_6;
+extern thread_local double gpu_cost7_7;
 extern thread_local double gpu_cost8;
 extern thread_local double gpu_cost8_1;
 extern thread_local double gpu_cost8_2;

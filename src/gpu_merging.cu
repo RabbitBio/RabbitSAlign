@@ -4,7 +4,7 @@
 #include <bb_seg_sort/my_bb_segsort_shared.h>
 
 
-__device__ size_t my_lower_bound(my_pair<int, Hit>* hits, size_t i_start, size_t i_end, int target) {
+__device__ size_t my_lower_bound(const my_pair<int, Hit>* hits, size_t i_start, size_t i_end, int target) {
     size_t left = i_start, right = i_end;
     while (left < right) {
         size_t mid = left + (right - left) / 2;
@@ -256,6 +256,140 @@ __device__ void salign_merge_hits_seg(
     }
 }
 
+__device__ void salign_merge_hits_2(
+        const my_pair<int, Hit>* hits,
+        int hits_size,
+        int k,
+        bool is_revcomp,
+        my_vector<Nam>& nams
+) {
+    if(hits_size == 0) return;
+
+    int ref_id = hits[0].first;
+    for (int j = 0; j < hits_size; j++) {
+        assert(hits[j].first == ref_id);
+    }
+
+    my_vector<Nam> open_nams;
+    my_vector<bool> is_added(32);
+    unsigned int prev_q_start = 0;
+    for (size_t i = 0; i < hits_size; ) {
+        size_t i_start = i;
+        size_t i_end = i + 1;
+        size_t i_size;
+        while(i_end < hits_size && hits[i_end].second.query_start == hits[i].second.query_start) i_end++;
+        i = i_end;
+        i_size = i_end - i_start;
+        //for(int j = 0; j < i_size - 1; j++) {
+        //    assert(hits[i_start + j].second.ref_start <= hits[i_start + j + 1].second.ref_start);
+        //}
+        //quick_sort(&(hits[i_start]), i_size);
+        is_added.clear();
+        for(size_t j = 0; j < i_size; j++) is_added.push_back(false);
+        int query_start = hits[i_start].second.query_start;
+        int cnt_done = 0;
+        for (int k = 0; k < open_nams.size(); k++) {
+            Nam& o = open_nams[k];
+            if ( query_start > o.query_end ) continue;
+            size_t lower = my_lower_bound(hits, i_start, i_end, o.ref_prev_hit_startpos + 1);
+            size_t upper = my_lower_bound(hits, i_start, i_end, o.ref_end + 1);
+            for (size_t j = lower; j < upper; j++) {
+                if(is_added[j - i_start]) continue;
+                const Hit& h = hits[j].second;
+                {
+                    if (o.ref_prev_hit_startpos < h.ref_start && h.ref_start <= o.ref_end) {
+                        if ((h.query_end > o.query_end) && (h.ref_end > o.ref_end)) {
+                            o.query_end = h.query_end;
+                            o.ref_end = h.ref_end;
+                            //                        o.previous_query_start = h.query_s;
+                            //                        o.previous_ref_start = h.ref_s; // keeping track so that we don't . Can be caused by interleaved repeats.
+                            o.query_prev_hit_startpos = h.query_start;
+                            o.ref_prev_hit_startpos = h.ref_start;
+                            o.n_hits++;
+                            //                        o.score += (float)1/ (float)h.count;
+                            is_added[j - i_start] = true;
+                            cnt_done++;
+                            break;
+                        } else if ((h.query_end <= o.query_end) && (h.ref_end <= o.ref_end)) {
+                            //                        o.previous_query_start = h.query_s;
+                            //                        o.previous_ref_start = h.ref_s; // keeping track so that we don't . Can be caused by interleaved repeats.
+                            o.query_prev_hit_startpos = h.query_start;
+                            o.ref_prev_hit_startpos = h.ref_start;
+                            o.n_hits++;
+                            //                        o.score += (float)1/ (float)h.count;
+                            is_added[j - i_start] = true;
+                            cnt_done++;
+                            break;
+                        }
+                    }
+                }
+            }
+            if(cnt_done == i_size) break;
+        }
+
+        // Add the hit to open matches
+        for(size_t j = 0; j < i_size; j++) {
+            if (!is_added[j]){
+                Nam n;
+                n.query_start = hits[i_start + j].second.query_start;
+                n.query_end = hits[i_start + j].second.query_end;
+                n.ref_start = hits[i_start + j].second.ref_start;
+                n.ref_end = hits[i_start + j].second.ref_end;
+                n.ref_id = ref_id;
+                //                n.previous_query_start = h.query_s;
+                //                n.previous_ref_start = h.ref_s;
+                n.query_prev_hit_startpos = hits[i_start + j].second.query_start;
+                n.ref_prev_hit_startpos = hits[i_start + j].second.ref_start;
+                n.n_hits = 1;
+                n.is_rc = is_revcomp;
+                //                n.score += (float)1 / (float)h.count;
+                open_nams.push_back(n);
+            }
+        }
+
+        // Only filter if we have advanced at least k nucleotides
+        if (query_start > prev_q_start + k) {
+
+            // Output all NAMs from open_matches to final_nams that the current hit have passed
+            for (int k = 0; k < open_nams.size(); k++) {
+                Nam& n = open_nams[k];
+                if (n.query_end < query_start) {
+                    int n_max_span = my_max(n.query_span(), n.ref_span());
+                    int n_min_span = my_min(n.query_span(), n.ref_span());
+                    float n_score;
+                    n_score = ( 2*n_min_span -  n_max_span) > 0 ? (float) (n.n_hits * ( 2*n_min_span -  n_max_span) ) : 1;   // this is really just n_hits * ( min_span - (offset_in_span) ) );
+                    //                        n_score = n.n_hits * n.query_span();
+                    n.score = n_score;
+                    n.nam_id = nams.size();
+                    nams.push_back(n);
+                }
+            }
+
+            // Remove all NAMs from open_matches that the current hit have passed
+            auto c = query_start;
+            int old_open_size = open_nams.size();
+            open_nams.clear();
+            for (int in = 0; in < old_open_size; ++in) {
+                if (!(open_nams[in].query_end < c)) {
+                    open_nams.push_back(open_nams[in]);
+                }
+            }
+            prev_q_start = query_start;
+        }
+    }
+    // Add all current open_matches to final NAMs
+    for (int k = 0; k < open_nams.size(); k++) {
+        Nam& n = open_nams[k];
+        int n_max_span = my_max(n.query_span(), n.ref_span());
+        int n_min_span = my_min(n.query_span(), n.ref_span());
+        float n_score;
+        n_score = ( 2*n_min_span -  n_max_span) > 0 ? (float) (n.n_hits * ( 2*n_min_span -  n_max_span) ) : 1;   // this is really just n_hits * ( min_span - (offset_in_span) ) );
+        //            n_score = n.n_hits * n.query_span();
+        n.score = n_score;
+        n.nam_id = nams.size();
+        nams.push_back(n);
+    }
+}
 
 __device__ void salign_merge_hits(
         my_vector<my_pair<int, Hit>>& hits_per_ref,
@@ -2119,6 +2253,33 @@ __global__ void gpu_merge_hits_get_nams_1(
     }
 }
 
+__global__ void gpu_rescue_merge_hits_get_nams_2(
+        int num_tasks,
+        IndexParameters *index_para,
+        bool is_revcomp,
+        my_vector<my_pair<int, Hit>>* hits_per_refs,
+        my_vector<int> *global_each_ref_size,
+        int* each_ref_info,
+        my_vector<Nam> *global_nams_temp) {
+    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (global_id < num_tasks) {
+        int real_id = each_ref_info[global_id * 2];
+        int ref_task_id = each_ref_info[global_id * 2 + 1];
+        int ref_task_size;
+        int hits_offset;
+        if (ref_task_id == 0) {
+            ref_task_size = global_each_ref_size[real_id][ref_task_id];
+            hits_offset = 0;
+        } else {
+            ref_task_size = global_each_ref_size[real_id][ref_task_id] - global_each_ref_size[real_id][ref_task_id - 1];
+            hits_offset = global_each_ref_size[real_id][ref_task_id - 1];
+        }
+        global_nams_temp[global_id].init(2);
+        const my_pair<int, Hit>* original_hits = &(hits_per_refs[real_id][hits_offset]);
+        salign_merge_hits_2(original_hits, ref_task_size, index_para->syncmer.k, is_revcomp, global_nams_temp[global_id]);
+    }
+}
+
 __global__ void gpu_merge_hits_get_nams_2(
         int num_tasks,
         IndexParameters *index_para,
@@ -2140,7 +2301,7 @@ __global__ void gpu_merge_hits_get_nams_2(
             ref_task_size = global_each_ref_size[real_id][ref_task_id] - global_each_ref_size[real_id][ref_task_id - 1];
             hits_offset = global_each_ref_size[real_id][ref_task_id - 1];
         }
-        global_nams_temp[global_id].init(8);
+        global_nams_temp[global_id].init(2);
         const my_pair<int, Hit>* original_hits = &(hits_per_refs[real_id][hits_offset]);
         merge_hits_2(original_hits, ref_task_size, index_para->syncmer.k, is_revcomp, global_nams_temp[global_id]);
     }
@@ -2257,7 +2418,7 @@ __global__ void gpu_rescue_merge_hits_get_nams(
 )
 {
     int id = blockIdx.x * blockDim.x + threadIdx.x;
-    if (id < num_tasks){
+    if (id < num_tasks) {
         int real_id = global_todo_ids[id];
         global_nams[real_id].init(8);
         salign_merge_hits(hits_per_ref0s[real_id], index_para->syncmer.k, 0, global_nams[real_id]);
