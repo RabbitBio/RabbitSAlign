@@ -765,9 +765,9 @@ void solve_ssw_on_gpu2(
 
     time_cal[thread_id] += GetTime() - t0;
 
-    if (cnt[thread_id] % 100 == 0) {
-        printf("gasal2 gpu %d-%d main timer : %.2f %.2f[%.2f(%.2f %.2f %.2f) %.2f] %.2f\n", thread_id, cnt[thread_id], time_pre[thread_id], time_fill[thread_id], time_fill1[thread_id], time_fill1_1[thread_id], time_fill1_2[thread_id], time_fill1_3[thread_id], time_fill2[thread_id], time_cal[thread_id]);
-    }
+    //if (cnt[thread_id] % 100 == 0) {
+    //    printf("gasal2 gpu %d-%d main timer : %.2f %.2f[%.2f(%.2f %.2f %.2f) %.2f] %.2f\n", thread_id, cnt[thread_id], time_pre[thread_id], time_fill[thread_id], time_fill1[thread_id], time_fill1_1[thread_id], time_fill1_2[thread_id], time_fill1_3[thread_id], time_fill2[thread_id], time_cal[thread_id]);
+    //}
 }
 
 void solve_ssw_on_gpu_pre_copy(

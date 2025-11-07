@@ -210,7 +210,7 @@ void init_shared_data(const References& references, const StrobemerIndex& index,
     uint64_t ref_size = 0;
     uint64_t index_size = 0;
     cudaSetDevice(gpu_id);
-    if (gpu_id == 0) printf("init_shared_data thread_id = %d, gpu_id = %d\n", thread_id, gpu_id);
+    if (gpu_id == 0) fprintf(stderr, "init_shared_data thread_id = %d, gpu_id = %d\n", thread_id, gpu_id);
     cudaMallocManaged(&global_references[gpu_id], sizeof(GPUReferences));
     global_references[gpu_id]->num_refs = references.size();
     cudaMalloc(&global_references[gpu_id]->sequences.data, references.size() * sizeof(my_string));
@@ -240,20 +240,20 @@ void init_shared_data(const References& references, const StrobemerIndex& index,
     cudaMemcpy(d_randstrobes[gpu_id], index.randstrobes.data(), index.randstrobes.size() * sizeof(RefRandstrobe), cudaMemcpyHostToDevice);
     cudaMemcpy(d_randstrobe_start_indices[gpu_id], index.randstrobe_start_indices.data(), index.randstrobe_start_indices.size() * sizeof(my_bucket_index_t), cudaMemcpyHostToDevice);
 
-    if (gpu_id == 0) printf("--- ref GPU mem alloc %llu (%llu %llu)\n", ref_size + index_size, ref_size, index_size);
+    if (gpu_id == 0) fprintf(stderr, "--- ref GPU mem alloc %llu (%llu %llu)\n", ref_size + index_size, ref_size, index_size);
 }
 
 void init_mm_safe(uint64_t num_bytes, uint64_t seed, int gpu_id) {
     //cudaSetDevice(gpu_id);
     init_mm(num_bytes, seed);
-    if (gpu_id == 0) printf("--- Gallatin GPU mem alloc %llu\n", num_bytes);
+    if (gpu_id == 0) fprintf(stderr, "--- Gallatin GPU mem alloc %llu\n", num_bytes);
 }
 
 void init_global_big_data(int thread_id, int gpu_id, int max_tries, int batch_read_num) {
     cudaSetDevice(gpu_id);
     uint64_t pre_vec_size = 4 * sizeof(int) + 2 * sizeof(Nam) + sizeof(GPUAlignment) + sizeof(CigarData) + sizeof(TODOInfos);
     uint64_t global_align_res_data_size = batch_read_num * (max_tries * 2 + 2) * pre_vec_size;
-    if (gpu_id == 0) printf("global_align_res_data_size -- %llu\n", global_align_res_data_size);
+    if (gpu_id == 0) fprintf(stderr, "global_align_res_data_size -- %llu\n", global_align_res_data_size);
 
     cudaMallocManaged(&g_chunk0_global_align_res[thread_id], batch_read_num * 2 * sizeof(GPUAlignTmpRes));
     cudaMemset(g_chunk0_global_align_res[thread_id], 0, batch_read_num * 2 * sizeof(GPUAlignTmpRes));
@@ -269,7 +269,7 @@ void init_global_big_data(int thread_id, int gpu_id, int max_tries, int batch_re
     cudaMallocManaged(&g_chunk2_global_align_res_data[thread_id], global_align_res_data_size);
     cudaMemset(g_chunk2_global_align_res_data[thread_id], 0, global_align_res_data_size);
 
-    if (gpu_id == 0) printf("--- align_res GPU mem alloc %llu\n", batch_read_num * 2 * sizeof(GPUAlignTmpRes) * 3
+    if (gpu_id == 0) fprintf(stderr, "--- align_res GPU mem alloc %llu\n", batch_read_num * 2 * sizeof(GPUAlignTmpRes) * 3
                                                                   + global_align_res_data_size * 3);
 }
 
@@ -288,13 +288,13 @@ void init_seg_sort_resources(
     (cudaMallocAsync(&resources.value_ptr,     initial_bytes, stream));
     (cudaMallocAsync(&resources.key_alt_ptr,   initial_bytes, stream));
     (cudaMallocAsync(&resources.value_alt_ptr, initial_bytes, stream));
-    printf("pre alloc seg sort key/value size %.2f MB\n", 4.0 * initial_bytes / 1024 / 1024);
+    fprintf(stderr, "pre alloc seg sort key/value size %.2f MB\n", 4.0 * initial_bytes / 1024 / 1024);
 
 //    resources.nam_temp_capacity = initial_capacity;
 //    size_t nam_temp_bytes = initial_capacity * sizeof(Nam);
 //    (cudaMallocAsync(&resources.nam_temp_ptr, nam_temp_bytes, stream));
 ////    (cudaMallocAsync(&resources.nam_temp_alt_ptr, nam_temp_bytes, stream));
-//    printf("pre alloc seg sort nam temp size %.2f MB\n", 1.0 * nam_temp_bytes / 1024 / 1024);
+//    fprintf(stderr, "pre alloc seg sort nam temp size %.2f MB\n", 1.0 * nam_temp_bytes / 1024 / 1024);
 
     resources.task_sizes_bytes = max_todo_cnt * sizeof(int);
     resources.seg_offsets_bytes = (max_todo_cnt + 1) * sizeof(int);
@@ -302,13 +302,13 @@ void init_seg_sort_resources(
     (cudaMallocAsync(&resources.seg_offsets_ptr, resources.seg_offsets_bytes, stream));
 //    (cudaMallocAsync(&resources.bb_bin_segs_id_ptr, resources.task_sizes_bytes, stream));
 //    (cudaMallocAsync(&resources.bb_bin_counter_ptr, resources.task_sizes_bytes, stream));
-    printf("pre alloc seg sort task size/seg offset size %.2f MB\n", 1.0 * (resources.task_sizes_bytes + resources.seg_offsets_bytes) / 1024 / 1024);
+    fprintf(stderr, "pre alloc seg sort task size/seg offset size %.2f MB\n", 1.0 * (resources.task_sizes_bytes + resources.seg_offsets_bytes) / 1024 / 1024);
 
     resources.scan_temp_bytes = initial_scan_temp_bytes;
     resources.sort_temp_bytes = initial_sort_temp_bytes;
     (cudaMallocAsync(&resources.scan_temp_ptr, resources.scan_temp_bytes, stream));
     (cudaMallocAsync(&resources.sort_temp_ptr, resources.sort_temp_bytes, stream));
-    printf("pre alloc seg sort scan/sort temp size %.2f MB\n", 1.0 * (resources.scan_temp_bytes + resources.sort_temp_bytes) / 1024 / 1024);
+    fprintf(stderr, "pre alloc seg sort scan/sort temp size %.2f MB\n", 1.0 * (resources.scan_temp_bytes + resources.sort_temp_bytes) / 1024 / 1024);
 }
 
 void free_seg_sort_resources(SegSortGpuResources& resources, cudaStream_t stream) {

@@ -381,7 +381,7 @@ uint64_t calculateMemoryUsagePE(int total_cpu_num, int gpu_num, int chunk_num, i
  * @return The maximum valid number of chunks.
  */
 int calculateMaxChunkNum(int total_cpu_num, int gpu_num, uint64_t GPU_mem_size, bool is_se, int eval_read_len, int chunk_size, int max_tries, uint64_t ref_index_size) {
-    printf("Calculating max chunk_num for total_cpu_num: %d, gpu_num: %d, GPU_mem_size: %llu GB, is_se: %d, eval_read_len: %d, chunk_size: %d, max_tries: %d, ref_index_size: %llu GB\n",
+    fprintf(stderr, "Calculating max chunk_num for total_cpu_num: %d, gpu_num: %d, GPU_mem_size: %llu GB, is_se: %d, eval_read_len: %d, chunk_size: %d, max_tries: %d, ref_index_size: %llu GB\n",
            total_cpu_num, gpu_num, GPU_mem_size / GB_BYTE, is_se, eval_read_len, chunk_size, max_tries, ref_index_size / GB_BYTE);
 
     for (int chunk_num = 1; chunk_num <= 96; ++chunk_num) {
@@ -439,8 +439,8 @@ std::vector<int> evenly_select(int total, int count) {
  * @return A vector of ThreadAssignment structs.
  */
 std::vector<ThreadAssignment> assign_threads_fixed_with_flags(int total_cpu_num, int total_gpu_num, int cpu_num, int gpu_num, int numa_num) {
-    std::cout << "total_cpu_num: " << total_cpu_num << ", use " << cpu_num << std::endl;
-    std::cout << "total_gpu_num: " << total_gpu_num << ", use " << gpu_num << std::endl;
+    std::cerr << "total_cpu_num: " << total_cpu_num << ", use " << cpu_num << std::endl;
+    std::cerr << "total_gpu_num: " << total_gpu_num << ", use " << gpu_num << std::endl;
 
     std::vector<ThreadAssignment> assignments;
     std::vector<int> selected_threads = evenly_select(total_cpu_num, cpu_num);
@@ -473,11 +473,11 @@ std::vector<ThreadAssignment> assign_threads_fixed_with_flags(int total_cpu_num,
             ta.async_thread_id = selected_threads[i + 1];
             ta.gpu_id = gpu_id_counter / 2;
             gpu_id_counter++;
-//            std::cout << "Assign GPU main thread " << tid << " (GPU " << ta.gpu_id << ") with aux " << ta.async_thread_id << "\n";
+//            std::cerr << "Assign GPU main thread " << tid << " (GPU " << ta.gpu_id << ") with aux " << ta.async_thread_id << "\n";
         } else if (aux_gpu_tids.count(tid)) {
             ta.flag = 1;
             ta.pass = 1;
-//            std::cout << "Assign GPU aux thread " << tid << "\n";
+//            std::cerr << "Assign GPU aux thread " << tid << "\n";
         }
 
         assignments.push_back(ta);
@@ -832,7 +832,7 @@ int run_rabbitsalign(int argc, char **argv) {
             for (int i = 0; i < opt.n_threads / 2; ++i) {
                 if (assignments[i].flag) {
                     if (assignments[i].pass) {
-//                        printf("gpu thread %d skip\n", i);
+//                        fprintf(stderr, "gpu thread %d skip\n", i);
                         continue;
                     }
                     std::thread consumer(perform_task_async_se_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
@@ -854,7 +854,7 @@ int run_rabbitsalign(int argc, char **argv) {
             for (int i = opt.n_threads / 2; i < opt.n_threads; ++i) {
                 if (assignments[i].flag) {
                     if (assignments[i].pass) {
-//                        printf("gpu thread %d skip\n", i);
+//                        fprintf(stderr, "gpu thread %d skip\n", i);
                         continue;
                     }
                     std::thread consumer(perform_task_async_se_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
@@ -877,7 +877,7 @@ int run_rabbitsalign(int argc, char **argv) {
             for (int i = 0; i < opt.n_threads; ++i) {
                 if (assignments[i].flag) {
                     if (assignments[i].pass) {
-//                        printf("gpu thread %d skip\n", i);
+//                        fprintf(stderr, "gpu thread %d skip\n", i);
                         continue;
                     }
                     std::thread consumer(perform_task_async_se_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
@@ -906,7 +906,7 @@ int run_rabbitsalign(int argc, char **argv) {
             for (int i = 0; i < opt.n_threads * 1 / 2; ++i) {
                 if (assignments[i].flag) {
                     if (assignments[i].pass) {
-//                        printf("gpu thread %d skip\n", i);
+//                        fprintf(stderr, "gpu thread %d skip\n", i);
                         continue;
                     }
                     std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
@@ -928,7 +928,7 @@ int run_rabbitsalign(int argc, char **argv) {
             for (int i = opt.n_threads * 1 / 2; i < opt.n_threads; ++i) {
                 if (assignments[i].flag) {
                     if (assignments[i].pass) {
-//                        printf("gpu thread %d skip\n", i);
+//                        fprintf(stderr, "gpu thread %d skip\n", i);
                         continue;
                     }
                     std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),
@@ -951,7 +951,7 @@ int run_rabbitsalign(int argc, char **argv) {
             for (int i = 0; i < opt.n_threads; ++i) {
                 if (assignments[i].flag) {
                     if (assignments[i].pass) {
-//                        printf("gpu thread %d skip\n", i);
+//                        fprintf(stderr, "gpu thread %d skip\n", i);
                         continue;
                     }
                     std::thread consumer(perform_task_async_pe_fx_GPU, std::ref(input_buffer), std::ref(output_buffer),

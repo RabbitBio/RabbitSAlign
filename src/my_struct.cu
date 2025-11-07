@@ -6,7 +6,7 @@
 __device__ void* my_malloc(size_t size) {
     void* ptr = gallatin::allocators::global_malloc(size);
     if (ptr == nullptr) {
-        printf("gallatin malloc failed - %lu\n", (unsigned long)size);
+        //printf("gallatin malloc failed - %lu\n", (unsigned long)size);
         assert(false && "gallatin malloc failed");
         return nullptr;
     }
@@ -18,7 +18,7 @@ __device__ void my_free(void* ptr) {
 }
 
 __host__ void init_mm(uint64_t num_bytes, uint64_t seed) {
-    gallatin::allocators::init_global_allocator(num_bytes, seed);
+    gallatin::allocators::init_global_allocator(num_bytes, seed, false);
 }
 
 __host__ void free_mm() {

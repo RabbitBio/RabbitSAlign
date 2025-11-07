@@ -542,9 +542,6 @@ namespace rabbit {
             r = mFqReader->Read(data + leftPart->size, toRead);
             if (r > 0) {
                 if (r == toRead) {
-                    static int cntt = 0;
-                    cntt++;
-                    if (cntt == 1) printf("GetNxtBuffSize %d\n", GetNxtBuffSize);
                     chunkEnd = cbufSize - GetNxtBuffSize;
                     chunkEnd = this->GetNextRecordPos_(data, chunkEnd, cbufSize);
                 } else {

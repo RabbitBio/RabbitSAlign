@@ -10,8 +10,8 @@
 
 //#define use_seg_sort
 
-#define use_fast_merge1
-#define use_fast_merge2
+//#define use_fast_merge1
+//#define use_fast_merge2
 
 #define RESCUE_THRESHOLD 1000
 

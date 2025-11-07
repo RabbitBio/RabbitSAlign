@@ -582,7 +582,7 @@ void GPU_align_SE_seg(std::vector<neoRcRef> &datas,
             int type = 4;
             if (global_nams[i].length == 0) type = 0;
             if (global_todo_ids[i] == -1 || global_todo_ids[i] > d_map_param->max_tries) {
-                printf("global_todo_ids[%d] %d, type %d\n", i, global_todo_ids[i], type);
+                //printf("global_todo_ids[%d] %d, type %d\n", i, global_todo_ids[i], type);
                 assert(false);
             }
             int tries_num = global_todo_ids[i] * 2;
@@ -780,7 +780,7 @@ void GPU_align_SE_init(std::vector<neoRcRef> &datas,
             int type = 4;
             if (global_nams[i].length == 0) type = 0;
             if (global_todo_ids[i] == -1 || global_todo_ids[i] > d_map_param->max_tries) {
-                printf("global_todo_ids[%d] %d, type %d\n", i, global_todo_ids[i], type);
+                //printf("global_todo_ids[%d] %d, type %d\n", i, global_todo_ids[i], type);
                 assert(false);
             }
             int tries_num = global_todo_ids[i] * 2;
@@ -964,7 +964,7 @@ void perform_task_async_se_fx_GPU(
     int *chunk1_real_chunk_ids = new int[MAX_RABBITFX_CHUNK_NUM];
     int *chunk2_real_chunk_ids = new int[MAX_RABBITFX_CHUNK_NUM];
 
-    if (gpu_id == 0) printf("--- meta GPU mem alloc %llu\n", meta_data_size);
+    if (gpu_id == 0) fprintf(stderr, "--- meta GPU mem alloc %llu\n", meta_data_size);
 
     uint64_t pre_vec_size = 4 * sizeof(int) + 2 * sizeof(Nam) + sizeof(GPUAlignment) + sizeof(CigarData) + sizeof(TODOInfos);
     GPUAlignTmpRes *chunk0_global_align_res = g_chunk0_global_align_res[thread_id];
@@ -987,7 +987,7 @@ void perform_task_async_se_fx_GPU(
     cudaMalloc(&d_pre_sum, (batch_read_num + 1) * sizeof(int) * 2);
     cudaMemset(d_pre_sum, 0, (batch_read_num + 1) * sizeof(int) * 2);
 
-    if (gpu_id == 0) printf("--- seq GPU mem alloc %llu\n", seq_size_alloc * 2 + (batch_read_num + 1) * sizeof(int) * 2 * 2);
+    if (gpu_id == 0) fprintf(stderr, "--- seq GPU mem alloc %llu\n", seq_size_alloc * 2 + (batch_read_num + 1) * sizeof(int) * 2 * 2);
 
     int *h_len;
     int *h_pre_sum;
@@ -1020,7 +1020,7 @@ void perform_task_async_se_fx_GPU(
     init_seg_sort_resources(buffers1, pre_alloc_elements, max_tasks, scan_buffer_size, sort_buffer_size, ctx.stream);
 #endif
 
-    if (gpu_id == 0) printf("--- todo GPU mem alloc %llu\n", mx_device_query_size + mx_device_ref_size);
+    if (gpu_id == 0) fprintf(stderr, "--- todo GPU mem alloc %llu\n", mx_device_query_size + mx_device_ref_size);
 
     int* d_todo_cnt;
     cudaMalloc(&d_todo_cnt, sizeof(int));
@@ -1154,7 +1154,7 @@ void perform_task_async_se_fx_GPU(
 
     //int rescue_threshold = read_len;
     int rescue_threshold = RESCUE_THRESHOLD;
-    printf("rescue_threshold %d\n", rescue_threshold);
+    //fprintf(stderr, "rescue_threshold %d\n", rescue_threshold);
 
     // step: f_1
     {
@@ -1834,7 +1834,7 @@ void perform_task_async_se_fx_GPU(
 
     time_tot = GetTime() - t_0;
 #ifdef PRINT_CPU_TIMER
-    printf("tot ssw %d, gpu ssw %d, %.2f\n", total_ssw, gpu_ssw, 1.0 * gpu_ssw / total_ssw);
+    fprintf(stderr, "tot ssw %d, gpu ssw %d, %.2f\n", total_ssw, gpu_ssw, 1.0 * gpu_ssw / total_ssw);
     fprintf(
             stderr, "cost time0:%.2f(%.2f %.2f %.2f %.2f [%.2f %.2f %.2f %.2f]) time1:(%.2f[%.2f %.2f] %.2f %.2f) time2:(%.2f[%.2f] %.2f %.2f[%.2f %.2f] %.2f) time3:(%.2f[%.2f %.2f %.2f %.2f] %.2f %.2f %.2f %.2f), time4:%.2f tot time:%.2f\n",
             time0, time0_1, time0_2, time0_3, time0_4, time0_4_1, time0_4_2, time0_4_3, time0_4_4,

@@ -136,7 +136,7 @@ void GPU_part2_rescue_mate_store_res(
     align_tmp_res.cigar_info[j].has_realloc = 0;
     align_tmp_res.cigar_info[j].cigar = align_tmp_res.cigar_info[j].gpu_cigar;
     if (info.cigar.m_ops.size() + 1 > MAX_CIGAR_ITEM) {
-        //printf("host cigar too big %d %d\n", j, info.cigar.m_ops.size());
+        //fprintf(stderr, "host cigar too big %d %d\n", j, info.cigar.m_ops.size());
         align_tmp_res.cigar_info[j].has_realloc = 1;
         uint32_t* tmp_cigar = (uint32_t*)malloc((info.cigar.m_ops.size() + 1) * sizeof(uint32_t));
         align_tmp_res.cigar_info[j].cigar = tmp_cigar;
@@ -1149,14 +1149,16 @@ __device__ void align_PE_part3_seg(
     align_tmp_res.type3_isize_val = -1;
     if(!gapped1 && !gapped2) {
         int res_size = align_tmp_res.align_res.size();
-        if(res_size < 2) {
-            printf("align_tmp_res.align_res.size error %d\n", res_size);
-        }
+        assert(res_size >= 2);
+        //if(res_size < 2) {
+        //    printf("align_tmp_res.align_res.size error %d\n", res_size);
+        //}
         auto alignment1 = align_tmp_res.align_res[res_size - 2];
         auto alignment2 = align_tmp_res.align_res[res_size - 1];
-        if(alignment1.gapped || alignment2.gapped) {
-            printf("alignment gapped error\n");
-        }
+        assert(!alignment1.gapped && !alignment2.gapped);
+        //if(alignment1.gapped || alignment2.gapped) {
+        //    printf("alignment gapped error\n");
+        //}
         bool is_proper = gpu_is_proper_pair(alignment1, alignment2, mu, sigma);
         if ((isize_est.sample_size < 400) && (alignment1.edit_distance + alignment2.edit_distance < 3) && is_proper) {
             align_tmp_res.type3_isize_val = my_abs(alignment1.ref_start - alignment2.ref_start);
@@ -1231,14 +1233,16 @@ __device__ void align_PE_part3(
     align_tmp_res.type3_isize_val = -1;
     if(!gapped1 && !gapped2) {
         int res_size = align_tmp_res.align_res.size();
-        if(res_size < 2) {
-            printf("align_tmp_res.align_res.size error %d\n", res_size);
-        }
+        assert(res_size >= 2);
+        //if(res_size < 2) {
+        //    fprintf(stderr, "align_tmp_res.align_res.size error %d\n", res_size);
+        //}
         auto alignment1 = align_tmp_res.align_res[res_size - 2];
         auto alignment2 = align_tmp_res.align_res[res_size - 1];
-        if(alignment1.gapped || alignment2.gapped) {
-            printf("alignment gapped error\n");
-        }
+        assert(!alignment1.gapped && !alignment2.gapped);
+        //if(alignment1.gapped || alignment2.gapped) {
+        //    printf("alignment gapped error\n");
+        //}
         bool is_proper = gpu_is_proper_pair(alignment1, alignment2, mu, sigma);
         if ((isize_est.sample_size < 400) && (alignment1.edit_distance + alignment2.edit_distance < 3) && is_proper) {
             align_tmp_res.type3_isize_val = my_abs(alignment1.ref_start - alignment2.ref_start);
@@ -1630,7 +1634,7 @@ __device__ void reorder_nams_in_place(my_vector<Nam>& nams, const int* sorted_in
     }
     Nam* temp_nams = (Nam*)my_malloc(num_nams * sizeof(Nam));
     if (temp_nams == nullptr) {
-        printf("Error: my_malloc failed to allocate memory for temporary NAMs in reorder_nams_in_place.\n");
+        //fprintf(stderr, "Error: my_malloc failed to allocate memory for temporary NAMs in reorder_nams_in_place.\n");
         return;
     }
     for (int i = 0; i < num_nams; ++i) {
@@ -2010,56 +2014,56 @@ void init_static_gpu_buffers(int max_todo_cnt) {
     if (d_each_ref_info0 == nullptr) {
         err = cudaMalloc(&d_each_ref_info0, sizeof(int) * max_sum_size * 2);
         if (err != cudaSuccess) {
-            printf("CUDA error: d_each_ref_info0 malloc failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: d_each_ref_info0 malloc failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
     }
     if (d_each_ref_info1 == nullptr) {
         err = cudaMalloc(&d_each_ref_info1, sizeof(int) * max_sum_size * 2);
         if (err != cudaSuccess) {
-            printf("CUDA error: d_each_ref_info1 malloc failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: d_each_ref_info1 malloc failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
     }
     if (d_real_nams_range0 == nullptr) {
         err = cudaMalloc(&d_real_nams_range0, sizeof(int) * max_todo_cnt * 2);
         if (err != cudaSuccess) {
-            printf("CUDA error: d_real_nams_range0 malloc failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: d_real_nams_range0 malloc failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
     }
     if (d_real_nams_range1 == nullptr) {
         err = cudaMalloc(&d_real_nams_range1, sizeof(int) * max_todo_cnt * 2);
         if (err != cudaSuccess) {
-            printf("CUDA error: d_real_nams_range1 malloc failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: d_real_nams_range1 malloc failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
     }
     if (d_nams_temp0 == nullptr) {
         err = cudaMalloc(&d_nams_temp0, max_sum_size * sizeof(my_vector<Nam>));
         if (err != cudaSuccess) {
-            printf("CUDA error: d_nams_temp0 malloc failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: d_nams_temp0 malloc failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
     }
     if (d_nams_temp1 == nullptr) {
         err = cudaMalloc(&d_nams_temp1, max_sum_size * sizeof(my_vector<Nam>));
         if (err != cudaSuccess) {
-            printf("CUDA error: d_nams_temp1 malloc failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: d_nams_temp1 malloc failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
     }
     if (d_each_ref_size0 == nullptr) {
         err = cudaMalloc(&d_each_ref_size0, max_todo_cnt * 2 * sizeof(my_vector<int>));
         if (err != cudaSuccess) {
-            printf("CUDA error: d_each_ref_size0 malloc failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: d_each_ref_size0 malloc failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
     }
     if (d_each_ref_size1 == nullptr) {
         err = cudaMalloc(&d_each_ref_size1, max_todo_cnt * 2 * sizeof(my_vector<int>));
         if (err != cudaSuccess) {
-            printf("CUDA error: d_each_ref_size1 malloc failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: d_each_ref_size1 malloc failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
     }
@@ -2301,7 +2305,7 @@ void GPU_align_PE_seg(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &data
         std::vector<int> types[5];
         char* base_ptr = global_align_res_data;
         for (int i = 0; i < s_len; i++) {
-            if (global_todo_ids[i] > 4) printf("GG type %d\n", global_todo_ids[i]);
+            if (global_todo_ids[i] > 4) fprintf(stderr, "GG type %d\n", global_todo_ids[i]);
             assert(global_todo_ids[i] <= 4);
             types[global_todo_ids[i]].push_back(i);
 
@@ -2547,7 +2551,7 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         cudaStreamSynchronize(ctx.stream);
         err = cudaGetLastError();
         if (err != cudaSuccess) {
-            printf("CUDA error: gpu_merge_hits_get_nams_1 failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: gpu_merge_hits_get_nams_1 failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
         gpu_cost4_1 += GetTime() - t2;
@@ -2562,14 +2566,14 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         cudaStreamSynchronize(ctx.stream);
         err = cudaGetLastError();
         if (err != cudaSuccess) {
-            printf("CUDA error: gpu_compute_sum_size failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: gpu_compute_sum_size failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
         sum_size0 = thrust::reduce(d_sum_size0_per_read.begin(), d_sum_size0_per_read.end(), 0, thrust::plus<int>());
         sum_size1 = thrust::reduce(d_sum_size1_per_read.begin(), d_sum_size1_per_read.end(), 0, thrust::plus<int>());
 
         if (sum_size0 > max_sum_size || sum_size1 > max_sum_size) {
-            printf("Error: sum_size0 (%d) or sum_size1 (%d) exceeds max_sum_size (%d)\n", sum_size0, sum_size1, max_sum_size);
+            fprintf(stderr, "Error: sum_size0 (%d) or sum_size1 (%d) exceeds max_sum_size (%d)\n", sum_size0, sum_size1, max_sum_size);
             exit(1);
         }
         gpu_cost4_2 += GetTime() - t2;
@@ -2586,7 +2590,7 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         cudaStreamSynchronize(ctx.stream);
         err = cudaGetLastError();
         if (err != cudaSuccess) {
-            printf("CUDA error: gpu_build_each_ref_info (ref0) failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: gpu_build_each_ref_info (ref0) failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
         gpu_build_each_ref_info<<<blocks_per_grid, THREADS_PER_BLOCK2, 0, ctx.stream>>>(todo_cnt, global_todo_ids, d_each_ref_size1,
@@ -2594,7 +2598,7 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         cudaStreamSynchronize(ctx.stream);
         err = cudaGetLastError();
         if (err != cudaSuccess) {
-            printf("CUDA error: gpu_build_each_ref_info (ref1) failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: gpu_build_each_ref_info (ref1) failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
         gpu_cost4_3 += GetTime() - t2;
@@ -2609,7 +2613,7 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         cudaStreamSynchronize(ctx.stream);
         err = cudaGetLastError();
         if (err != cudaSuccess) {
-            printf("CUDA error: gpu_build_nams_ranges failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: gpu_build_nams_ranges failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
         gpu_cost4_4 += GetTime() - t2;
@@ -2619,7 +2623,7 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         cudaMemset(d_nams_temp1, 0, sum_size1 * sizeof(my_vector<Nam>));
         err = cudaGetLastError();
         if (err != cudaSuccess) {
-            printf("CUDA error: cudaMemset for nams_temp failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: cudaMemset for nams_temp failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
         gpu_cost4_5 += GetTime() - t2;
@@ -2634,7 +2638,7 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         cudaStreamSynchronize(ctx.stream);
         err = cudaGetLastError();
         if (err != cudaSuccess) {
-            printf("CUDA error: gpu_merge_hits_get_nams_2 (ref0) failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: gpu_merge_hits_get_nams_2 (ref0) failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
         blocks_per_grid = (sum_size1 + THREADS_PER_BLOCK2 - 1) / THREADS_PER_BLOCK2;
@@ -2646,7 +2650,7 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         cudaStreamSynchronize(ctx.stream);
         err = cudaGetLastError();
         if (err != cudaSuccess) {
-            printf("CUDA error: gpu_merge_hits_get_nams_2 (ref1) failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: gpu_merge_hits_get_nams_2 (ref1) failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
         gpu_cost4_6 += GetTime() - t2;
@@ -2660,7 +2664,7 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         cudaStreamSynchronize(ctx.stream);
         err = cudaGetLastError();
         if (err != cudaSuccess) {
-            printf("CUDA error: gpu_merge_hits_get_nams_3 failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: gpu_merge_hits_get_nams_3 failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
         gpu_cost4_7 += GetTime() - t2;
@@ -2725,7 +2729,7 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         cudaStreamSynchronize(ctx.stream);
         err = cudaGetLastError();
         if (err != cudaSuccess) {
-            printf("CUDA error: gpu_rescue_merge_hits_get_nams_1 failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: gpu_rescue_merge_hits_get_nams_1 failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
         gpu_cost7_1 += GetTime() - t2;
@@ -2740,14 +2744,14 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         cudaStreamSynchronize(ctx.stream);
         err = cudaGetLastError();
         if (err != cudaSuccess) {
-            printf("CUDA error: gpu_compute_sum_size failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: gpu_compute_sum_size failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
         sum_size0 = thrust::reduce(d_sum_size0_per_read_rescue.begin(), d_sum_size0_per_read_rescue.end(), 0, thrust::plus<int>());
         sum_size1 = thrust::reduce(d_sum_size1_per_read_rescue.begin(), d_sum_size1_per_read_rescue.end(), 0, thrust::plus<int>());
 
         if (sum_size0 > max_sum_size || sum_size1 > max_sum_size) {
-            printf("Error: sum_size0 (%d) or sum_size1 (%d) exceeds max_sum_size (%d)\n", sum_size0, sum_size1, max_sum_size);
+            fprintf(stderr, "Error: sum_size0 (%d) or sum_size1 (%d) exceeds max_sum_size (%d)\n", sum_size0, sum_size1, max_sum_size);
             exit(1);
         }
         gpu_cost7_2 += GetTime() - t2;
@@ -2764,7 +2768,7 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         cudaStreamSynchronize(ctx.stream);
         err = cudaGetLastError();
         if (err != cudaSuccess) {
-            printf("CUDA error: gpu_build_each_ref_info (ref0) failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: gpu_build_each_ref_info (ref0) failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
         gpu_build_each_ref_info<<<blocks_per_grid, THREADS_PER_BLOCK2, 0, ctx.stream>>>(todo_cnt, global_todo_ids, d_each_ref_size1,
@@ -2772,7 +2776,7 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         cudaStreamSynchronize(ctx.stream);
         err = cudaGetLastError();
         if (err != cudaSuccess) {
-            printf("CUDA error: gpu_build_each_ref_info (ref1) failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: gpu_build_each_ref_info (ref1) failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
         gpu_cost7_3 += GetTime() - t2;
@@ -2787,7 +2791,7 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         cudaStreamSynchronize(ctx.stream);
         err = cudaGetLastError();
         if (err != cudaSuccess) {
-            printf("CUDA error: gpu_build_nams_ranges failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: gpu_build_nams_ranges failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
         gpu_cost7_4 += GetTime() - t2;
@@ -2797,7 +2801,7 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         cudaMemset(d_nams_temp1, 0, sum_size1 * sizeof(my_vector<Nam>));
         err = cudaGetLastError();
         if (err != cudaSuccess) {
-            printf("CUDA error: cudaMemset for nams_temp failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: cudaMemset for nams_temp failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
         gpu_cost7_5 += GetTime() - t2;
@@ -2812,7 +2816,7 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         cudaStreamSynchronize(ctx.stream);
         err = cudaGetLastError();
         if (err != cudaSuccess) {
-            printf("CUDA error: gpu_rescue_merge_hits_get_nams_2 (ref0) failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: gpu_rescue_merge_hits_get_nams_2 (ref0) failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
         blocks_per_grid = (sum_size1 + THREADS_PER_BLOCK2 - 1) / THREADS_PER_BLOCK2;
@@ -2824,7 +2828,7 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         cudaStreamSynchronize(ctx.stream);
         err = cudaGetLastError();
         if (err != cudaSuccess) {
-            printf("CUDA error: gpu_rescue_merge_hits_get_nams_2 (ref1) failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: gpu_rescue_merge_hits_get_nams_2 (ref1) failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
         gpu_cost7_6 += GetTime() - t2;
@@ -2838,7 +2842,7 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         cudaStreamSynchronize(ctx.stream);
         err = cudaGetLastError();
         if (err != cudaSuccess) {
-            printf("CUDA error: gpu_rescue_merge_hits_get_nams_3 failed: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "CUDA error: gpu_rescue_merge_hits_get_nams_3 failed: %s\n", cudaGetErrorString(err));
             exit(1);
         }
         gpu_cost7_7 += GetTime() - t2;
@@ -2879,7 +2883,7 @@ void GPU_align_PE_init(std::vector<neoRcRef> &data1s, std::vector<neoRcRef> &dat
         std::vector<int> types[5];
         char* base_ptr = global_align_res_data;
         for (int i = 0; i < s_len; i++) {
-            if (global_todo_ids[i] > 4) printf("GG type %d\n", global_todo_ids[i]);
+            if (global_todo_ids[i] > 4) fprintf(stderr, "GG type %d\n", global_todo_ids[i]);
             assert(global_todo_ids[i] <= 4);
             types[global_todo_ids[i]].push_back(i);
 
@@ -3132,7 +3136,7 @@ void perform_task_async_pe_fx_GPU(
     int *chunk2_real_chunk_ids = new int[MAX_RABBITFX_CHUNK_NUM];
 
 
-    if (gpu_id == 0) printf("--- meta GPU mem alloc %llu\n", meta_data_size);
+    if (gpu_id == 0) fprintf(stderr, "--- meta GPU mem alloc %llu\n", meta_data_size);
 
     uint64_t pre_vec_size = 4 * sizeof(int) + 2 * sizeof(Nam) + sizeof(GPUAlignment) + sizeof(CigarData) + sizeof(TODOInfos);
     GPUAlignTmpRes *chunk0_global_align_res = g_chunk0_global_align_res[thread_id];
@@ -3155,7 +3159,7 @@ void perform_task_async_pe_fx_GPU(
     cudaMalloc(&d_pre_sum, (batch_read_num + 1) * sizeof(int) * 4);
     cudaMemset(d_pre_sum, 0, (batch_read_num + 1) * sizeof(int) * 4);
 
-    if (gpu_id == 0) printf("--- seq GPU mem alloc %llu\n", seq_size_alloc * 4 + (batch_read_num + 1) * sizeof(int) * 4 * 2);
+    if (gpu_id == 0) fprintf(stderr, "--- seq GPU mem alloc %llu\n", seq_size_alloc * 4 + (batch_read_num + 1) * sizeof(int) * 4 * 2);
 
     int *h_len;
     int *h_pre_sum;
@@ -3175,7 +3179,7 @@ void perform_task_async_pe_fx_GPU(
 #ifdef use_device_mem
     cudaMalloc(&device_query_ptr, mx_device_query_size);
     cudaMalloc(&device_ref_ptr, mx_device_ref_size);
-    if (gpu_id == 0) printf("--- todo GPU mem alloc %llu\n", mx_device_query_size + mx_device_ref_size);
+    if (gpu_id == 0) fprintf(stderr, "--- todo GPU mem alloc %llu\n", mx_device_query_size + mx_device_ref_size);
 #endif
 
     SegSortGpuResources buffers0;
@@ -3347,7 +3351,7 @@ void perform_task_async_pe_fx_GPU(
 
     //int rescue_threshold = read_len;
     int rescue_threshold = RESCUE_THRESHOLD;
-    printf("rescue_threshold %d\n", rescue_threshold);
+    //printf("rescue_threshold %d\n", rescue_threshold);
 
 
     // step: f_1

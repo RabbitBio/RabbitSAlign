@@ -814,10 +814,10 @@ void perform_task_async_se_fx(
     statistics.tot_aligner_calls += aligner.calls_count();
     done = true;
     time_tot = GetTime() - t_0;
-    fprintf(
-        stderr, "cost time1:%.2f(%.2f) time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), tot time:%.2f\n", time1, time_read,
-        time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
-    );
+    //fprintf(
+    //    stderr, "cost time1:%.2f(%.2f) time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), tot time:%.2f\n", time1, time_read,
+    //    time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
+    //);
 
 }
 
@@ -1527,10 +1527,10 @@ void perform_task_async_pe_fx(
     statistics.tot_aligner_calls += aligner.calls_count();
     done = true;
     time_tot = GetTime() - t_0;
-    fprintf(
-        stderr, "cost time1:%.2f time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), tot time:%.2f\n", time1,
-        time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
-    );
+    //fprintf(
+    //    stderr, "cost time1:%.2f time2:(%.2f %.2f %.2f %.2f) time3:(%.2f %.2f), tot time:%.2f\n", time1,
+    //    time2_1, time2_2, time2_3, time2_4, time3_1, time3_2, time_tot
+    //);
 }
 
 void perform_task_async_pe(

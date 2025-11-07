@@ -32,8 +32,8 @@ extern uint64_t MAX_TARGET_LEN;
 #define DEVICE_TODO_SIZE_PER_CHUNK (0)
 #endif
 
-#define PRINT_GPU_TIMER
-#define PRINT_CPU_TIMER
+//#define PRINT_GPU_TIMER
+//#define PRINT_CPU_TIMER
 
 
 
