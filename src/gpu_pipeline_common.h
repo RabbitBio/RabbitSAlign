@@ -6,7 +6,7 @@
 #include <vector>
 #include <string>
 #include <random>
-#include "gpu_common.h" // Asumiendo que esta cabecera contiene structs como neoRcRef, Nam, etc.
+#include "gpu_common.h" // Assuming this header contains structs like neoRcRef, Nam, etc.
 
 //#define use_seg_sort
 
@@ -20,7 +20,7 @@
 #define THREADS_PER_BLOCK 1
 #define THREADS_PER_BLOCK2 128
 
-// --- Declaraciones de Variables Globales Externas ---
+// --- Global External Variables Declarations ---
 extern std::once_flag init_flag_ref[GPU_NUM_MAX];
 extern std::once_flag init_flag_pool[GPU_NUM_MAX];
 extern GPUReferences *global_references[GPU_NUM_MAX];
@@ -34,7 +34,7 @@ extern char *g_chunk0_global_align_res_data[THREAD_NUM_MAX];
 extern char *g_chunk1_global_align_res_data[THREAD_NUM_MAX];
 extern char *g_chunk2_global_align_res_data[THREAD_NUM_MAX];
 
-// --- Temporizadores de GPU (declarados como extern thread_local) ---
+// --- GPU Timers (declared as extern thread_local) ---
 extern thread_local double gpu_copy1;
 extern thread_local double gpu_copy2;
 extern thread_local double gpu_init1;
@@ -88,7 +88,7 @@ extern thread_local double gpu_cost11_copy1;
 extern thread_local double gpu_cost11_copy2;
 extern thread_local double tot_cost;
 
-// --- Contexto del Hilo ---
+// --- Thread Context ---
 struct ThreadContext {
     int device_id;
     cudaStream_t stream;
@@ -97,7 +97,7 @@ struct ThreadContext {
     ~ThreadContext();
 };
 
-// --- Prototipos de Funciones de Utilidad (Host) ---
+// --- Utility Function Prototypes (Host) ---
 klibpp::KSeq gpu_ConvertNeo2KSeq(neoReference ref);
 
 void GPU_part2_extend_seed_store_res(
@@ -116,13 +116,13 @@ float GPU_normal_pdf(float x, float mu, float sigma);
 void set_thread_affinity(int cpu_id);
 void unset_thread_affinity();
 
-// --- Funciones de Inicialización ---
+// --- Initialization Functions ---
 void init_shared_data(const References& references, const StrobemerIndex& index, const int gpu_id, int thread_id);
 void init_mm_safe(uint64_t num_bytes, uint64_t seed, int gpu_id);
 void init_global_big_data(int thread_id, int gpu_id, int max_tries, int batch_read_num);
 
 
-// --- Prototipos de Funciones de Dispositivo ---
+// --- Device Function Prototypes ---
 __device__ bool gpu_is_proper_pair(const GPUAlignment& alignment1, const GPUAlignment& alignment2, float mu, float sigma);
 
 void init_seg_sort_resources(SegSortGpuResources& resources, size_t initial_capacity, size_t max_todo_cnt, size_t initial_scan_temp_bytes, size_t initial_sort_temp_bytes, cudaStream_t stream);

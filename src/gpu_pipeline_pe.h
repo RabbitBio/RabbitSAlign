@@ -3,7 +3,7 @@
 
 #include "gpu_pipeline_common.h"
 
-// --- Punto de Entrada Principal para el Pipeline de PE ---
+// --- Main Entry Point for PE Pipeline ---
 void perform_task_async_pe_fx_GPU(
         InputBuffer& input_buffer,
         OutputBuffer& output_buffer,
